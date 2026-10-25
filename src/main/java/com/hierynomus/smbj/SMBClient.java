@@ -88,21 +88,35 @@ public class SMBClient implements Closeable {
             String hostPort = hostname + ":" + port;
             Connection cachedConnection = connectionTable.get(hostPort);
             if (cachedConnection != null) {
-                cachedConnection = cachedConnection.lease();
-            }
-            if (cachedConnection == null || !cachedConnection.isConnected()) {
-                Connection connection = new Connection(config, this, bus, serverList);
-                try {
-                    connection.connect(hostname, port);
-                } catch (IOException e) {
-                    closeSilently(connection); // Quietly close broken connection.
-                    throw e;
+                if (cachedConnection.isConnected()) {
+                    Connection leased = cachedConnection.lease();
+                    if (leased != null) {
+                        return leased;
+                    }
                 }
-                connectionTable.put(hostPort, connection);
-                return connection;
+                // The cached connection is gone, do not hand it out again.
+                connectionTable.remove(hostPort, cachedConnection);
+                closeQuietly(cachedConnection);
             }
 
-            return cachedConnection;
+            Connection connection = new Connection(config, this, bus, serverList);
+            try {
+                connection.connect(hostname, port);
+            } catch (IOException e) {
+                closeSilently(connection); // Quietly close broken connection.
+                throw e;
+            }
+            connectionTable.put(hostPort, connection);
+            return connection;
+        }
+    }
+
+    private void closeQuietly(Connection connection) {
+        try {
+            connection.close(true);
+        } catch (Exception e) {
+            logger.debug("Error closing connection to host {}", connection.getRemoteHostname());
+            logger.debug("Exception was: ", e);
         }
     }
 
@@ -112,6 +126,10 @@ public class SMBClient implements Closeable {
         synchronized (this) {
             String hostPort = event.getHostname() + ":" + event.getPort();
             Connection connection = event.getConnection();
+            Connection cached = connectionTable.get(hostPort);
+            if (connection == null && cached != null && cached.isConnected()) {
+                return;
+            }
             boolean removed = connection == null ? connectionTable.remove(hostPort) != null
                 : connectionTable.remove(hostPort, connection);
             if (removed) {
