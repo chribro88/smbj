@@ -719,6 +719,8 @@ class DiskShareListSpec extends Specification {
         smbBuffer.putUInt32(entryBytes.length) // OutputBufferLength
         smbBuffer.putRawBytes(entryBytes) // The outputBuffer bytes
 
-        return new SMB2MessageConverter().readPacket(null, new SMB2PacketData(smbBuffer.getCompactData())) as SMB2QueryDirectoryResponse
+        def response = new SMB2MessageConverter().readPacket(null, new SMB2PacketData(smbBuffer.getCompactData())) as SMB2QueryDirectoryResponse
+        response.header.sessionId = 0 // Let the stub correlate the captured response with the current session.
+        return response
     }
 }
