@@ -107,6 +107,20 @@ class GmacSigningTest {
             assertFalse(signatory.verify(new SMB2PacketData(wire), key));
         }
     }
+    @ParameterizedTest
+    @ValueSource(ints = {0, 15, 17})
+    void invalidProviderTagLengthCannotProduceOrVerifyAPacket(int length) throws Exception {
+        AEADBlockCipher cipher = mock(AEADBlockCipher.class);
+        when(cipher.doFinal(any(), anyInt(), anyInt())).thenReturn(new byte[length]);
+        SecurityProvider provider = mock(SecurityProvider.class);
+        when(provider.getAEADBlockCipher(anyString())).thenReturn(cipher);
+        PacketSignatory signatory = new PacketSignatory(provider);
+        SecretKeySpec key = new SecretKeySpec(new byte[16], "AES-GMAC");
+        assertThrows(IllegalStateException.class,
+                () -> signatory.sign(new SMB2Echo(SMB2Dialect.SMB_3_1_1), key).write(new SMBBuffer()));
+        assertThrows(IllegalStateException.class, () -> signatory.verify(new SMB2PacketData(response(7, 68)), key));
+    }
+
     private static SecurityProvider provider(boolean jce) {
         return jce ? new JceSecurityProvider() : new BCSecurityProvider();
     }

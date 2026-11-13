@@ -77,12 +77,21 @@ public class PacketSignatory implements Signatory {
             mac.update(buffer.array(), headerStart, SIGNATURE_OFFSET);
             mac.update(EMPTY_SIGNATURE);
             mac.update(buffer.array(), bodyStart, packet.getHeader().getMessageEndPosition() - bodyStart);
-            byte[] signature = mac.doFinal();
+            byte[] signature = signature(mac, secretKey);
             byte[] receivedSignature = packet.getHeader().getSignature();
             return MessageDigest.isEqual(java.util.Arrays.copyOf(signature, SIGNATURE_SIZE), receivedSignature);
         } catch (SecurityException e) {
             throw new IllegalStateException(e);
         }
+    }
+
+    private static byte[] signature(Mac mac, SecretKey key) {
+        byte[] signature = mac.doFinal();
+        if (signature.length < SIGNATURE_SIZE
+                || ("AES-GMAC".equals(key.getAlgorithm()) && signature.length != SIGNATURE_SIZE)) {
+            throw new IllegalStateException("Invalid signing tag length: " + signature.length);
+        }
+        return signature;
     }
 
     private static boolean validExtent(SMBBuffer buffer, SMB2PacketHeader header) {
@@ -169,7 +178,7 @@ public class PacketSignatory implements Signatory {
                 mac.update(EMPTY_SIGNATURE);
                 mac.update(buffer.array(), packetStartPos + STRUCTURE_SIZE,
                         buffer.wpos() - packetStartPos - STRUCTURE_SIZE);
-                byte[] signature = mac.doFinal();
+                byte[] signature = signature(mac, secretKey);
                 System.arraycopy(signature, 0, buffer.array(), packetStartPos + SIGNATURE_OFFSET, SIGNATURE_SIZE);
             } catch (SecurityException e) {
                 // TODO other exception

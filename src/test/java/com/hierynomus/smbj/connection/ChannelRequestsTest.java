@@ -116,6 +116,26 @@ class ChannelRequestsTest {
         }
     }
 
+    @Test
+    void serializationFailureSettlesOwnerRequestsAndRetiresOnlyThatChannel() throws Exception {
+        try (Fixture fixture = new Fixture()) {
+            fixture.secondary.sequenceWindow.creditsGranted(2);
+            Future<SMB2Packet> waiting = fixture.session.send(fixture.echo(), fixture.secondary);
+            IllegalStateException failure = new IllegalStateException("signing provider failed");
+            doThrow(failure).when(fixture.secondaryTransport).write(any());
+            assertSame(failure, assertThrows(IllegalStateException.class,
+                    () -> fixture.session.send(fixture.echo(), fixture.secondary)));
+            assertTrue(waiting.isDone());
+            assertThrows(ExecutionException.class, () -> waiting.get(1, TimeUnit.SECONDS));
+            assertFalse(fixture.secondary.outstandingRequests.isOutstanding(1L));
+            assertEquals(1, fixture.session.getChannelCount());
+            SMB2Echo healthy = fixture.echo();
+            Future<SMB2Packet> reply = fixture.session.send(healthy);
+            fixture.reply(fixture.primary, healthy);
+            reply.get(1, TimeUnit.SECONDS);
+        }
+    }
+
     // Behavioral regression: go-smb2 7f69f658, TestBoundWriteIsNotReplayedAfterConnectionLoss.
     @Test
     void lostWriteResponseFailsOnlyItsConnectionAndIsNeverReplayed() throws Exception {

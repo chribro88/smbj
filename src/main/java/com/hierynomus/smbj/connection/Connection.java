@@ -303,23 +303,28 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
             Session session = sessionTable.find(packet.getHeader().getSessionId());
             boolean signingRequired = session != null && session.isSigningRequired();
             // Need to lock around the sequence window calls to ensure no credits get stolen by another thread
-            lock.lock();
             try {
-                checkConnected();
-                int availableCredits = sequenceWindow.available();
-                int grantCredits = calculateGrantedCredits(packet, availableCredits);
-                if (availableCredits == 0) {
-                    logger.warn(
-                        "There are no credits left to send {}, will block until there are more credits available.",
-                        packet.getHeader().getMessage());
+                lock.lock();
+                try {
+                    checkConnected();
+                    int availableCredits = sequenceWindow.available();
+                    int grantCredits = calculateGrantedCredits(packet, availableCredits);
+                    if (availableCredits == 0) {
+                        logger.warn(
+                            "There are no credits left to send {}, will block until there are more credits available.",
+                            packet.getHeader().getMessage());
+                    }
+                    long[] messageIds = sequenceWindow.get(grantCredits);
+                    packet.getHeader().setMessageId(messageIds[0]);
+                    packet.getHeader().setCreditRequest(Math.max(SequenceWindow.PREFERRED_MINIMUM_CREDITS - availableCredits - grantCredits,
+                            grantCredits));
+                    logger.debug("Granted {} (out of {}) credits to {}", grantCredits, availableCredits, packet);
+                } finally {
+                    lock.unlock();
                 }
-                long[] messageIds = sequenceWindow.get(grantCredits);
-                packet.getHeader().setMessageId(messageIds[0]);
-                packet.getHeader().setCreditRequest(Math.max(SequenceWindow.PREFERRED_MINIMUM_CREDITS - availableCredits - grantCredits,
-                        grantCredits));
-                logger.debug("Granted {} (out of {}) credits to {}", grantCredits, availableCredits, packet);
-            } finally {
-                lock.unlock();
+            } catch (TransportException failure) {
+                handleError(failure);
+                throw failure;
             }
 
             Request request = new Request(packet, packet.getHeader().getMessageId(), UUID.randomUUID(),
@@ -330,7 +335,7 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
         try {
             checkConnected();
             transport.write(packet);
-        } catch (TransportException e) {
+        } catch (TransportException | RuntimeException e) {
             handleError(e);
             throw e;
         }

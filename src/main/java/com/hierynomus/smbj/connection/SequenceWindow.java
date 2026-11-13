@@ -49,6 +49,9 @@ public class SequenceWindow {
     }
 
     synchronized long[] get(int credits) throws TransportException {
+        if (credits <= 0 || credits > 0xFFFF) {
+            throw new IllegalArgumentException("Credit charge must fit a positive unsigned 16-bit value");
+        }
         long remaining = TimeUnit.MILLISECONDS.toNanos(MAX_WAIT);
         long start = System.nanoTime();
         try {
@@ -59,8 +62,15 @@ public class SequenceWindow {
                 if (Thread.interrupted()) {
                     throw new InterruptedException();
                 }
+                long lowest = lowestAvailable.get();
+                long last = lowest + credits - 1;
+                if (last == -1L || Long.compareUnsigned(last, lowest) < 0) {
+                    TransportException exhausted = new TransportException("SMB MessageId space exhausted; establish a new connection");
+                    handleError(exhausted);
+                    throw exhausted;
+                }
                 if (available.tryAcquire(credits)) {
-                    long lowest = lowestAvailable.getAndAdd(credits);
+                    lowestAvailable.addAndGet(credits);
                     return range(lowest, lowest + credits);
                 }
                 if (remaining <= 0) {
