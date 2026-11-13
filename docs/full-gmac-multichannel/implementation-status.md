@@ -35,6 +35,18 @@ signer-observation fixture.
 
 ## Implemented foundations
 
+- Initial authentication verifies the final wire response with the newly derived
+  signing key before establishing or publishing the session. Session keys follow
+  the protocol's 16-byte truncation/right-padding rule. Missing keys, invalid or
+  missing required signatures, wrong roles and tampered padding fail the attempt.
+  The configured provider remains in use; ordinary optional signing or required
+  data encryption does not bypass the final authentication check.
+- SESSION_SETUP credits are deferred to the authentication builder. Initial
+  bootstrap challenges retain their permitted unsigned behavior; binding
+  continuations, finals and signed errors accept credits only after verification
+  with their phase's key. An unsigned binding error does not replenish credits.
+  A response with a mismatched command cannot complete an outstanding request or
+  bypass the deferred-credit path. SMB1-to-SMB2 negotiation remains supported.
 - Signing authenticates stable serialized packet segments, including compound
   member padding, with header-relative offsets at nonzero buffer positions.
   Receive verification enforces the server role, signed flag and message extent,
@@ -104,9 +116,19 @@ pool available; losing the last channel stops it.
 | `clean check` milestone | PASS: 716 tests, zero failures/skips | Full unit suite, Java 8 release compilation, license checks and JaCoCo report; integration tests remain separate |
 | Combined async `check` milestone | PASS: 753 tests, zero failures/skips | Full unit suite, including 21 async writer cases, worker limits, source ownership, actual submitted extents, File close ordering and cancellation races |
 | Native async compatibility matrix | PASS: 8 tests, zero failures/skips | Both transports; lightweight BC and explicitly configured JCE/BC; encryption on/off; full live readback beyond the pipeline window |
+| Authentication `check` milestone | PASS: 778 tests, zero failures/skips | Full unit suite, license checks and JaCoCo; includes 22 initial-authentication and 28 binding-response cases, phase-specific credit acceptance and mismatched-command rejection |
+| Authentication live compatibility repeat | PASS: 8 tests, zero failures/skips | Actual SMB 3.1.1 initial authentication and full 8 MiB + 10 byte readback; both transports and BC/JCE-with-BC; CMAC and optional/required CCM encryption |
 
-The latest combined unit source revision is `df8c1accd0670a5deb75f21cb70727c8a788ea39`; the
-live async source revision is `c0bec22d4c1ac86c5493c52961fefda54fbb71cf`. Their production source trees are
+The latest unit source revision is `0357c30bf743ee311d18aa32530bc08fd14bb0e3`;
+the live source revision is `97841a15d169476ce310c04ab22dbfcebb169790`. Their
+production, unit-test and build configuration trees are identical. The latter
+adds the negotiated dialect to sanitized live metadata. Exact reports, checksums,
+profiles and remaining gates are in [validation-authentication.json](validation-authentication.json).
+The initial full run exposed obsolete unsigned/missing-command synthetic fixtures;
+those fixtures were corrected and the complete check rerun successfully.
+
+The preceding async milestone's unit source revision is `df8c1accd0670a5deb75f21cb70727c8a788ea39`; its
+live source revision is `c0bec22d4c1ac86c5493c52961fefda54fbb71cf`. Their production source trees are
 identical; the latter adds complete 8 MiB + 10 byte live readback assertions.
 Exact per-suite results and sanitized fixture metadata are in
 [validation-async.json](validation-async.json).
@@ -146,7 +168,8 @@ interoperability.
 The local Sonar CLI reported no secrets in the changed scope, with an
 `Authentication was not successful` warning. This is not a clean authenticated
 SonarQube analysis claim. JDT.LS subsequently reached READY and returned no
-per-file diagnostics for SMB2Writer. A complete Gradle project diagnostic pass was
+per-file diagnostics for SMB2Writer, SMBSessionBuilder and the outstanding-response
+handler. A complete Gradle project diagnostic pass was
 not established; Java 8 release compilation and actual tests remain the semantic
 validation evidence.
 
@@ -157,13 +180,13 @@ validation evidence.
 | G0 | BLOCKED | Supported binding nonce mechanism, full actual-key lifetime proof, authoritative protocol interpretation and independent peer trace |
 | G1 | BLOCKED | All four reproductions resolved together; nonce collision remains unsolved |
 | G2 | NOT_RUN | Complete local matrix across providers/transports/runtimes; Java 8 runtime execution |
-| G3 | BLOCKED | Initial/final/reauthentication phase verification, all applicable notifications, replay/fencing and GMAC binding cases |
+| G3 | BLOCKED | Complete NTLM/Kerberos authentication lifecycle and reauthentication variants, all applicable notifications, replay/fencing and GMAC binding cases |
 | G4 | BLOCKED | Forced-GMAC multi-channel runs on capable independent Samba/Windows peers and target ONTAP release/configuration |
 | G5 | NOT_RUN | Sustained concurrent I/O and cancellation-churn memory (including transport queues), replacement/recovery and comparative measurements |
 | G6 | NOT_RUN | Complete source/provenance mapping, validated peer traces and complete reproducible review package |
 
 Specific remaining implementation work includes the approved G0 mechanism,
-phase-aware initial/reauthentication handling, complete notification coverage,
+remaining authentication lifecycle and reauthentication handling, complete notification coverage,
 replay/fencing and recovery semantics, sustained cancellation/transport-queue
 memory validation, and the remaining matrix assertions. Local sync/async short-write checks and live legacy-server compatibility do not
 establish the GMAC binding, native fault-peer or sustained operational requirements.

@@ -46,6 +46,15 @@ signed, sent or registered; candidate negotiation may already have occurred.
 There is no silent fallback from an explicit GMAC preference. The established
 single-channel session remains usable after rejection.
 
+Initial authentication verifies its final response before publishing the session,
+including when ordinary signing is optional or data encryption is required.
+SESSION_SETUP credits are accepted by the authentication flow after its phase's
+checks. Unsigned initial challenges and permitted older-dialect guest/anonymous
+exceptions remain supported. SMB 3.1.1 requires the signed final response.
+Missing or corrupted required signatures fail authentication. Signed binding
+errors are verified with the original session key; unsigned binding errors do
+not return credits to the candidate connection.
+
 Requests are distributed across live channels. A blocked response or exhausted
 credit window belongs to its connection; no session lock spans network writes,
 credit waits or response waits. CANCEL stays on the originating connection. A
