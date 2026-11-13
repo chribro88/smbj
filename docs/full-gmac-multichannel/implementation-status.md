@@ -135,6 +135,7 @@ pool available; losing the last channel stops it.
 | Modern forced-GMAC single-session matrix | PASS: 16 tests, zero failures/skips | Samba 4.23.10; NTLM; both transports; BC/default JCE; GMAC with GCM encryption off/on; write-through off/on; exact readback and unsafe-binding containment |
 | Receive-policy `check` milestone | PASS: 798 tests, zero failures/skips | Full unit suite, license checks and JaCoCo; 19 request-session response regressions; includes the concurrent local bound-channel SESSION_SETUP key-selection patch and its one test |
 | Encrypted receive follow-up | PASS: 39 focused cases and 16 live single-session cases; full check 817/818 | All new receive cases pass; the existing above-2-GiB async writer test repeatedly exceeded its unchanged 30-second deadline; diagnostic logging/chunk experiments did not resolve it and were restored |
+| Shared encryption nonce ownership | PASS: 20 new cases; 63 connected cases | Five supported cipher/provider profiles; native Session.send with mocked Connections; concurrent sends, replacement, retained-key reinstallation, provider failure and atomic exhaustion; independent transform tag/plaintext checks |
 | Bounded auxiliary-session research | PASS: 5 tests, zero failures/skips | Detached checkout only; direct TCP, BC, NTLM, Samba 4.23.10; 0/3/7 replacements, lost-binding reservation, independent GMAC/MID verification and unsafe-flow negative control; G0 remains open |
 | Independent legitimate-binding observation | NONCE REUSE CONFIRMED | Pinned Go donor + Samba 4.23.10: two successful bindings; 17 independently verified signed messages across three actual key domains; two distinct-message original-key/nonce reuses |
 
@@ -191,7 +192,7 @@ baseline, focused checks and validation results. These changes follow the
 compression, complete body validation and reauthentication remain outside this
 regression scope. G0 is still open.
 
-The current 818-case full run is not passing: its sole failure is the existing
+The preceding 818-case full run was not passing: its sole failure is the existing
 large async streaming test's 30-second deadline, also reproduced in isolation.
 The bounded JFR recorded only 0.53 seconds of GC pauses. Neither suppressing
 writer debug output nor using a larger bounded test chunk resolved the deadline;
@@ -199,6 +200,26 @@ both experiments were restored. Production writer, timeout and logging behavior
 are unchanged. This is an unresolved performance finding, not a qualified
 throughput result. The three license checks pass; target JDT.LS diagnostics remain
 unavailable through this connector, and the user authorized the available checks.
+
+The W7 transmit follow-up verifies the existing retained encryptor through
+`Session.send`, including four concurrent callers, retirement of the original
+channel, a replacement channel, provider failure after nonce allocation and the
+counter's last usable value. Tracking uses key values, so reinstalling equal key
+bytes through a fresh key object cannot hide reuse. Standard JCE independently
+authenticates the transforms and checks plaintext, size, session and nonce
+padding across BC CCM/GCM, explicit JCE/BC CCM/GCM and default-JCE GCM.
+The five profiles produce 20 new passing cases; all 63 connected cases and
+`licenseTest` succeeds (UP-TO-DATE). Exact source/report hashes and limits are in
+[validation-encryption-ownership.json](validation-encryption-ownership.json).
+
+These are isolated fixed-key unit scenarios with mocked Connection boundaries;
+they do not form a combined production key-lifetime trace. Channels are installed
+directly without a binding exchange. Authentication-driven replacement, server
+nonce behavior, recovery key freshness and identical key reintroduction through
+independent sessions remain unqualified. Production and build sources are
+unchanged. The full suite was not rerun for this test-only follow-up; the earlier
+large-write deadline failure remains unresolved. G0 and the full ENC-02 matrix
+remain open.
 
 Reproduce the clean check with the existing JDK 21 and Gradle wrapper:
 

@@ -1,0 +1,126 @@
+{
+  "result": "FOCUSED_ENCRYPTION_OWNERSHIP_CHECKS_PASS_FULL_FEATURE_INCOMPLETE",
+  "source": {
+    "base_revision": "d8fb467b1f1746af69b1e3bc7c9870b08a961b59",
+    "unchanged_production_tree": "12aed6ea540fe4f755b2dd48f5f5f90940443af7",
+    "production_or_build_changes": false,
+    "files": [
+      {
+        "path": "src/test/java/com/hierynomus/smbj/connection/SessionEncryptionNonceTest.java",
+        "sha256": "ab233caf55245e691f509fe26a3a80ce763e382c85ef80c526f778169759cd3d"
+      },
+      {
+        "path": "src/main/java/com/hierynomus/smbj/connection/PacketEncryptor.java",
+        "sha256": "afa386bb0e4742351f2dcf1729e44d7a27f61738845783572aab6a079c851cbf"
+      },
+      {
+        "path": "src/main/java/com/hierynomus/smbj/session/Session.java",
+        "sha256": "4f6dc803e7528e010dff8ee018dad322b6c47f32eb4173abbcf0ce6e9b29e3e5"
+      },
+      {
+        "path": "src/main/java/com/hierynomus/smbj/session/SessionContext.java",
+        "sha256": "42d40d1067816833f344ddfe6b47c0a4d312f142e3c1e8a65e8d9cc5c0e7e8a6"
+      }
+    ]
+  },
+  "production_release": 8,
+  "runtime": "Temurin 21",
+  "gradle": "8.13",
+  "bouncy_castle": "1.86",
+  "focused": {
+    "tests": 63,
+    "new_ownership_cases": 20,
+    "connected_codec_cases": 4,
+    "connected_receive_cases": 39,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "suites": [
+      {
+        "path": "/tmp/smbj-full-gmac-encryption-ownership-final-reports/TEST-com.hierynomus.smbj.connection.PacketEncryptorTest.xml",
+        "sha256": "8c25a93fee01681c2cd0f872398b02705e8180c8e659df347a143e7895da94c6",
+        "name": "com.hierynomus.smbj.connection.PacketEncryptorTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 1.752,
+        "timestamp": "2026-11-13T17:01:09.480Z"
+      },
+      {
+        "path": "/tmp/smbj-full-gmac-encryption-ownership-final-reports/TEST-com.hierynomus.smbj.connection.ResponseAuthenticationTest.xml",
+        "sha256": "00f073dffa0ae8a4ec9ac3fd9425d014b74c818ff2133ae84e7541683448159f",
+        "name": "com.hierynomus.smbj.connection.ResponseAuthenticationTest",
+        "tests": 39,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 21.299,
+        "timestamp": "2026-11-13T17:01:11.256Z"
+      },
+      {
+        "path": "/tmp/smbj-full-gmac-encryption-ownership-final-reports/TEST-com.hierynomus.smbj.connection.SessionEncryptionNonceTest.xml",
+        "sha256": "afc2d40d2159e0159c925d9b519f88312980d7b05ce3b7d519df98dcd0900096",
+        "name": "com.hierynomus.smbj.connection.SessionEncryptionNonceTest",
+        "tests": 20,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 19.591,
+        "timestamp": "2026-11-13T17:01:36.208Z"
+      }
+    ]
+  },
+  "profiles": [
+    "lightweight BC / AES-128-GCM",
+    "lightweight BC / AES-128-CCM",
+    "default JCE / AES-128-GCM",
+    "JCE with explicit BC Provider object / AES-128-GCM",
+    "JCE with explicit BC Provider object / AES-128-CCM"
+  ],
+  "assertions": {
+    "concurrent_replacement": "Four synchronized callers send 32 frames each through Session.send across two channels; retire original, add replacement and reinitialize encryptor with same context; all 130 nonce values unique within that test key domain and form the retained sequence",
+    "provider_failure": "One injected provider-creation failure after nonce allocation emits no frame; the next channel successfully encrypts using nonce 1, without recycling nonce 0",
+    "exhaustion": "Four synchronized callers race at Long.MAX_VALUE; exactly one frame succeeds with that last value; remaining callers and four later sends fail, counter sticks at Long.MIN_VALUE and never wraps",
+    "key_reinstallation": "Install another key then reinstall equivalent original key bytes in a fresh SecretKeySpec object; neither original-key send reuses its earlier nonce; tracking uses key value, not object identity"
+  },
+  "oracle": {
+    "interface": "Standard JCE Cipher, independent of PacketEncryptor.decrypt",
+    "gcm_backend": "default JCE",
+    "ccm_backend": "explicit BC Provider object",
+    "checks": [
+      "AEAD authentication and exact plaintext bytes",
+      "Authenticated transform OriginalMessageSize and SessionId",
+      "Cipher nonce length and zero unused transform nonce bytes",
+      "Per-fixture actual-key/nonce uniqueness using SecretKeySpec key-value equality"
+    ],
+    "boundary": "Fixed test keys repeat across isolated unit fixtures; this is per-scenario ownership evidence, not a combined production actual-key lifetime trace"
+  },
+  "execution_boundary": "Real Session.send and PacketEncryptor serialization; Connection boundary mocked. Channels are installed through Session.addChannel without an authentication exchange. No peer/socket or successful GMAC binding qualification.",
+  "lifecycle": "Each test owns at most four worker tasks; shutdownNow plus awaitTermination; Session.failChannels shuts down unused session executor; no socket/container fixture created",
+  "license": "licenseTest SUCCESS; task state UP-TO-DATE",
+  "command": "JAVA_HOME=/tmp/smb-relay-java21/opt/java/openjdk PATH=/tmp/smb-relay-java21/opt/java/openjdk/bin:$PATH ./gradlew --offline --no-daemon --max-workers=1 '-Dorg.gradle.jvmargs=-Xmx192m -XX:ActiveProcessorCount=2' --init-script /tmp/smbj-full-gmac-test-limits.gradle test --tests '*SessionEncryptionNonceTest' --tests '*PacketEncryptorTest' --tests '*ResponseAuthenticationTest' licenseTest",
+  "test_limits_init_script": "allprojects { tasks.withType(Test).configureEach { maxHeapSize = '384m'; maxParallelForks = 1; jvmArgs '-XX:ActiveProcessorCount=2' } }",
+  "normative_reference": "https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/24d74c0c-3de1-40d9-a949-d169ad84361d",
+  "logs": [
+    {
+      "path": "/tmp/smbj-full-gmac-encryption-ownership-focused.log",
+      "sha256": "e456766736090ed72d469eb6c8e533c1540f42975a8c7817af7bae4d939e7628"
+    },
+    {
+      "path": "/tmp/smbj-full-gmac-encryption-ownership-final.log",
+      "sha256": "51ebb258762a97b0921bb232613082256c4a1e87f648a7ac77d88c00c8655ec5"
+    }
+  ],
+  "initial_run": "63 cases passed before key-value-aware oracle refinement; final source and report hashes above are the acceptance evidence for this focused run",
+  "jdtls": "Current connector STOPPED while another connector owns live configured-workspace JVM; no duplicate startup or restart. User authorized available checks; target diagnostics unavailable.",
+  "sonar": "CLI secrets scans reported no secrets with unsuccessful-authentication warning; authenticated SonarQube analysis not established.",
+  "limitations": [
+    "G0 remains open and production GMAC binding remains rejected; full feature incomplete",
+    "No successful authentication-driven replacement, cross-independent-session key reintroduction or recovery key-freshness qualification",
+    "Client transmit ownership only; no server encryption nonce-lifetime validation",
+    "No socket/transport failure matrix, all provider-failure stages or partial frame boundary coverage in these new tests",
+    "No full suite rerun for this test-only change; preceding 818-case run has one repeatedly reproduced unchanged large-write deadline failure; see validation-encrypted-response.json",
+    "No Java 8 runtime, Kerberos, Windows/target ONTAP or sustained performance acceptance"
+  ]
+}
