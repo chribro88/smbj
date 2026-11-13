@@ -31,15 +31,6 @@ public class SMB2DecryptedPacketData extends SMB2PacketData {
         super(dataBuffer);
     }
 
-
-    public SMB2PacketData next() throws Buffer.BufferException {
-        if (isCompounded()) {
-            return new SMB2DecryptedPacketData(dataBuffer);
-        } else {
-            return null;
-        }
-    }
-
     public boolean isDecrypted() {
         return true;
     }

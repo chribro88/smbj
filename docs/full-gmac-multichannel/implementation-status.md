@@ -134,6 +134,7 @@ pool available; losing the last channel stops it.
 | Authentication live compatibility repeat | PASS: 8 tests, zero failures/skips | Actual SMB 3.1.1 initial authentication and full 8 MiB + 10 byte readback; both transports and BC/JCE-with-BC; CMAC and optional/required CCM encryption |
 | Modern forced-GMAC single-session matrix | PASS: 16 tests, zero failures/skips | Samba 4.23.10; NTLM; both transports; BC/default JCE; GMAC with GCM encryption off/on; write-through off/on; exact readback and unsafe-binding containment |
 | Receive-policy `check` milestone | PASS: 798 tests, zero failures/skips | Full unit suite, license checks and JaCoCo; 19 request-session response regressions; includes the concurrent local bound-channel SESSION_SETUP key-selection patch and its one test |
+| Encrypted receive follow-up | PASS: 39 focused cases and 16 live single-session cases; full check 817/818 | All new receive cases pass; the existing above-2-GiB async writer test repeatedly exceeded its unchanged 30-second deadline; diagnostic logging/chunk experiments did not resolve it and were restored |
 | Bounded auxiliary-session research | PASS: 5 tests, zero failures/skips | Detached checkout only; direct TCP, BC, NTLM, Samba 4.23.10; 0/3/7 replacements, lost-binding reservation, independent GMAC/MID verification and unsafe-flow negative control; G0 remains open |
 | Independent legitimate-binding observation | NONCE REUSE CONFIRMED | Pinned Go donor + Samba 4.23.10: two successful bindings; 17 independently verified signed messages across three actual key domains; two distinct-message original-key/nonce reuses |
 
@@ -176,6 +177,28 @@ registration and a large-write timeout. The fixture was corrected; both affected
 suites then passed with the original deadlines, followed by the successful full
 run. The supplied Session key-selection test is a narrow unit check, not a
 reauthentication lifecycle or interoperability qualification.
+
+The encrypted-response follow-up extends that actual receive-chain regression
+to independently generated AES-GCM frames with distinct session keys. It checks
+request ownership after decryption, requires every uncompressed compound member
+to match the transform session, and validates compound header extents before
+dispatching any member. Decrypted traversal now shares the native checked
+NextCommand cursor logic, including when the first reply is discarded. The
+header pass retains no member list and copies no payload. See
+[validation-encrypted-response.json](validation-encrypted-response.json) for the
+baseline, focused checks and validation results. These changes follow the
+[MS-SMB2 decryption rules](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/d3c03e33-7dc7-4d58-8428-0a1484c5c874);
+compression, complete body validation and reauthentication remain outside this
+regression scope. G0 is still open.
+
+The current 818-case full run is not passing: its sole failure is the existing
+large async streaming test's 30-second deadline, also reproduced in isolation.
+The bounded JFR recorded only 0.53 seconds of GC pauses. Neither suppressing
+writer debug output nor using a larger bounded test chunk resolved the deadline;
+both experiments were restored. Production writer, timeout and logging behavior
+are unchanged. This is an unresolved performance finding, not a qualified
+throughput result. The three license checks pass; target JDT.LS diagnostics remain
+unavailable through this connector, and the user authorized the available checks.
 
 Reproduce the clean check with the existing JDK 21 and Gradle wrapper:
 

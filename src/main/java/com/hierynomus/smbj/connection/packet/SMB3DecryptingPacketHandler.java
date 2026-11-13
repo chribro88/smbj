@@ -154,12 +154,22 @@ public class SMB3DecryptingPacketHandler extends AbstractIncomingPacketHandler {
                     return;
                 }
                 throw new TransportException("Session ID of decrypted response differs from transform session ID: " + nextPacket);
-            } else {
-                next.handle(nextPacket);
-                // Remaining members are validated together by SMB2CompoundedPacketHandler.
             }
+            int bodyStart = nextPacket.getDataBuffer().rpos();
+            // Validate every member before any response can complete a request or grant credits.
+            for (SMB2PacketData member = nextPacket; member != null; member = member.next()) {
+                if (member.getHeader().getSessionId() != packetData.getHeader().getSessionId()) {
+                    if (member.isOplockBreakNotification()) {
+                        next.handle(new DeadLetterPacketData(member.getHeader()));
+                        return;
+                    }
+                    throw new TransportException("Mismatched sessionId in encrypted SMB2 message");
+                }
+            }
+            nextPacket.getDataBuffer().rpos(bodyStart);
+            next.handle(nextPacket);
         } catch (Buffer.BufferException e) {
-            throw new SMBRuntimeException("Could not load SMB2 Packet", e);
+            throw new TransportException("Invalid encrypted SMB2 message", e);
         }
     }
 }

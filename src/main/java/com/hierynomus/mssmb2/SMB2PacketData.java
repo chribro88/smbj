@@ -95,7 +95,7 @@ public class SMB2PacketData extends SMBPacketData<SMB2PacketHeader> {
                 throw new Buffer.BufferException("Invalid compounded message extent");
             }
             dataBuffer.rpos(end);
-            return new SMB2PacketData(dataBuffer);
+            return isDecrypted() ? new SMB2DecryptedPacketData(dataBuffer) : new SMB2PacketData(dataBuffer);
         } else {
             return null;
         }

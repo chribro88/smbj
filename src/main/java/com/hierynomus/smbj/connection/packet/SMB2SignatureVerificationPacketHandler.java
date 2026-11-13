@@ -123,10 +123,6 @@ public class SMB2SignatureVerificationPacketHandler extends SMB2PacketHandler {
     }
 
     boolean isValid(SMB2PacketData packetData) {
-        if (packetData.isDecrypted()) {
-            return true;
-        }
-
         long sessionId = packetData.getHeader().getSessionId();
         boolean signingRequired = false;
         if (outstandingRequests != null && !packetData.isOplockBreakNotification()) {
@@ -144,6 +140,10 @@ public class SMB2SignatureVerificationPacketHandler extends SMB2PacketHandler {
             signingRequired = request.isSigningRequired();
         }
         Session session = sessionTable.find(sessionId);
+
+        if (packetData.isDecrypted()) {
+            return session != null && sessionId == packetData.getHeader().getSessionId();
+        }
 
         if (packetData.getHeader().isFlagSet(SMB2_FLAGS_SIGNED)) {
             if (session == null) {
