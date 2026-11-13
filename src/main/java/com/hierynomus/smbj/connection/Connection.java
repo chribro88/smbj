@@ -22,6 +22,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -103,6 +104,9 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
     private final ReentrantLock lock = new ReentrantLock();
     private final AtomicReference<TransportException> error = new AtomicReference<>();
     private final AtomicBoolean closingGracefully = new AtomicBoolean();
+    private final CountDownLatch teardownComplete = new CountDownLatch(1);
+    private volatile Thread teardownThread;
+    private volatile IOException teardownFailure;
 
     public Connection(SmbConfig config, SMBClient client, SMBEventBus bus, ServerList serverList) {
         this.config = config;
@@ -185,7 +189,11 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
      * Close the Connection. If {@code force} is set to true, it forgoes the
      * {@link Session#close()} operation on the open sessions, fails outstanding
      * requests and credit waiters, and disconnects the transport. Subsequent sends
-     * fail with a {@link TransportException}.
+     * fail with a {@link TransportException}. Concurrent close calls wait for
+     * transport teardown to complete. Reader and lease workers
+     * are signalled to stop; this method does not join them. A blocked socket
+     * factory is not awaited: its returned socket is discarded after abort.
+     * Reentrant close on the teardown thread does not wait for itself.
      *
      * <p>
      * If {@code force} is set to false, the usage counter of the connection reduces with one. If the usage count drops to zero the connection will be closed.
@@ -196,10 +204,22 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
      */
     public void close(boolean force) throws IOException {
         if (force) {
-            abort(new TransportException("Connection closed"));
+            try {
+                abort(new TransportException("Connection closed"));
+            } finally {
+                awaitTeardown();
+            }
             return;
         }
-        if (error.get() != null || !release() || !closingGracefully.compareAndSet(false, true)) {
+        if (error.get() != null) {
+            awaitTeardown();
+            return;
+        }
+        if (!release()) {
+            return;
+        }
+        if (!closingGracefully.compareAndSet(false, true)) {
+            awaitTeardown();
             return;
         }
         try {
@@ -211,7 +231,11 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
                 }
             }
         } finally {
-            abort(new TransportException("Connection closed"));
+            try {
+                abort(new TransportException("Connection closed"));
+            } finally {
+                awaitTeardown();
+            }
         }
     }
 
@@ -219,6 +243,44 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
         if (!error.compareAndSet(null, failure)) {
             return;
         }
+        teardownThread = Thread.currentThread();
+        try {
+            performTeardown(failure);
+        } catch (IOException e) {
+            teardownFailure = e;
+            throw e;
+        } catch (RuntimeException | Error e) {
+            teardownFailure = new IOException("Connection teardown failed", e);
+            throw e;
+        } finally {
+            teardownComplete.countDown();
+            teardownThread = null;
+        }
+    }
+
+    private void awaitTeardown() throws IOException {
+        // Error callbacks must not wait on another abort. Reentrant close on the
+        // teardown thread cannot wait for itself either.
+        if (Thread.currentThread() == teardownThread) {
+            return;
+        }
+        boolean interrupted = false;
+        try {
+            while (true) {
+                try {
+                    teardownComplete.await();
+                    break;
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                }
+            }
+        } finally {
+            if (interrupted) Thread.currentThread().interrupt();
+        }
+        if (teardownFailure != null) throw teardownFailure;
+    }
+
+    private void performTeardown(TransportException failure) throws IOException {
         // Neither of these operations takes Connection.lock: a sender may hold it
         // while waiting for credits. Registration shares the request table's lock
         // with handleError, so a racing request is either drained or rejected.
@@ -372,6 +434,9 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
     public String getRemoteHostname() {
         return connectionContext.getServer().getServerName();
     }
+
+    /** Whether connection teardown has begun, without acquiring transport locks. */
+    public boolean isClosed() { return error.get() != null; }
 
     public boolean isConnected() {
         return error.get() == null && transport.isConnected();

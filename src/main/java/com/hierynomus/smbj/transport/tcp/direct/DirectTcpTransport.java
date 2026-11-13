@@ -52,7 +52,7 @@ public class DirectTcpTransport<D extends PacketData<?>, P extends Packet<?>> im
     private volatile Socket socket;
     private BufferedOutputStream output;
     private PacketReader<D> packetReaderThread;
-    private long disconnectCount;
+    private boolean closed;
 
     private static final int INITIAL_BUFFER_SIZE = 9000;
 
@@ -94,14 +94,15 @@ public class DirectTcpTransport<D extends PacketData<?>, P extends Packet<?>> im
 
     @Override
     public void connect(InetSocketAddress remoteAddress) throws IOException {
-        long disconnects;
         synchronized (this) {
-            disconnects = disconnectCount;
+            if (closed) {
+                throw new TransportException("Transport is closed");
+            }
         }
         String remoteHostname = remoteAddress.getHostString();
         Socket newSocket = socketFactory.createSocket(remoteHostname, remoteAddress.getPort());
         synchronized (this) {
-            if (disconnects == disconnectCount) {
+            if (!closed) {
                 this.socket = newSocket;
                 initWithSocket(remoteHostname);
                 return;
@@ -124,7 +125,7 @@ public class DirectTcpTransport<D extends PacketData<?>, P extends Packet<?>> im
     public void disconnect() throws IOException {
         Socket socketToClose;
         synchronized (this) {
-            disconnectCount++;
+            closed = true;
             socketToClose = socket;
             if (socketToClose == null) {
                 return;

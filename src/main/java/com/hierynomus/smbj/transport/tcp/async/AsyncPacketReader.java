@@ -70,6 +70,9 @@ public class AsyncPacketReader<D extends PacketData<?>> {
 
                 @Override
                 public void completed(Integer bytesRead, PacketBufferReader reader) {
+                    if (stopped.get()) {
+                        return;
+                    }
                     logger.trace("Received {} bytes", bytesRead);
                     if (bytesRead < 0) {
                         handleClosedReader();
@@ -78,7 +81,7 @@ public class AsyncPacketReader<D extends PacketData<?>> {
                     try {
                         processPackets(reader);
                         initiateNextRead(reader);
-                    } catch (RuntimeException e) {
+                    } catch (Throwable e) {
                         handleAsyncFailure(e);
                     }
                 }
@@ -89,7 +92,7 @@ public class AsyncPacketReader<D extends PacketData<?>> {
                 }
 
                 private void processPackets(PacketBufferReader reader) {
-                    for (byte[] packetBytes = reader.readNext(); packetBytes != null; packetBytes = reader
+                    for (byte[] packetBytes = reader.readNext(); packetBytes != null && !stopped.get(); packetBytes = reader
                         .readNext()) {
                         readAndHandlePacket(packetBytes);
                     }
@@ -115,6 +118,9 @@ public class AsyncPacketReader<D extends PacketData<?>> {
     }
 
     private void handleAsyncFailure(Throwable exc) {
+        if (!stopped.compareAndSet(false, true)) {
+            return;
+        }
         if (isChannelClosedByOtherParty(exc)) {
             logger.trace("Channel to {} closed by other party, closing it locally.", remoteHost);
         } else {
@@ -122,7 +128,11 @@ public class AsyncPacketReader<D extends PacketData<?>> {
             logger.error("{} on channel to {}, closing channel: {}", excClass, remoteHost, exc.getMessage());
             logger.debug("Exception was: ", exc);
         }
-        closeChannelQuietly();
+        try {
+            closeChannelQuietly();
+        } finally {
+            handler.handleError(exc);
+        }
     }
 
     private boolean isChannelClosedByOtherParty(Throwable exc) {

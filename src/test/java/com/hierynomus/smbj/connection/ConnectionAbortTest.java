@@ -348,13 +348,11 @@ public class ConnectionAbortTest {
     @Test
     public void abortWhileSocketFactoryIsBlockedClosesLateSocketWithoutStartingReader() throws Exception {
         try (AbortTestConnection test = new AbortTestConnection()) {
-            DirectTcpTransport<?, ?> transport = (DirectTcpTransport<?, ?>) test.connection.transport;
-            transport.disconnect();
+            test.connection.transport.disconnect();
             test.reader.join(3000);
             assertFalse(test.reader.isAlive());
             Field readerField = DirectTcpTransport.class.getDeclaredField("packetReaderThread");
             readerField.setAccessible(true);
-            Object reader = readerField.get(transport);
             TestSocket socket = new TestSocket();
             SocketFactory socketFactory = mock(SocketFactory.class);
             CountDownLatch creating = new CountDownLatch(1);
@@ -364,7 +362,10 @@ public class ConnectionAbortTest {
                 assertTrue(resume.await(3, TimeUnit.SECONDS));
                 return socket;
             });
-            transport.setSocketFactory(socketFactory);
+            // Disconnect is terminal; use a fresh transport for this connection attempt.
+            DirectTcpTransport<com.hierynomus.smb.SMBPacketData<?>, com.hierynomus.smb.SMBPacket<?, ?>> transport =
+                new DirectTcpTransport<>(socketFactory, 0, TransportLifecycleReviewTest.HANDLERS);
+            test.connection.transport = transport;
             FutureTask<TransportException> connector = task(() -> assertThrows(TransportException.class,
                 () -> test.connection.connect("127.0.0.1", 445)));
             try {
@@ -382,7 +383,7 @@ public class ConnectionAbortTest {
             assertTrue(socket.isClosed());
             assertEquals(1, socket.closeCalls.get());
             assertFalse(transport.isConnected());
-            assertSame(reader, readerField.get(transport));
+            assertNull(readerField.get(transport));
             assertFalse(test.reader.isAlive());
             assertEquals(1, test.closedEvents.get());
         }
