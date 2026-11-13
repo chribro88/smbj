@@ -19,30 +19,53 @@ import com.hierynomus.msdtyp.AccessMask;
 import com.hierynomus.msfscc.FileAttributes;
 import com.hierynomus.mssmb2.*;
 import com.hierynomus.protocol.transport.TransportLayer;
+import com.hierynomus.security.bc.BCSecurityProvider;
+import com.hierynomus.security.jce.JceSecurityProvider;
 import com.hierynomus.smb.SMBPacket;
 import com.hierynomus.smbj.connection.Connection;
+import com.hierynomus.smbj.auth.NtlmAuthenticator;
 import com.hierynomus.smbj.session.Session;
 import com.hierynomus.smbj.share.DiskShare;
 import com.hierynomus.smbj.share.File;
 import com.hierynomus.smbj.transport.tcp.direct.DirectTcpTransport;
+import com.hierynomus.smbj.transport.tcp.async.AsyncDirectTcpTransportFactory;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.Arguments;
 
 import java.io.IOException;
 import java.util.*;
+import java.util.stream.Stream;
 
 import static com.hierynomus.smbj.testing.MultichannelTestSupport.*;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class SingleChannelSigningIT {
+    static Stream<Arguments> signingConfigurations() {
+        return configurations().flatMap(configuration -> {
+            Object[] values = configuration.get();
+            return Stream.of(false, true).flatMap(async -> Stream.of(false, true)
+                    .map(jce -> Arguments.of(values[0], values[1], values[2], async, jce)));
+        });
+    }
+
     @ParameterizedTest
-    @MethodSource("com.hierynomus.smbj.testing.MultichannelTestSupport#configurations")
-    void existingFileWorksWithNegotiatedSigningAndAfterGmacBindingRejection(String port, boolean encryption, boolean writeThrough) throws Exception {
+    @MethodSource("signingConfigurations")
+    void existingFileWorksWithNegotiatedSigningAndAfterGmacBindingRejection(String port, boolean encryption,
+            boolean writeThrough, boolean async, boolean jce) throws Exception {
         assumeTrue(port != null, "SMB_TEST_PORT enables dedicated server tests");
         List<TransportLayer<SMBPacket<?, ?>>> transports = new ArrayList<>();
-        SmbConfig settings = SmbConfig.builder(config(encryption)).withTransportLayerFactory((handlers, configuration) -> {
-            TransportLayer<SMBPacket<?, ?>> transport = new DirectTcpTransport<>(configuration.getSocketFactory(), configuration.getSoTimeout(), handlers);
+        SmbConfig base = config(encryption);
+        boolean gmac = base.getSigningAlgorithms().equals(Collections.singletonList(SMB3SigningAlgorithm.AES_GMAC));
+        SmbConfig settings = SmbConfig.builder(base)
+                .withSecurityProvider(jce ? (gmac ? new JceSecurityProvider() : new JceSecurityProvider(new BouncyCastleProvider()))
+                        : new BCSecurityProvider())
+                .withAuthenticators(new NtlmAuthenticator.Factory()).withTransportLayerFactory((handlers, configuration) -> {
+            TransportLayer<SMBPacket<?, ?>> transport = async
+                    ? new AsyncDirectTcpTransportFactory().createTransportLayer(handlers, configuration)
+                    : new DirectTcpTransport<>(configuration.getSocketFactory(), configuration.getSoTimeout(), handlers);
             transports.add(transport);
             return transport;
         }).build();
@@ -51,6 +74,11 @@ class SingleChannelSigningIT {
              Connection primary = client.connect(hostname(), Integer.parseInt(port));
              Session session = primary.authenticate(authentication());
              DiskShare share = (DiskShare) session.connectShare(shareName())) {
+            System.out.printf("SIGNING_SINGLE provider=%s backend=%s transport=%s encrypt=%s writeThrough=%s dialect=%s signing=%s cipher=%s%n",
+                    settings.getSecurityProvider().getClass().getSimpleName(), jce && gmac ? "default-JCE" : "BC",
+                    async ? "AsyncDirectTcpTransport" : "DirectTcpTransport", encryption, writeThrough,
+                    primary.getNegotiatedProtocol().getDialect(), primary.getConnectionContext().getSigningAlgorithm(),
+                    primary.getConnectionContext().getCipherId());
             try (File file = share.openFile(name, EnumSet.of(AccessMask.GENERIC_READ, AccessMask.GENERIC_WRITE),
                     EnumSet.of(FileAttributes.FILE_ATTRIBUTE_NORMAL), SMB2ShareAccess.ALL, SMB2CreateDisposition.FILE_CREATE,
                     writeThrough ? EnumSet.of(SMB2CreateOptions.FILE_WRITE_THROUGH) : EnumSet.noneOf(SMB2CreateOptions.class))) {
