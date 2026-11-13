@@ -16,6 +16,7 @@
 package com.hierynomus.smbj.connection.packet;
 
 import com.hierynomus.mssmb2.SMB2PacketData;
+import com.hierynomus.mssmb2.SMB2MessageCommandCode;
 import com.hierynomus.protocol.transport.TransportException;
 import com.hierynomus.smbj.connection.SequenceWindow;
 import org.slf4j.Logger;
@@ -39,8 +40,11 @@ public class SMB2CreditGrantingPacketHandler extends SMB2PacketHandler {
 
     @Override
     protected void doSMB2Handle(SMB2PacketData packetData) throws TransportException {
-        sequenceWindow.creditsGranted(packetData.getHeader().getCreditResponse());
-        logger.debug("Server granted us {} credits for {}, now available: {} credits", packetData.getHeader().getCreditResponse(), packetData, sequenceWindow.available());
+        // SESSION_SETUP needs the provisional authentication key held by SMBSessionBuilder.
+        if (packetData.getHeader().getMessage() != SMB2MessageCommandCode.SMB2_SESSION_SETUP) {
+            sequenceWindow.creditsGranted(packetData.getHeader().getCreditResponse());
+            logger.debug("Server granted us {} credits for {}, now available: {} credits", packetData.getHeader().getCreditResponse(), packetData, sequenceWindow.available());
+        }
         next.handle(packetData);
     }
 }

@@ -361,6 +361,10 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
         return Futures.get(this.<T>send(packet), config.getTransactTimeout(), TimeUnit.MILLISECONDS, TransportException.Wrapper);
     }
 
+    void sessionSetupAccepted(com.hierynomus.mssmb2.messages.SMB2SessionSetup response) {
+        sequenceWindow.creditsGranted(response.getHeader().getCreditResponse());
+    }
+
     private int calculateGrantedCredits(final SMB2Packet packet, final int availableCredits) {
         final int grantCredits;
         int maxPayloadSize = packet.getMaxPayloadSize();

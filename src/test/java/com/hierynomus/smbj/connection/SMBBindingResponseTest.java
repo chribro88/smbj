@@ -124,9 +124,11 @@ class SMBBindingResponseTest {
             assertTrue(failure.getMessage().contains("exchange=1"));
             assertTrue(failure.getMessage().contains("status=0x00000000"));
             verify(session, never()).addChannel(any(), any());
+            verify(secondary, never()).sessionSetupAccepted(any());
         } else {
             assertSame(session, builder.bind(session, new PacketSignatory(new BCSecurityProvider())));
             verify(session).addChannel(eq(secondary), any());
+            verify(secondary).sessionSetupAccepted(any());
         }
         assertSame(originalKey, keys.getSigningKey());
         assertSame(encryptionKey, keys.getEncryptionKey());
@@ -145,6 +147,25 @@ class SMBBindingResponseTest {
         assertTrue(failure.getMessage().contains("exchange=1"));
         assertTrue(failure.getMessage().contains("status=0xc0000016"));
         verify(session, never()).addChannel(any(), any());
+        verify(secondary, never()).sessionSetupAccepted(any());
+    }
+
+    @ParameterizedTest
+    @CsvSource({"false,false", "true,false", "true,true"})
+    void authenticatesSignedBindingErrorsBeforeGrantingCredits(boolean signed, boolean corrupt) throws Exception {
+        SMBSessionBuilder builder = builder(true);
+        when(secondary.sendAndReceive(any())).thenAnswer(call -> {
+            requestBytes(call.getArgument(0));
+            return response(NtStatus.STATUS_ACCESS_DENIED.getValue(), signed, corrupt, originalKey.getEncoded(), 7);
+        });
+        if (corrupt) {
+            assertThrows(IOException.class, () -> builder.bind(session, new PacketSignatory(new BCSecurityProvider())));
+        } else {
+            assertThrows(SMBApiException.class, () -> builder.bind(session, new PacketSignatory(new BCSecurityProvider())));
+        }
+        verify(secondary, times(signed && !corrupt ? 1 : 0)).sessionSetupAccepted(any());
+        verify(session, never()).addChannel(any(), any());
+        assertSame(originalKey, keys.getSigningKey());
     }
 
     // Behavioral regression: go-smb2 7f69f658, TestBindChannelMultiRoundAuthentication.
@@ -367,7 +388,8 @@ class SMBBindingResponseTest {
     }
 
     private SMB2SessionSetup response(long status, boolean signed, boolean tampered, byte[] key, int padding, int sessionFlags) throws Exception {
-        if (status != 0 && status != NtStatus.STATUS_MORE_PROCESSING_REQUIRED.getValue()) {
+        boolean error = status != 0 && status != NtStatus.STATUS_MORE_PROCESSING_REQUIRED.getValue();
+        if (error && !signed) {
             SMB2SessionSetup rejected = new SMB2SessionSetup();
             rejected.getHeader().setSessionId(47);
             rejected.getHeader().setStatusCode(status);
@@ -378,7 +400,11 @@ class SMBBindingResponseTest {
         header.putInt(0x424d53fe).putShort((short) 64).putShort((short) 1).putInt((int) status)
                 .putShort((short) 1).putShort((short) 1).putInt(signed ? 9 : 1).putInt(0).putLong(lastMessageId)
                 .putInt(0).putInt(0).putLong(47).put(new byte[16]);
-        header.putShort((short) 9).putShort((short) sessionFlags).putShort((short) 72).putShort((short) 1).put((byte) 0x60);
+        if (error) {
+            header.putShort((short) 9).put((byte) 0).put((byte) 0).putInt(1).put((byte) 0);
+        } else {
+            header.putShort((short) 9).putShort((short) sessionFlags).putShort((short) 72).putShort((short) 1).put((byte) 0x60);
+        }
         if (signed) {
             // Independent wire-signature oracle; includes trailing server padding.
             byte[] signature = independentSignature(key, wire);
