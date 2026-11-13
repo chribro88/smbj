@@ -46,6 +46,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.ArrayList;
+import java.util.stream.Stream;
+import org.junit.jupiter.params.provider.Arguments;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.zip.GZIPInputStream;
@@ -369,12 +372,38 @@ public class SMB2FileIntegrationTest {
         });
     }
 
-    @ParameterizedTest(name = "should write async file")
-    @MethodSource("com.hierynomus.smbj.testing.TestingUtils#defaultTestingConfig")
+    private static Stream<Arguments> asyncWriteConfigurations() {
+        List<Arguments> configs = new ArrayList<>();
+        for (boolean jce : new boolean[]{false, true}) {
+            for (boolean async : new boolean[]{false, true}) {
+                for (boolean encrypted : new boolean[]{false, true}) {
+                    SmbConfig.Builder config = SmbConfig.builder(TestingUtils.config(
+                            com.hierynomus.mssmb2.SMB2Dialect.SMB_3_1_1, encrypted, true))
+                            .withSecurityProvider(jce ? new com.hierynomus.security.jce.JceSecurityProvider(
+                                    new org.bouncycastle.jce.provider.BouncyCastleProvider())
+                                    : new com.hierynomus.security.bc.BCSecurityProvider())
+                            .withSigningAlgorithms(com.hierynomus.mssmb2.SMB3SigningAlgorithm.AES_CMAC);
+                    if (async) config.withTransportLayerFactory(new com.hierynomus.smbj.transport.tcp.async.AsyncDirectTcpTransportFactory());
+                    configs.add(Arguments.of(config.build()));
+                }
+            }
+        }
+        return configs.stream();
+    }
+
+    @ParameterizedTest(name = "should write async file [{index}]")
+    @MethodSource("asyncWriteConfigurations")
     public void shouldWriteAsyncFile(SmbConfig c) throws Exception {
         byte[] bytes = new byte[2 * 1024 * 1024 + 10];
         TestingUtils.RANDOM.nextBytes(bytes);
         samba.withAuthenticatedClient(c, DEFAULT_AUTHENTICATION_CONTEXT, session -> {
+            com.hierynomus.smbj.connection.ConnectionContext negotiated = session.getConnection().getConnectionContext();
+            com.hierynomus.mssmb2.SMB3SigningAlgorithm signing = negotiated.getSigningAlgorithm();
+            if (signing == null) signing = com.hierynomus.mssmb2.SMB3SigningAlgorithm.AES_CMAC;
+            assertThat(signing).isEqualTo(com.hierynomus.mssmb2.SMB3SigningAlgorithm.AES_CMAC);
+            System.out.printf("ASYNC_WRITE provider=%s backend=BC transport=%s encrypt=%s signing=%s cipher=%s fixture=%s%n",
+                    c.getSecurityProvider().getClass().getSimpleName(), c.getTransportLayerFactory().getClass().getSimpleName(),
+                    c.isEncryptData(), signing, negotiated.getCipherId(), samba.execInContainer("smbd", "--version").getStdout().trim());
             try (DiskShare share = (DiskShare) session.connectShare("user")) {
                 Future<Long> fut = null;
                 try (File f = share.openFile("bigfile", EnumSet.of(AccessMask.GENERIC_WRITE), null,

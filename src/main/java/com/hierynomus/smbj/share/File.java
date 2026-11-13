@@ -54,6 +54,29 @@ public class File extends DiskEntry {
         this.writer = new SMB2Writer(diskShare, fileId, fileName.toUncPath());
     }
 
+    /** Completes this handle's queued async writes before issuing CLOSE. */
+    @Override
+    public void close() {
+        try {
+            writer.finishAsyncWrites();
+        } catch (RuntimeException | Error failure) {
+            try {
+                super.close();
+            } catch (RuntimeException | Error cleanupFailure) {
+                failure.addSuppressed(cleanupFailure);
+            }
+            throw failure;
+        }
+        super.close();
+    }
+
+    /** Cancels queued async writes before issuing CLOSE without waiting for its response. */
+    @Override
+    public void closeNoWait() {
+        writer.cancelAsyncWrites();
+        super.closeNoWait();
+    }
+
     /**
      * Write the data in buffer to this file at position fileOffset.
      *
@@ -116,6 +139,8 @@ public class File extends DiskEntry {
     /**
      * Async Write all available data from the byte chunk provider to this file.
      * The offset in the file to which data is written is determined by {@link ByteChunkProvider#getOffset()}.
+     * The provider is consumed before this method returns, waiting for bounded pipeline
+     * capacity when needed. Closing this File waits for its queued async writes.
      *
      * @param provider the byte chunk provider
      * @return A future containing the total number of bytes written to the remote.

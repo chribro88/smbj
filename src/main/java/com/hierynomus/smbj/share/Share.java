@@ -39,6 +39,7 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Future;
+import java.util.concurrent.RunnableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -210,7 +211,18 @@ public class Share implements AutoCloseable {
     }
 
     SMB2WriteResponse write(SMB2FileId fileId, ByteChunkProvider provider) {
-        return receive(writeAsync(fileId, provider), "Write", fileId, StatusHandler.SUCCESS, writeTimeout);
+        return receiveWrite(fileId, writeAsync(fileId, provider));
+    }
+
+    SMB2WriteResponse receiveWrite(SMB2FileId fileId, Future<SMB2WriteResponse> response) {
+        return receive(response, "Write", fileId, StatusHandler.SUCCESS, writeTimeout);
+    }
+
+    void executeAsyncWrite(RunnableFuture<?> write) {
+        if (!isConnected()) {
+            throw new SMBRuntimeException(getClass().getSimpleName() + " has already been closed");
+        }
+        session.executeAsyncWrite(write);
     }
 
     Future<SMB2WriteResponse> writeAsync(SMB2FileId fileId, ByteChunkProvider provider) {

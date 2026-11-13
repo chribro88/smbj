@@ -45,6 +45,10 @@ import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.Future;
+import java.util.concurrent.RunnableFuture;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
@@ -79,9 +83,16 @@ public class Session implements AutoCloseable {
     private final java.util.Set<Connection> pendingChannels = new java.util.HashSet<>();
     private boolean closing;
     private volatile boolean closed;
+    private final ThreadPoolExecutor asyncWrites = new ThreadPoolExecutor(4, 4, 30, TimeUnit.SECONDS,
+            new ArrayBlockingQueue<Runnable>(64), task -> {
+                Thread thread = new Thread(task, "SMBJ async write");
+                thread.setDaemon(true);
+                return thread;
+            });
 
     public Session(Connection connection, SmbConfig config, AuthenticationContext userCredentials, SMBEventBus bus, PathResolver pathResolver, Signatory signatory, PacketEncryptor encryptor) {
         this.connection = connection;
+        asyncWrites.allowCoreThreadTimeOut(true);
         if (connection != null) {
             channels.add(connection);
         }
@@ -94,6 +105,22 @@ public class Session implements AutoCloseable {
         this.encryptor = encryptor;
         if (bus != null) {
             bus.subscribe(this);
+        }
+    }
+
+    /** Schedules share write continuations away from receive threads, with bounded per-session admission. */
+    public void executeAsyncWrite(RunnableFuture<?> write) {
+        synchronized (channels) {
+            if (closing || closed || channelsFailed.get()) {
+                throw new RejectedExecutionException("SMB session is closing or closed");
+            }
+        }
+        asyncWrites.execute(write);
+    }
+
+    private void stopAsyncWrites() {
+        for (Runnable queued : asyncWrites.shutdownNow()) {
+            ((Future<?>) queued).cancel(false);
         }
     }
 
@@ -270,6 +297,7 @@ public class Session implements AutoCloseable {
     }
 
     public void logoff() throws TransportException {
+        stopAsyncWrites();
         try {
             leaseManager.close();
             logger.info("Logging off session {} from host {}", sessionId, connection.getRemoteHostname());
@@ -532,16 +560,19 @@ public class Session implements AutoCloseable {
 
     @Handler
     private void channelClosed(com.hierynomus.smbj.event.ConnectionClosed event) {
+        boolean lastChannel;
         synchronized (channels) {
             if (channels.remove(event.getConnection())) {
                 channelKeys.remove(event.getConnection());
-                channelSequence.incrementAndGet();
+                if (multichannel) channelSequence.incrementAndGet();
             }
-            if (channels.isEmpty()) {
+            lastChannel = channels.isEmpty();
+            if (lastChannel) {
                 channelsFailed.set(true);
                 leaseManager.abort();
             }
         }
+        if (lastChannel) stopAsyncWrites();
     }
 
     // CUSTOM ADDED: abandon an uncertain write generation and release every outstanding request.
@@ -549,6 +580,7 @@ public class Session implements AutoCloseable {
         if (!channelsFailed.compareAndSet(false, true)) {
             return;
         }
+        stopAsyncWrites();
         for (Connection channel : channels) {
             channel.handleError(failure);
         }
