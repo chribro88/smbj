@@ -63,7 +63,18 @@ public class SMB2PacketData extends SMBPacketData<SMB2PacketHeader> {
      * Check whether this is an SMB2_OPLOCK_BREAK Notification packet
      */
     public boolean isOplockBreakNotification() {
-        return getHeader().getMessageId() == 0xFFFFFFFFFFFFFFFFL && getHeader().getMessage() == SMB2_OPLOCK_BREAK;
+        if (getHeader().getMessage() != SMB2_OPLOCK_BREAK
+                || !getHeader().isFlagSet(SMB2MessageFlag.SMB2_FLAGS_SERVER_TO_REDIR)) {
+            return false;
+        }
+        if (getHeader().getMessageId() == 0xFFFFFFFFFFFFFFFFL) {
+            return true;
+        }
+        // Lease notifications (44) differ from acknowledgement responses (36), even with a random GMAC MID.
+        int start = getHeader().getHeaderStartPosition();
+        int end = getHeader().getMessageEndPosition();
+        return start >= 0 && end >= start && end - start >= 108 && end <= dataBuffer.wpos()
+                && dataBuffer.array()[start + 64] == 44 && dataBuffer.array()[start + 65] == 0;
     }
 
 
@@ -77,6 +88,13 @@ public class SMB2PacketData extends SMBPacketData<SMB2PacketHeader> {
 
     public SMB2PacketData next() throws Buffer.BufferException {
         if (isCompounded()) {
+            int start = getHeader().getHeaderStartPosition();
+            int end = getHeader().getMessageEndPosition();
+            int next = getHeader().getNextCommandOffset();
+            if (next < 64 || (next & 7) != 0 || end < start || end > dataBuffer.wpos() - 64) {
+                throw new Buffer.BufferException("Invalid compounded message extent");
+            }
+            dataBuffer.rpos(end);
             return new SMB2PacketData(dataBuffer);
         } else {
             return null;

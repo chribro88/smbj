@@ -18,6 +18,9 @@ package com.hierynomus.smbj.connection;
 import com.hierynomus.mssmb2.SMB2Packet;
 import com.hierynomus.mssmb2.SMB2PacketHeader;
 import com.hierynomus.mssmb2.SMB2MessageCommandCode;
+import com.hierynomus.mssmb2.SMB2Dialect;
+import com.hierynomus.mssmb2.SMB2MessageFlag;
+import com.hierynomus.mssmb2.messages.SMB2Cancel;
 import com.hierynomus.protocol.commons.concurrent.AFuture;
 import com.hierynomus.protocol.commons.concurrent.CancellableFuture;
 import com.hierynomus.protocol.commons.concurrent.Promise;
@@ -39,6 +42,8 @@ public class Request {
     private final boolean signingRequired;
     private final Date timestamp;
     private volatile long asyncId;
+    private boolean asynchronous;
+    private boolean cancellationAttempted;
 
     public Request(SMBPacket<?, ?> packet, long messageId, UUID cancelId) {
         this(packet, messageId, cancelId, false);
@@ -63,7 +68,7 @@ public class Request {
         this.promise = new Promise<>(String.valueOf(messageId), SMBRuntimeException.Wrapper);
     }
 
-    public long getAsyncId() {
+    public synchronized long getAsyncId() {
         return asyncId;
     }
 
@@ -99,8 +104,22 @@ public class Request {
         return signingRequired;
     }
 
-    public void setAsyncId(long asyncId) {
+    public synchronized void setAsyncId(long asyncId) {
         this.asyncId = asyncId;
+        this.asynchronous = true;
+    }
+
+    synchronized SMB2Cancel newCancel(SMB2Dialect dialect, long sessionId) {
+        if (cancellationAttempted || promise.isFulfilled()) {
+            return null;
+        }
+        // A failed send may already have consumed this request's GMAC CANCEL nonce.
+        cancellationAttempted = true;
+        SMB2Cancel cancel = new SMB2Cancel(dialect, sessionId, messageId, asyncId);
+        if (asynchronous) {
+            cancel.getHeader().setFlag(SMB2MessageFlag.SMB2_FLAGS_ASYNC_COMMAND);
+        }
+        return cancel;
     }
 
     public Promise<SMB2Packet, SMBRuntimeException> getPromise() {

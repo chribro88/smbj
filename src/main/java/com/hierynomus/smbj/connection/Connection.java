@@ -521,10 +521,10 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
         @Override
         @SuppressWarnings("FutureReturnValueIgnored")
         public void cancel() {
-            SMB2Cancel cancel = new SMB2Cancel(connectionContext.getNegotiatedProtocol().getDialect(),
-                sessionId,
-                request.getMessageId(),
-                request.getAsyncId());
+            SMB2Cancel cancel = request.newCancel(connectionContext.getNegotiatedProtocol().getDialect(), sessionId);
+            if (cancel == null) {
+                return;
+            }
             try {
                 sessionTable.find(sessionId).send(cancel, Connection.this);
             } catch (TransportException e) {

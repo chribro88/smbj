@@ -27,7 +27,6 @@ import static com.hierynomus.mssmb2.SMB2PacketHeader.SIGNATURE_SIZE;
 import static com.hierynomus.mssmb2.SMB2PacketHeader.STRUCTURE_SIZE;
 
 import java.security.MessageDigest;
-import java.util.Arrays;
 
 import javax.crypto.SecretKey;
 
@@ -37,7 +36,6 @@ import org.slf4j.LoggerFactory;
 import com.hierynomus.mssmb2.SMB2Packet;
 import com.hierynomus.mssmb2.SMB2PacketData;
 import com.hierynomus.mssmb2.SMB2PacketHeader;
-import com.hierynomus.protocol.commons.buffer.Buffer;
 import com.hierynomus.security.Mac;
 import com.hierynomus.security.SecurityException;
 import com.hierynomus.security.SecurityProvider;
@@ -67,6 +65,12 @@ public class PacketSignatory implements Signatory {
     public boolean verify(SMB2PacketData packet, SecretKey secretKey) {
         try {
             SMBBuffer buffer = packet.getDataBuffer();
+            SMB2PacketHeader header = packet.getHeader();
+            if (!header.isFlagSet(SMB2MessageFlag.SMB2_FLAGS_SERVER_TO_REDIR)
+                    || !header.isFlagSet(SMB2_FLAGS_SIGNED)
+                    || !validExtent(buffer, header)) {
+                return false;
+            }
             Mac mac = getMac(secretKey, packet.getHeader(), securityProvider);
             int headerStart = packet.getHeader().getHeaderStartPosition();
             int bodyStart = headerStart + STRUCTURE_SIZE;
@@ -75,17 +79,19 @@ public class PacketSignatory implements Signatory {
             mac.update(buffer.array(), bodyStart, packet.getHeader().getMessageEndPosition() - bodyStart);
             byte[] signature = mac.doFinal();
             byte[] receivedSignature = packet.getHeader().getSignature();
-            if (!MessageDigest.isEqual(Arrays.copyOf(signature, SIGNATURE_SIZE), receivedSignature)) {
-                logger.error("Signatures for packet {} do not match (received: {}, calculated: {})", packet,
-                        Arrays.toString(receivedSignature), Arrays.toString(signature));
-                logger.error("Packet {} has header: {}", packet, packet.getHeader());
-                return false;
-            }
-
-            return true;
+            return MessageDigest.isEqual(java.util.Arrays.copyOf(signature, SIGNATURE_SIZE), receivedSignature);
         } catch (SecurityException e) {
             throw new IllegalStateException(e);
         }
+    }
+
+    private static boolean validExtent(SMBBuffer buffer, SMB2PacketHeader header) {
+        int start = header.getHeaderStartPosition();
+        int end = header.getMessageEndPosition();
+        int next = header.getNextCommandOffset();
+        return start >= 0 && end >= start && end - start >= STRUCTURE_SIZE && end <= buffer.wpos()
+                && buffer.array()[start + 4] == STRUCTURE_SIZE && buffer.array()[start + 5] == 0
+                && (next == 0 || (next == end - start && (next & 7) == 0));
     }
 
     private static Mac getMac(SecretKey secretKey, SMB2PacketHeader header, SecurityProvider securityProvider) throws SecurityException {
@@ -110,6 +116,9 @@ public class PacketSignatory implements Signatory {
         }
 
         public void init(byte[] key) throws SecurityException {
+            if (key.length != 16) {
+                throw new IllegalArgumentException("SMB AES-128-GMAC requires a 16-byte signing key");
+            }
             cipher.init(Cipher.CryptMode.ENCRYPT, key, new GCMParameterSpec(128, nonce));
         }
         public void update(byte value) { singleByte[0] = value; update(singleByte); }
@@ -144,15 +153,23 @@ public class PacketSignatory implements Signatory {
         public void write(SMBBuffer buffer) {
             serializedBuffer = buffer;
             try {
-                wrappedPacket.getHeader().setFlag(SMB2_FLAGS_SIGNED);
+                SMB2PacketHeader header = wrappedPacket.getHeader();
+                if (header.isFlagSet(SMB2MessageFlag.SMB2_FLAGS_SERVER_TO_REDIR)) {
+                    throw new IllegalArgumentException("Cannot send a server response on a client connection");
+                }
+                header.setFlag(SMB2_FLAGS_SIGNED);
                 int packetStartPos = buffer.wpos();
-                SigningBuffer signingBuffer = new SigningBuffer(buffer);
-                // Write the real packet to the buffer
-                wrappedPacket.write(signingBuffer);
-                wrappedPacket.getHeader().setMessageEndPosition(buffer.wpos());
-                // The MAC in the signingbuffer now contains the right signature.
-                byte[] signature = signingBuffer.mac.doFinal();
-                // Copy the signature into the buffer's data at the right point.
+                wrappedPacket.write(buffer);
+                header.setMessageEndPosition(buffer.wpos());
+                if (!validExtent(buffer, header)) {
+                    throw new IllegalArgumentException("Invalid SMB message extent for signing");
+                }
+                Mac mac = getMac(secretKey, header, securityProvider);
+                mac.update(buffer.array(), packetStartPos, SIGNATURE_OFFSET);
+                mac.update(EMPTY_SIGNATURE);
+                mac.update(buffer.array(), packetStartPos + STRUCTURE_SIZE,
+                        buffer.wpos() - packetStartPos - STRUCTURE_SIZE);
+                byte[] signature = mac.doFinal();
                 System.arraycopy(signature, 0, buffer.array(), packetStartPos + SIGNATURE_OFFSET, SIGNATURE_SIZE);
             } catch (SecurityException e) {
                 // TODO other exception
@@ -164,37 +181,6 @@ public class PacketSignatory implements Signatory {
         @Override
         public SMBBuffer getBuffer() {
             return serializedBuffer;
-        }
-
-        private class SigningBuffer extends SMBBuffer {
-            private SMBBuffer wrappedBuffer;
-            private final Mac mac;
-
-            SigningBuffer(SMBBuffer wrappedBuffer) throws SecurityException {
-                this.wrappedBuffer = wrappedBuffer;
-                mac = getMac(secretKey, wrappedPacket.getHeader(), PacketSignatory.this.securityProvider);
-            }
-
-            @Override
-            public Buffer<SMBBuffer> putByte(byte b) {
-                mac.update(b);
-                wrappedBuffer.putByte(b);
-                return this;
-            }
-
-            @Override
-            public Buffer<SMBBuffer> putBuffer(Buffer<? extends Buffer<?>> buffer) {
-                mac.update(buffer.array(), buffer.rpos(), buffer.available());
-                wrappedBuffer.putBuffer(buffer);
-                return this;
-            }
-
-            @Override
-            public Buffer<SMBBuffer> putRawBytes(byte[] buf, int offset, int length) {
-                mac.update(buf, offset, length);
-                wrappedBuffer.putRawBytes(buf, offset, length);
-                return this;
-            }
         }
 
         @Override

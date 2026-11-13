@@ -32,8 +32,8 @@ import java.util.function.Consumer;
  * the NPE in {@code SMB2AsyncResponsePacketHandler} and the throw in {@code SMB2MessageConverter}
  * that a break would otherwise trigger. Every non-break packet is forwarded unchanged.
  *
- * <p>Inserted after frame validation, which exempts unsolicited breaks from request correlation
- * and signature verification (the break is unsigned, SessionId 0).
+ * <p>Runs after signature verification. Protocol-permitted unsigned notifications and
+ * authenticated signed/decrypted notifications are consumed before credit and request completion.
  */
 public class SMB2LeaseBreakPacketHandler extends SMB2PacketHandler {
     private static final Logger logger = LoggerFactory.getLogger(SMB2LeaseBreakPacketHandler.class);

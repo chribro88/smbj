@@ -118,13 +118,13 @@ public class SMB2SignatureVerificationPacketHandler extends SMB2PacketHandler {
     }
 
     boolean isValid(SMB2PacketData packetData) {
-        if (packetData.isOplockBreakNotification() || packetData.isDecrypted()) {
+        if (packetData.isDecrypted()) {
             return true;
         }
 
         long sessionId = packetData.getHeader().getSessionId();
         boolean signingRequired = false;
-        if (outstandingRequests != null) {
+        if (outstandingRequests != null && !packetData.isOplockBreakNotification()) {
             Request request = outstandingRequests.getRequestByMessageId(packetData.getSequenceNumber());
             if (request == null) {
                 logger.warn("Could not find request for packet {}", packetData);
@@ -151,7 +151,7 @@ public class SMB2SignatureVerificationPacketHandler extends SMB2PacketHandler {
                 return false;
             }
             logger.debug("Signature for packet {} verified.", packetData);
-        } else if (!packetData.isIntermediateAsyncResponse()
+        } else if (!packetData.isIntermediateAsyncResponse() && !packetData.isOplockBreakNotification()
             && (signingRequired || session != null && session.isSigningRequired())) {
             logger.warn("Illegal request, session requires message signing, but packet {} is not signed.", packetData);
             return false;

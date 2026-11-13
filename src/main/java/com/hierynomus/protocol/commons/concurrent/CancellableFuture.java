@@ -21,14 +21,12 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class CancellableFuture<V> extends AFuture<V> {
     private final AFuture<V> wrappedFuture;
     private final CancelCallback callback;
 
     private final AtomicBoolean cancelled = new AtomicBoolean(false);
-    private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
 
     public CancellableFuture(AFuture<V> wrappedFuture, CancelCallback cc) {
         this.wrappedFuture = wrappedFuture;
@@ -37,41 +35,25 @@ public class CancellableFuture<V> extends AFuture<V> {
 
     @Override
     public boolean cancel(boolean mayInterruptIfRunning) {
-        lock.writeLock().lock();
+        if (wrappedFuture.isDone() || !cancelled.compareAndSet(false, true)) {
+            return false;
+        }
         try {
-            if (isDone() || cancelled.getAndSet(true)) {
-                // Already done or cancelled
-                return false;
-            } else {
-                callback.cancel();
-                return true;
-            }
-        } catch (Throwable t) {
-            cancelled.set(false);
-            throw SMBRuntimeException.Wrapper.wrap(t);
-        } finally {
-            lock.writeLock().unlock();
+            callback.cancel();
+            return true;
+        } catch (RuntimeException e) {
+            throw SMBRuntimeException.Wrapper.wrap(e);
         }
     }
 
     @Override
     public boolean isCancelled() {
-        lock.readLock().lock();
-        try {
-            return cancelled.get();
-        } finally {
-            lock.readLock().unlock();
-        }
+        return cancelled.get();
     }
 
     @Override
     public boolean isDone() {
-        lock.readLock().lock();
-        try {
-            return cancelled.get() || wrappedFuture.isDone();
-        } finally {
-            lock.readLock().unlock();
-        }
+        return cancelled.get() || wrappedFuture.isDone();
     }
 
     @Override
