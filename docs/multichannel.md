@@ -86,6 +86,12 @@ production classes retain `options.release = 8`. The script uses pinned Samba
 and 64 MiB temporary shares. It only modifies containers carrying its owner label.
 The credentials below are disposable test credentials.
 
+For native Testcontainers tasks on rootless Docker, set
+`TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE` to the actual socket path on the Docker
+host and `TESTCONTAINERS_HOST_OVERRIDE` to its reachable published-port address.
+The native Samba fixture uses a dynamic host port and keeps port 445 inside the
+container. No privileged host-port permission is required.
+
 ```bash
 src/it/samba-multichannel.sh up SMB3_11 required
 export SMB_TEST_HOST=127.0.0.1 SMB_TEST_PORTS=36529,36530
