@@ -110,23 +110,28 @@ public class DirectTcpTransport<D extends PacketData<?>, P extends Packet<?>> im
         }
         String remoteHostname = remoteAddress.getHostString();
         Socket newSocket = socketFactory.createSocket(remoteHostname, remoteAddress.getPort());
-        synchronized (this) {
-            if (disconnects == disconnectCount) {
-                this.socket = newSocket;
-                initWithSocket(remoteHostname);
-                return;
+        try {
+            newSocket.setSoTimeout(soTimeout);
+            BufferedOutputStream newOutput = new BufferedOutputStream(newSocket.getOutputStream(), INITIAL_BUFFER_SIZE);
+            PacketReader<D> newReader = new DirectTcpPacketReader<>(remoteHostname, newSocket.getInputStream(),
+                    handlers.getPacketFactory(), handlers.getReceiver());
+            synchronized (this) {
+                if (disconnects != disconnectCount) {
+                    throw new TransportException("Transport disconnected while connecting");
+                }
+                output = newOutput;
+                packetReaderThread = newReader;
+                socket = newSocket;
+                newReader.start();
             }
+        } catch (IOException | RuntimeException | Error failure) {
+            try {
+                newSocket.close();
+            } catch (IOException cleanupFailure) {
+                failure.addSuppressed(cleanupFailure);
+            }
+            throw failure;
         }
-        // A disconnect must also cancel a socket that is still being created.
-        newSocket.close();
-        throw new TransportException("Transport disconnected while connecting");
-    }
-
-    private void initWithSocket(String remoteHostname) throws IOException {
-        this.socket.setSoTimeout(soTimeout);
-        this.output = new BufferedOutputStream(this.socket.getOutputStream(), INITIAL_BUFFER_SIZE);
-        packetReaderThread = new DirectTcpPacketReader<>(remoteHostname, socket.getInputStream(), handlers.getPacketFactory(), handlers.getReceiver());
-        packetReaderThread.start();
     }
 
 
