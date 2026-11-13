@@ -74,6 +74,27 @@ Full GMAC multichannel support remains incomplete. See the
 [acceptance matrix](full-gmac-multichannel/test-matrix.csv). Prior fixture results
 below describe their recorded revisions and do not qualify this combined branch.
 
+## Asynchronous writes
+
+`File.writeAsync` consumes the source on the calling thread with bounded
+backpressure, so its input buffer can be reused after return. Each session has
+four write workers and 64 queued operations; each active operation keeps at most
+4 MiB of chunks and 64 in-flight requests. These limits cover the writer's chunk
+cache, with transport/protocol buffers accounted for separately. A full session
+queue rejects a new submission with `RejectedExecutionException` before reading
+its provider.
+
+Positive short acknowledgements submit only the remaining tail. Counts beyond
+the actual submitted extent, zero progress, status failures and offset overflow
+fail the operation. A transport failure leaves unacknowledged writes uncertain.
+Normal File close waits for its accepted async writes; `closeNoWait` cancels them.
+Cancellation completes the local future and attempts each native CANCEL once.
+
+The native compatibility matrix covers Direct/Async TCP, encryption on/off,
+lightweight BC and JCE explicitly backed by BC. The Samba 4.7.6 fixture uses
+CMAC/CCM, which default SunJCE does not provide. GMAC primitive tests separately
+exercise default JCE; this legacy live matrix does not qualify GMAC multichannel.
+
 ## Reproducible integration and transfer measurements
 
 Run from the repository root with Docker and the repository's JDK 21 build. Main

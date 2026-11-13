@@ -16,6 +16,7 @@ The inherited GMAC-binding rejection remains containment and does not satisfy G0
 - Build/test runtime used here: the existing Temurin 21 installation at
   `/tmp/smb-relay-java21/opt/java/openjdk`; Gradle 8.13; Bouncy Castle 1.86.
 - Input checksums: [input-sha256.txt](input-sha256.txt).
+- Resolved production graph: [runtime-dependencies.txt](runtime-dependencies.txt).
 
 Neither upstream PR head `0de6366ac201701be5e4a0aa74a5750dcff36281` (#907) nor
 `3352e2b530bbc6c000781c708d499170c94d16a9` (#910) was an ancestor of the selected
@@ -43,6 +44,8 @@ signer-observation fixture.
   wrap or the reserved notification MID, while allowing the signed-long boundary.
   Credit charges are bounded before range allocation. Signing/serialization
   failures settle registered requests and retire only the failed channel.
+- Request cancellation completes its local future and wakes existing waiters.
+  Cancellation/completion races leave one consistent terminal result.
 - Request cancellation atomically captures synchronous/asynchronous identity and
   claims one attempt, including AsyncId zero. Failed cancellation cannot re-sign
   changed bytes under the same CANCEL nonce. Cancellation callbacks execute
@@ -68,6 +71,28 @@ The fixed SMB LOGOFF vector comes from smb-rs revision
 SMBJ implementations and supplied skeleton informed the integration; no new
 cryptographic dependency or hand-written AES/GHASH implementation was added.
 
+## Bounded asynchronous write ownership
+
+`SMB2Writer` reads the caller's provider on the calling thread, with backpressure.
+No provider reads occur after `writeAsync` returns; callers can reuse their input
+buffers. A worker retains each chunk until its acknowledgement permits advancing
+or submitting only the remaining tail. Counts are checked against the actual
+credit-limited submitted extent, not the larger retained snapshot. Status errors,
+zero/negative/oversized counts and offset overflow fail truthfully.
+
+Each session admits four active write workers and 64 queued operations. A queued
+producer waits for its worker before copying input. Each active operation retains
+at most 4 MiB of chunk data and at most 64 in-flight requests. This bounds the
+owned chunk cache to 16 MiB per session; it is not a bound on caller-owned data,
+transport buffers or all protocol request state. Cancellation churn and sustained
+transport-queue memory remain operational acceptance work.
+
+Normal File close drains its accepted async writes before sending CLOSE. No-wait
+close cancels them, preventing later tail submissions. Failures still release the
+remote handle. Session shutdown stops admission, interrupts active workers and
+settles queued futures. Losing one channel leaves the surviving session worker
+pool available; losing the last channel stops it.
+
 ## Executed validation
 
 | Run | Actual result | Scope |
@@ -77,6 +102,14 @@ cryptographic dependency or hand-written AES/GHASH implementation was added.
 | Initial additional lifecycle run | PASS: 37 tests | Both transports, async read/write failure, concurrent close, direct candidate configuration |
 | Exhaustion/provider-failure follow-up | PASS: 55 focused tests | Unsigned boundary/wrap; concurrent exhaustion; bounded credit charge; invalid provider tags; request cleanup and healthy-channel continuation |
 | `clean check` milestone | PASS: 716 tests, zero failures/skips | Full unit suite, Java 8 release compilation, license checks and JaCoCo report; integration tests remain separate |
+| Combined async `check` milestone | PASS: 753 tests, zero failures/skips | Full unit suite, including 21 async writer cases, worker limits, source ownership, actual submitted extents, File close ordering and cancellation races |
+| Native async compatibility matrix | PASS: 8 tests, zero failures/skips | Both transports; lightweight BC and explicitly configured JCE/BC; encryption on/off; full live readback beyond the pipeline window |
+
+The latest combined unit source revision is `df8c1accd0670a5deb75f21cb70727c8a788ea39`; the
+live async source revision is `c0bec22d4c1ac86c5493c52961fefda54fbb71cf`. Their production source trees are
+identical; the latter adds complete 8 MiB + 10 byte live readback assertions.
+Exact per-suite results and sanitized fixture metadata are in
+[validation-async.json](validation-async.json).
 
 The clean-check source revision is `cec9f6f2bd43a4e1174656bf08b247616ff1b825`.
 
@@ -99,13 +132,23 @@ PATH=/tmp/smb-relay-java21/opt/java/openjdk/bin:$PATH \
 
 The temporary init script limits test heaps to 384 MiB, test forks to one, and
 active processors to two. Log: `/tmp/smbj-full-gmac-check.log`. Integration tests
-are a separate Gradle task and have not been counted as part of `check`.
+are a separate Gradle task and have not been counted as part of `check`. The
+latest filtered live matrix runs `integrationTest -x buildSambaImage --tests
+'*SMB2FileIntegrationTest.shouldWriteAsyncFile'`, with
+`TESTCONTAINERS_HOST_OVERRIDE=localhost` and
+`TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/run/user/1000/docker-codex.sock`.
+Its legacy Samba 4.7.6 fixture validates CMAC/CCM compatibility, with BC and the
+JCE adapter explicitly configured with BC. Default JCE failed the four legacy
+CMAC/CCM variants due to unavailable algorithms; the diagnostic log is preserved.
+This result does not establish GMAC multichannel or default-JCE live GMAC/GCM
+interoperability.
 
 The local Sonar CLI reported no secrets in the changed scope, with an
 `Authentication was not successful` warning. This is not a clean authenticated
-SonarQube analysis claim. JDT.LS startup did not become ready, so Java compilation
-and tests provide the available semantic validation; no language-server diagnostic
-pass is claimed.
+SonarQube analysis claim. JDT.LS subsequently reached READY and returned no
+per-file diagnostics for SMB2Writer. A complete Gradle project diagnostic pass was
+not established; Java 8 release compilation and actual tests remain the semantic
+validation evidence.
 
 ## Remaining contract and release gates
 
@@ -116,15 +159,14 @@ pass is claimed.
 | G2 | NOT_RUN | Complete local matrix across providers/transports/runtimes; Java 8 runtime execution |
 | G3 | BLOCKED | Initial/final/reauthentication phase verification, all applicable notifications, replay/fencing and GMAC binding cases |
 | G4 | BLOCKED | Forced-GMAC multi-channel runs on capable independent Samba/Windows peers and target ONTAP release/configuration |
-| G5 | NOT_RUN | Sustained bounded-memory concurrent I/O, async partial-write progress, replacement/recovery and comparative measurements |
+| G5 | NOT_RUN | Sustained concurrent I/O and cancellation-churn memory (including transport queues), replacement/recovery and comparative measurements |
 | G6 | NOT_RUN | Complete source/provenance mapping, validated peer traces and complete reproducible review package |
 
 Specific remaining implementation work includes the approved G0 mechanism,
 phase-aware initial/reauthentication handling, complete notification coverage,
-bounded async short-write handling, replay/fencing and
-recovery semantics, and the remaining matrix assertions. Existing synchronous
-short-write and effective-admission behavior are retained; they do not establish
-all async or GMAC binding requirements.
+replay/fencing and recovery semantics, sustained cancellation/transport-queue
+memory validation, and the remaining matrix assertions. Local sync/async short-write checks and live legacy-server compatibility do not
+establish the GMAC binding, native fault-peer or sustained operational requirements.
 
 The supplied [protocol-resolution.md](protocol-resolution.md) contains the precise
 questions and required evidence. No external message has been sent. The current
