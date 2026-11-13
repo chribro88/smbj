@@ -61,6 +61,25 @@ public abstract class ByteChunkProvider implements Closeable {
         }
     }
 
+    // CUSTOM ADDED: WRITE Length bounds bytes consumed, independently of credit rounding.
+    public void writeBytes(Buffer<?> buffer, int length) {
+        lastWriteSize = 0;
+        while (lastWriteSize < length) {
+            byte[] chunk = new byte[Math.min(chunkSize, length - lastWriteSize)];
+            try {
+                int size = getChunk(chunk);
+                if (size <= 0 || size > chunk.length) {
+                    throw new SMBRuntimeException("WRITE source ended before the declared payload length");
+                }
+                buffer.putRawBytes(chunk, 0, size);
+                offset = Math.addExact(offset, size);
+                lastWriteSize += size;
+            } catch (IOException e) {
+                throw new SMBRuntimeException(e);
+            }
+        }
+    }
+
     public void writeChunk(Buffer<?> buffer) {
         lastWriteSize = 0;
         byte[] chunk = new byte[chunkSize];

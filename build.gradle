@@ -131,6 +131,11 @@ testing {
     }
 
     integrationTest(JvmTestSuite) {
+      targets.all {
+        testTask.configure {
+          include "**/*IT.*"
+        }
+      }
       dependencies {
         implementation project()
         implementation LOGBACK_CLASSIC

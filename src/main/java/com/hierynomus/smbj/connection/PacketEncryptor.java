@@ -29,14 +29,14 @@ import org.slf4j.LoggerFactory;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 import java.util.Arrays;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class PacketEncryptor {
     private static final Logger logger = LoggerFactory.getLogger(PacketEncryptor.class);
     private SecurityProvider securityProvider;
     private SMB3EncryptionCipher cipher;
     private SMB2Dialect dialect;
-    private AtomicInteger nonceCounter = new AtomicInteger(0);
+    private final AtomicLong nonceCounter = new AtomicLong();
 
     public PacketEncryptor(SecurityProvider securityProvider) {
         this.securityProvider = securityProvider;
@@ -106,7 +106,11 @@ public class PacketEncryptor {
     }
 
     byte[] getNewNonce() {
-        long nonce = System.nanoTime();
+        // CUSTOM ADDED: this encryptor is shared by all channels using a session key.
+        long nonce = nonceCounter.getAndUpdate(value -> value < 0 ? value : value + 1);
+        if (nonce < 0) {
+            throw new IllegalStateException("SMB encryption nonce space exhausted; establish a new session");
+        }
         SMBBuffer b = new SMBBuffer();
         b.putUInt64(nonce); // Little Endians go first
         int padding = cipher.getNonceLength() - 8; // 64 bits = 8 bytes

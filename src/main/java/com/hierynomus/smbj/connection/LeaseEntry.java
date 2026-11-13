@@ -155,10 +155,14 @@ public class LeaseEntry {
     /** Evict the cached enumeration tied to this lease and bump the generation (break/downgrade hook).
      *  Also closes and nulls the kept-open cache-enumeration handle so the server can reclaim it. */
     public int invalidateCache() {
+        return invalidateCache(true);
+    }
+
+    int invalidateCache(boolean closeHandle) {
         cache.invalidateAll();
         Directory old = cacheDirectory;
         cacheDirectory = null;
-        if (old != null) {
+        if (closeHandle && old != null) {
             old.closeSilently();
         }
         return cacheGeneration.incrementAndGet();

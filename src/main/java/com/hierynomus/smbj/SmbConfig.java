@@ -15,6 +15,8 @@
  */
 package com.hierynomus.smbj;
 
+import java.util.Collections;
+import com.hierynomus.mssmb2.SMB3SigningAlgorithm;
 import static com.hierynomus.mssmb2.SMB2Dialect.SMB_2_0_2;
 import static com.hierynomus.mssmb2.SMB2Dialect.SMB_2_1;
 import static com.hierynomus.mssmb2.SMB2Dialect.SMB_3_0;
@@ -79,6 +81,9 @@ public final class SmbConfig {
     private UUID clientGuid;
     private boolean signingRequired;
     private boolean signingEnabled;
+    private boolean optionalWriteSigning = true;
+    private List<SMB3SigningAlgorithm> signingAlgorithms =
+            Collections.singletonList(SMB3SigningAlgorithm.AES_CMAC);
     private boolean dfsEnabled;
     private boolean useMultiProtocolNegotiate;
     private SecurityProvider securityProvider;
@@ -162,6 +167,8 @@ public final class SmbConfig {
         clientGuid = other.clientGuid;
         signingRequired = other.signingRequired;
         signingEnabled = other.signingEnabled;
+        optionalWriteSigning = other.optionalWriteSigning;
+        signingAlgorithms = other.signingAlgorithms;
         dfsEnabled = other.dfsEnabled;
         securityProvider = other.securityProvider;
         readBufferSize = other.readBufferSize;
@@ -286,11 +293,19 @@ public final class SmbConfig {
         return ntlmConfig;
     }
 
+    public boolean isOptionalWriteSigning() {
+        return optionalWriteSigning;
+    }
+
     public Set<SMB2GlobalCapability> getClientCapabilities() {
         if (!SMB2Dialect.supportsSmb3x(dialects)) {
             return EnumSet.noneOf(SMB2GlobalCapability.class);
         }
         EnumSet<SMB2GlobalCapability> set = EnumSet.of(SMB2GlobalCapability.SMB2_GLOBAL_CAP_LARGE_MTU);
+        // All supported SMB 3.x dialects implement explicit channel binding.
+        if (SMB2Dialect.supportsSmb3x(dialects)) {
+            set.add(SMB2GlobalCapability.SMB2_GLOBAL_CAP_MULTI_CHANNEL);
+        }
         if (isDfsEnabled()) {
             set.add(SMB2GlobalCapability.SMB2_GLOBAL_CAP_DFS);
         }
@@ -307,6 +322,10 @@ public final class SmbConfig {
         return set;
     }
 
+    public List<SMB3SigningAlgorithm> getSigningAlgorithms() {
+        return signingAlgorithms;
+    }
+
     public static class Builder {
         private SmbConfig config;
         private NtlmConfig.Builder ntlmConfigBuilder;
@@ -319,6 +338,19 @@ public final class SmbConfig {
         Builder(SmbConfig baseConfig) {
             config = new SmbConfig(baseConfig);
             ntlmConfigBuilder = NtlmConfig.builder(config.ntlmConfig);
+        }
+
+        /**
+         * Selects the SMB 3.1.1 signing algorithms to advertise, in preference order.
+         * GMAC is supported for single-channel sessions only. For multichannel, select AES_CMAC
+         * before connecting; GMAC binding is rejected because signing nonce uniqueness is not guaranteed.
+         */
+        public Builder withSigningAlgorithms(SMB3SigningAlgorithm... algorithms) {
+            if (algorithms == null || algorithms.length == 0 || Arrays.asList(algorithms).contains(null)) {
+                throw new IllegalArgumentException("Signing algorithms cannot be empty or contain null");
+            }
+            config.signingAlgorithms = Collections.unmodifiableList(new ArrayList<>(Arrays.asList(algorithms)));
+            return this;
         }
 
         public Builder withRandomProvider(Random random) {
@@ -389,6 +421,12 @@ public final class SmbConfig {
                 }
                 config.authenticators.add(authenticator);
             }
+            return this;
+        }
+
+        // CUSTOM ADDED: control/session binding and server-required signing remain enabled.
+        public Builder withOptionalWriteSigning(boolean enabled) {
+            config.optionalWriteSigning = enabled;
             return this;
         }
 

@@ -57,7 +57,8 @@ public class Session implements AutoCloseable {
     private static final Logger logger = LoggerFactory.getLogger(Session.class);
     private long sessionId;
 
-    private Connection connection;
+    private final Connection connection;
+    private final com.hierynomus.smbj.connection.LeaseManager leaseManager = new com.hierynomus.smbj.connection.LeaseManager();
     private final SmbConfig config;
     private SMBEventBus bus;
     private final PathResolver pathResolver;
@@ -68,9 +69,22 @@ public class Session implements AutoCloseable {
     private ReentrantReadWriteLock nestedSessionsRwLock = new ReentrantReadWriteLock();
     private AuthenticationContext userCredentials;
     private SessionContext sessionContext;
+    // CUSTOM ADDED: one session/tree/open namespace, independent physical channel credits and signing keys.
+    private final java.util.concurrent.CopyOnWriteArrayList<Connection> channels = new java.util.concurrent.CopyOnWriteArrayList<>();
+    private final java.util.concurrent.ConcurrentMap<Connection, SecretKey> channelKeys = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.atomic.AtomicBoolean channelsFailed = new java.util.concurrent.atomic.AtomicBoolean();
+    private final java.util.concurrent.atomic.AtomicInteger nextChannel = new java.util.concurrent.atomic.AtomicInteger();
+    private final java.util.concurrent.atomic.AtomicInteger channelSequence = new java.util.concurrent.atomic.AtomicInteger();
+    private volatile boolean multichannel;
+    private final java.util.Set<Connection> pendingChannels = new java.util.HashSet<>();
+    private boolean closing;
+    private volatile boolean closed;
 
     public Session(Connection connection, SmbConfig config, AuthenticationContext userCredentials, SMBEventBus bus, PathResolver pathResolver, Signatory signatory, PacketEncryptor encryptor) {
         this.connection = connection;
+        if (connection != null) {
+            channels.add(connection);
+        }
         this.config = config;
         this.userCredentials = userCredentials;
         this.bus = bus;
@@ -230,6 +244,7 @@ public class Session implements AutoCloseable {
 
     public void logoff() throws TransportException {
         try {
+            leaseManager.close();
             logger.info("Logging off session {} from host {}", sessionId, connection.getRemoteHostname());
             for (Share share : treeConnectTable.getOpenTreeConnects()) {
                 try {
@@ -276,11 +291,66 @@ public class Session implements AutoCloseable {
 
     @Override
     public void close() throws IOException {
-        logoff();
+        java.util.List<Connection> pending;
+        synchronized (channels) {
+            if (closing) {
+                return;
+            }
+            closing = true;
+            pending = new java.util.ArrayList<>(pendingChannels);
+            pendingChannels.removeIf(channel -> channel.getOwningSession() == this);
+        }
+        // Close pending transports before LOGOFF so authentication cannot publish a late channel.
+        for (Connection channel : pending) {
+            if (channel.getOwningSession() != this) {
+                continue;
+            }
+            try {
+                channel.close(true);
+            } catch (IOException failure) {
+                logger.warn("Could not close pending SMB channel", failure);
+            }
+        }
+        try {
+            logoff();
+        } finally {
+            for (Connection channel : channels) {
+                if (channel != connection && channel.getOwningSession() == this) {
+                    try {
+                        channel.close(true);
+                    } catch (IOException e) {
+                        logger.warn("Could not close bound SMB channel", e);
+                    }
+                }
+            }
+            synchronized (channels) {
+                closed = true;
+                channels.clear();
+                channelKeys.clear();
+            }
+            leaseManager.abort();
+            if (bus != null) {
+                bus.unsubscribe(this);
+            }
+        }
+    }
+
+    /** Checks that a channel can carry the requests sized by this session's existing and future Shares. */
+    public void validateChannelLimits(com.hierynomus.smbj.connection.NegotiatedProtocol candidate) throws IOException {
+        com.hierynomus.smbj.connection.NegotiatedProtocol original = connection.getNegotiatedProtocol();
+        if (candidate.getMaxReadSize() < Math.min(config.getReadBufferSize(), original.getMaxReadSize())
+                || candidate.getMaxWriteSize() < Math.min(config.getWriteBufferSize(), original.getMaxWriteSize())
+                || candidate.getMaxTransactSize() < Math.min(config.getTransactBufferSize(), original.getMaxTransactSize())) {
+            throw new IOException("SMB channel read/write/transaction limits cannot support the established session");
+        }
     }
 
     public Connection getConnection() {
         return connection;
+    }
+
+    public com.hierynomus.smbj.connection.LeaseManager getLeaseManager() {
+        return leaseManager;
     }
 
     /**
@@ -291,16 +361,50 @@ public class Session implements AutoCloseable {
      * @throws TransportException
      */
     public <T extends SMB2Packet> Future<T> send(SMB2Packet packet) throws TransportException {
-        SecretKey signingKey = getSigningKey(packet.getHeader(), true);
+        return send(packet, selectChannel());
+    }
+
+    Connection selectChannel() throws TransportException {
+        Connection selected;
+        synchronized (channels) {
+            selected = connection;
+            if (multichannel) {
+                retireClosedChannels();
+                if (channels.isEmpty()) {
+                    throw new TransportException("No authenticated SMB channels remain connected");
+                }
+                selected = channels.get(Math.floorMod(nextChannel.getAndIncrement(), channels.size()));
+            }
+        }
+        return selected;
+    }
+
+    // CUSTOM ADDED: CANCEL must use the connection that allocated its MessageId.
+    public <T extends SMB2Packet> Future<T> send(SMB2Packet packet, Connection selected) throws TransportException {
+        if (closed || channelsFailed.get()) {
+            throw new TransportException("SMB session was invalidated after an uncertain write");
+        }
+        if (selected != connection && !channelKeys.containsKey(selected)) {
+            throw new TransportException("Connection is not an authenticated channel of this session");
+        }
+        if (multichannel && selected.isClosed()) {
+            throw new TransportException("Selected SMB channel is disconnected");
+        }
+        packet.getHeader().setChannelSequence(channelSequence.get() & 0xFFFF);
+        SecretKey signingKey = getSigningKey(packet.getHeader(), true, selected);
         if (sessionContext.isSigningRequired() && signingKey == null) {
             throw new TransportException("Message signing is required, but no signing key is negotiated");
         }
 
         if (shouldEncryptData()) {
-            return connection.send(encryptor.encrypt(packet, sessionContext.getEncryptionKey()));
+            return selected.send(encryptor.encrypt(packet, sessionContext.getEncryptionKey()));
         }
 
-        return connection.send(signatory.sign(packet, signingKey));
+        if (!config.isOptionalWriteSigning() && !sessionContext.isSigningRequired()
+                && packet.getHeader().getMessage() == com.hierynomus.mssmb2.SMB2MessageCommandCode.SMB2_WRITE) {
+            return selected.send(packet);
+        }
+        return selected.send(signatory.sign(packet, signingKey));
     }
 
     public <T extends SMB2Packet> T processSendResponse(SMB2CreateRequest packet) throws TransportException {
@@ -324,7 +428,95 @@ public class Session implements AutoCloseable {
      * @param signing If true, check for signing mode, else get for verification mode
      * @return
      */
+    public void addChannel(Connection channel, SecretKey key) {
+        if (channel.isClosed() || !channel.isConnected()) {
+            throw new IllegalStateException("SMB channel disconnected before binding completed");
+        }
+        synchronized (channels) {
+            if (closing || channelsFailed.get() || channel.isClosed()) {
+                throw new IllegalStateException("SMB session or candidate channel is closing or closed");
+            }
+            channelKeys.put(channel, key);
+            channels.addIfAbsent(channel);
+            multichannel = true;
+        }
+    }
+
+    public boolean beginBinding(Connection channel) throws IOException {
+        synchronized (channels) {
+            if (closing || channelsFailed.get() || (multichannel && getChannelCount() == 0)) {
+                throw new IOException("SMB session is closing or has no surviving channels");
+            }
+            return pendingChannels.add(channel);
+        }
+    }
+
+    public void endBinding(Connection channel) {
+        synchronized (channels) {
+            pendingChannels.remove(channel);
+        }
+    }
+
+    public boolean isBindingInProgress(Connection channel) {
+        synchronized (channels) {
+            return pendingChannels.contains(channel) && !channels.contains(channel);
+        }
+    }
+
+    // Like go-smb2 sessionChannels, retire transports without replaying their outstanding requests.
+    private void retireClosedChannels() {
+        for (int i = channels.size() - 1; i >= 0; i--) {
+            Connection channel = channels.get(i);
+            if (channel.isClosed()) {
+                channels.remove(i);
+                channelKeys.remove(channel);
+                channelSequence.incrementAndGet();
+            }
+        }
+        if (channels.isEmpty()) {
+            channelsFailed.set(true);
+            leaseManager.abort();
+        }
+    }
+
+    @Handler
+    private void channelClosed(com.hierynomus.smbj.event.ConnectionClosed event) {
+        synchronized (channels) {
+            if (channels.remove(event.getConnection())) {
+                channelKeys.remove(event.getConnection());
+                channelSequence.incrementAndGet();
+            }
+            if (channels.isEmpty()) {
+                channelsFailed.set(true);
+                leaseManager.abort();
+            }
+        }
+    }
+
+    // CUSTOM ADDED: abandon an uncertain write generation and release every outstanding request.
+    public void failChannels(Throwable failure) {
+        if (!channelsFailed.compareAndSet(false, true)) {
+            return;
+        }
+        for (Connection channel : channels) {
+            channel.handleError(failure);
+        }
+    }
+
+    public int getChannelCount() {
+        synchronized (channels) {
+            if (multichannel) {
+                retireClosedChannels();
+            }
+            return channels.size();
+        }
+    }
+
     public SecretKey getSigningKey(SMB2PacketHeader header, boolean signing) {
+        return getSigningKey(header, signing, connection);
+    }
+
+    public SecretKey getSigningKey(SMB2PacketHeader header, boolean signing, Connection receivingConnection) {
         if (connection.getNegotiatedProtocol().getDialect().isSmb3x()) {
             if (header.getMessage() == SMB2MessageCommandCode.SMB2_SESSION_SETUP) {
                 if (signing) {
@@ -334,7 +526,8 @@ public class Session implements AutoCloseable {
                     return sessionContext.getSigningKey();
                 }
             }
-            return sessionContext.getSigningKey(); // TODO channel.getSigningKey()
+            SecretKey channelKey = receivingConnection == null ? null : channelKeys.get(receivingConnection);
+            return channelKey == null ? sessionContext.getSigningKey() : channelKey;
         }
 
         return sessionContext.getSessionKey();

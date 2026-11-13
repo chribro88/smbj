@@ -68,10 +68,17 @@ public class SMB2SignatureVerificationPacketHandler extends SMB2PacketHandler {
     private static final Logger logger = LoggerFactory.getLogger(SMB2SignatureVerificationPacketHandler.class);
     private SessionTable sessionTable;
     private Signatory signatory;
+    private com.hierynomus.smbj.connection.Connection connection;
 
     public SMB2SignatureVerificationPacketHandler(SessionTable sessionTable, Signatory signatory) {
         this.sessionTable = sessionTable;
         this.signatory = signatory;
+    }
+
+    public SMB2SignatureVerificationPacketHandler(SessionTable sessionTable, Signatory signatory,
+            com.hierynomus.smbj.connection.Connection connection) {
+        this(sessionTable, signatory);
+        this.connection = connection;
     }
 
     @Override
@@ -103,7 +110,7 @@ public class SMB2SignatureVerificationPacketHandler extends SMB2PacketHandler {
                 return;
             }
 
-            if (signatory.verify(packetData, session.getSigningKey(packetData.getHeader(), false))) {
+            if (signatory.verify(packetData, session.getSigningKey(packetData.getHeader(), false, connection))) {
                 logger.debug("Signature for packet {} verified.", packetData);
                 next.handle(packetData);
                 return;

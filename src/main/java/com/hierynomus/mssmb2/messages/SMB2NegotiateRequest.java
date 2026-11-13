@@ -15,6 +15,7 @@
  */
 package com.hierynomus.mssmb2.messages;
 
+import com.hierynomus.mssmb2.messages.negotiate.SMB2SigningCapabilities;
 import com.hierynomus.msdtyp.MsDataTypes;
 import com.hierynomus.mssmb2.*;
 import com.hierynomus.mssmb2.messages.negotiate.SMB2EncryptionCapabilities;
@@ -49,6 +50,15 @@ public class SMB2NegotiateRequest extends SMB2Packet {
         this.clientSigningRequired = clientSigningRequired;
         this.capabilities = capabilities;
         this.negotiateContextList = buildNegotiateContextList(salt);
+    }
+
+    public SMB2NegotiateRequest(Set<SMB2Dialect> dialects, UUID clientGuid, boolean clientSigningRequired,
+            Set<SMB2GlobalCapability> capabilities, byte[] salt, List<SMB3SigningAlgorithm> signingAlgorithms) {
+        this(dialects, clientGuid, clientSigningRequired, capabilities, salt);
+        if (dialects.contains(SMB2Dialect.SMB_3_1_1)
+                && !signingAlgorithms.equals(Collections.singletonList(SMB3SigningAlgorithm.AES_CMAC))) {
+            negotiateContextList.add(new SMB2SigningCapabilities(signingAlgorithms));
+        }
     }
 
     private List<SMB2NegotiateContext> buildNegotiateContextList(byte[] salt) {

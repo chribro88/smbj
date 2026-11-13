@@ -97,13 +97,33 @@ public class SMB2Writer {
      * @return the actual number of bytes that was written to the file
      */
     public long write(ByteChunkProvider provider, ProgressListener progressListener) {
-        int bytesWritten = 0;
+        long bytesWritten = 0;
         while (provider.isAvailable()) {
-            logger.debug("Writing to {} from offset {}", this.entryName, provider.getOffset());
-            SMB2WriteResponse wresp = share.write(fileId, provider);
-            bytesWritten += wresp.getBytesWritten();
-            if (progressListener != null)
-                progressListener.onProgressChanged(wresp.getBytesWritten(), provider.getOffset());
+            // CUSTOM ADDED: retain only one request's exact bytes until every suffix is acknowledged.
+            int limit = share.getWriteBufferSize();
+            provider.prepareWrite(limit);
+            int length = Math.min(limit, provider.bytesLeft());
+            if (length <= 0) {
+                throw new SMBRuntimeException("WRITE provider made no progress");
+            }
+            long fileOffset = provider.getOffset();
+            com.hierynomus.smb.SMBBuffer snapshot = new com.hierynomus.smb.SMBBuffer();
+            provider.writeBytes(snapshot, length);
+            byte[] bytes = snapshot.getCompactData();
+            int acknowledged = 0;
+            while (acknowledged < length) {
+                SMB2WriteResponse response = share.write(fileId, new ArrayByteChunkProvider(bytes, acknowledged,
+                        length - acknowledged, Math.addExact(fileOffset, acknowledged)));
+                long count = response.getBytesWritten();
+                if (count <= 0 || count > length - acknowledged) {
+                    throw new SMBRuntimeException("Invalid SMB WRITE acknowledgement count: " + count);
+                }
+                acknowledged += (int) count;
+                bytesWritten = Math.addExact(bytesWritten, count);
+                if (progressListener != null) {
+                    progressListener.onProgressChanged(count, Math.addExact(fileOffset, acknowledged));
+                }
+            }
         }
         return bytesWritten;
     }

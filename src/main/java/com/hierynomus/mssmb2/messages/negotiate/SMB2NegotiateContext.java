@@ -74,6 +74,8 @@ public abstract class SMB2NegotiateContext {
                 return new SMB2EncryptionCapabilities().read(buffer);
             case SMB2_COMPRESSION_CAPABILITIES:
                 return new SMB2CompressionCapabilities().read(buffer);
+            case SMB2_SIGNING_CAPABILITIES:
+                return new SMB2SigningCapabilities().read(buffer);
             case SMB2_NETNAME_NEGOTIATE_CONTEXT_ID:
                 return new SMB2NetNameNegotiateContextId().read(buffer);
         }
