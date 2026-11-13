@@ -46,6 +46,12 @@ signed, sent or registered; candidate negotiation may already have occurred.
 There is no silent fallback from an explicit GMAC preference. The established
 single-channel session remains usable after rejection.
 
+The [independent Go/Samba trace](full-gmac-multichannel/research/README.md)
+confirms that two legitimate GMAC bindings can authenticate different bytes with
+the same original key and nonce. The forced-GMAC native single-session matrix
+passes against Samba 4.23.10 with both TCP transports and BC/default JCE,
+including GCM encryption. These results do not close the binding safety gate.
+
 Initial authentication verifies its final response before publishing the session,
 including when ordinary signing is optional or data encryption is required.
 SESSION_SETUP credits are accepted by the authentication flow after its phase's

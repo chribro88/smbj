@@ -42,9 +42,39 @@ Consider authenticated session S with GMAC signing key K. Connections A and B ar
 
 Different challenge responses are authenticated with the same key and nonce. Subsequent client authenticate messages at MID 2 can produce another collision. Kerberos can vary the authenticator in the first binding request, so restricting analysis to identical initial NTLM tokens is insufficient.
 
-This is an **inference from the ordinary flow and published rules**, consistent with the user's reproducer. It is not a newly executed live-server experiment or a claim that every server follows this exact response policy. Two secondary connections suffice; concurrency is unnecessary.
+This argument was initially an **inference from the ordinary flow and published rules**, consistent with the user's reproducer. The independent live observation below now confirms it for the recorded Go/Samba combination. It is not a claim that every server follows this exact response policy. Two secondary connections suffice; concurrency is unnecessary.
 
 The initial channel also uses K. Consequently, uniqueness cannot be scoped only to secondary bindings. Relevant original-channel messages, intermediate setup responses, abandoned attempts and future replacement channels belong to the same analysis. A fresh Java signer object does not create a fresh cryptographic key.
+
+### Independent legitimate-binding observation, 13 November 2026
+
+The pinned Go donor `7f69f65878329522ceb556435bdeb3cde6552656` completed two
+legitimate NTLM bindings against isolated Samba 4.23.10 with GMAC forced. A socket
+observer outside the donor's signer derived the actual signing keys independently
+from GSS exports and exact wire transcripts, then verified all 17 signed messages.
+It recorded 26 events across three connections and three actual signing-key
+domains, including initial authentication, primary ECHO traffic, binding finals
+under distinct channel keys and LOGOFF.
+
+Two distinct-message reuses were confirmed under the original session key:
+
+- Server challenge responses at MID 1, events 12/20, nonce
+  `010000000000000001000000`.
+- Client authentication requests at MID 2, events 13/21, nonce
+  `020000000000000000000000`.
+
+The [source, sanitized trace and reproduction](research/README.md) retain only
+keyed equality fingerprints and protocol metadata. No raw keys or tokens are
+exported. This is a legitimate-binding counterexample, separate from the ksmbd
+unverified-request oracle. SMBJ's production guard was retained; the experiment
+does not provide a safe binding construction or close G0.
+
+The same fixture also passed 16 native SMBJ GMAC single-session cases across both
+TCP transports, lightweight BC/default JCE and GCM encryption off/on. Those cases
+assert rejection of the unsafe binding and continued file usability. They are
+positive primitive/authentication/I/O evidence, not successful GMAC multichannel
+qualification. Exact sources and profiles are in
+[validation-modern-gmac.json](validation-modern-gmac.json).
 
 ## 4. Alternatives and decisions
 
@@ -72,6 +102,11 @@ Two specification interpretations also require explicit treatment:
 
 1. **Reauthentication:** client §3.2.4.1.1 names the session key for session setup, while server §3.3.5.2.4 names the channel key for non-binding requests. The upstream discussion explicitly identifies this ambiguity and follows Samba's bound-channel-key behavior. Obtain and document the applicable interpretation rather than extending one rule silently.
 2. **Binding KDF:** [client §3.2.5.3.3](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/9a697646-6085-4597-808c-765bb2280c6e) displays legacy `SMB2AESCMAC`/`SmbSign` inputs, whereas server §3.3.5.5.3 expressly uses `SMBSigningKey` and the binding preauthentication hash for SMB 3.1.1. Resolve this using the pinned specification interpretation and independent interoperability evidence.
+
+The recorded Samba 4.23.10 GMAC binding finals independently verify using the
+`SMBSigningKey` label and each binding's preauthentication transcript through its
+final request. This supports that interpretation for this peer; Windows/ONTAP
+and the authoritative wording resolution remain unverified.
 
 ## 6. Questions requiring a concrete answer
 

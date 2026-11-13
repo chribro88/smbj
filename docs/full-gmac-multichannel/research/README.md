@@ -74,6 +74,11 @@ docker create --name smbj-gmac-g0-research \
 docker cp docs/full-gmac-multichannel/research/smb-signing-only.conf \
   smbj-gmac-g0-research:/etc/samba/smb.conf &&
 docker start smbj-gmac-g0-research
+for attempt in {1..30}; do
+  docker exec smbj-gmac-g0-research pidof smbd >/dev/null 2>&1 && break
+  sleep 1
+done
+docker exec smbj-gmac-g0-research pidof smbd
 docker exec smbj-gmac-g0-research smbd --version
 docker exec smbj-gmac-g0-research testparm -s --parameter-name='server smb3 signing algorithms'
 docker exec smbj-gmac-g0-research testparm -s --parameter-name='server multi channel support'

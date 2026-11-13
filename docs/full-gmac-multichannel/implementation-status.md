@@ -4,6 +4,8 @@ The requested full feature is **incomplete**. The completion contract in
 [plan.md](plan.md) remains unchanged. G0 is open: this branch does not yet have a
 protocol-compliant, independently verified binding key/nonce uniqueness mechanism.
 The inherited GMAC-binding rejection remains containment and does not satisfy G0.
+An independent live Go/Samba trace now confirms the ordinary legitimate-binding
+collision in both directions; see [research evidence](research/README.md).
 
 ## Inputs and history
 
@@ -118,6 +120,15 @@ pool available; losing the last channel stops it.
 | Native async compatibility matrix | PASS: 8 tests, zero failures/skips | Both transports; lightweight BC and explicitly configured JCE/BC; encryption on/off; full live readback beyond the pipeline window |
 | Authentication `check` milestone | PASS: 778 tests, zero failures/skips | Full unit suite, license checks and JaCoCo; includes 22 initial-authentication and 28 binding-response cases, phase-specific credit acceptance and mismatched-command rejection |
 | Authentication live compatibility repeat | PASS: 8 tests, zero failures/skips | Actual SMB 3.1.1 initial authentication and full 8 MiB + 10 byte readback; both transports and BC/JCE-with-BC; CMAC and optional/required CCM encryption |
+| Modern forced-GMAC single-session matrix | PASS: 16 tests, zero failures/skips | Samba 4.23.10; NTLM; both transports; BC/default JCE; GMAC with GCM encryption off/on; write-through off/on; exact readback and unsafe-binding containment |
+| Independent legitimate-binding observation | NONCE REUSE CONFIRMED | Pinned Go donor + Samba 4.23.10: two successful bindings; 17 independently verified signed messages across three actual key domains; two distinct-message original-key/nonce reuses |
+
+The modern native source is `0be7f6f`; its production and unit-test trees remain
+identical to the 778-test authentication milestone. The independent observer and
+sanitized trace were committed in `5fe1c32`. See
+[validation-modern-gmac.json](validation-modern-gmac.json) for exact revisions,
+profiles, resource limits, commands and checksums. The observer is outside SMBJ's
+guarded production path and does not qualify unsafe bindings as supported.
 
 The latest unit source revision is `0357c30bf743ee311d18aa32530bc08fd14bb0e3`;
 the live source revision is `97841a15d169476ce310c04ab22dbfcebb169790`. Their
@@ -162,8 +173,9 @@ latest filtered live matrix runs `integrationTest -x buildSambaImage --tests
 Its legacy Samba 4.7.6 fixture validates CMAC/CCM compatibility, with BC and the
 JCE adapter explicitly configured with BC. Default JCE failed the four legacy
 CMAC/CCM variants due to unavailable algorithms; the diagnostic log is preserved.
-This result does not establish GMAC multichannel or default-JCE live GMAC/GCM
-interoperability.
+That legacy result does not establish GMAC interoperability. The later 16-case
+modern run establishes default-JCE live GMAC/GCM single-session compatibility;
+safe GMAC binding and the full multichannel contract remain unproven.
 
 The local Sonar CLI reported no secrets in the changed scope, with an
 `Authentication was not successful` warning. This is not a clean authenticated
@@ -177,7 +189,7 @@ validation evidence.
 
 | Gate | Result | Missing authoritative evidence |
 |---|---|---|
-| G0 | BLOCKED | Supported binding nonce mechanism, full actual-key lifetime proof, authoritative protocol interpretation and independent peer trace |
+| G0 | BLOCKED | Supported binding nonce mechanism, full safe actual-key lifetime proof, authoritative interpretation and independent validation of that construction; ordinary-flow collision now confirmed live |
 | G1 | BLOCKED | All four reproductions resolved together; nonce collision remains unsolved |
 | G2 | NOT_RUN | Complete local matrix across providers/transports/runtimes; Java 8 runtime execution |
 | G3 | BLOCKED | Complete NTLM/Kerberos authentication lifecycle and reauthentication variants, all applicable notifications, replay/fencing and GMAC binding cases |
@@ -194,6 +206,7 @@ establish the GMAC binding, native fault-peer or sustained operational requireme
 The supplied [protocol-resolution.md](protocol-resolution.md) contains the precise
 questions and required evidence. No external message has been sent. The current
 Microsoft signing/sequence rules and the referenced ksmbd discussion were checked
-again during implementation; no validated general construction was established.
+again during implementation; the independent live trace confirms the ordinary
+flow's collision, and no validated general construction was established.
 A missing construction is a design blocker, not evidence of a JDK/provider/kernel
 bug or a reason to report the full feature complete.
