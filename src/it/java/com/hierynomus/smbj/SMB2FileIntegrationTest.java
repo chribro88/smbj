@@ -401,9 +401,10 @@ public class SMB2FileIntegrationTest {
             com.hierynomus.mssmb2.SMB3SigningAlgorithm signing = negotiated.getSigningAlgorithm();
             if (signing == null) signing = com.hierynomus.mssmb2.SMB3SigningAlgorithm.AES_CMAC;
             assertThat(signing).isEqualTo(com.hierynomus.mssmb2.SMB3SigningAlgorithm.AES_CMAC);
-            System.out.printf("ASYNC_WRITE provider=%s backend=BC transport=%s encrypt=%s signing=%s cipher=%s fixture=%s bytes=%d%n",
+            System.out.printf("ASYNC_WRITE provider=%s backend=BC transport=%s encrypt=%s dialect=%s signing=%s cipher=%s fixture=%s bytes=%d%n",
                     c.getSecurityProvider().getClass().getSimpleName(), c.getTransportLayerFactory().getClass().getSimpleName(),
-                    c.isEncryptData(), signing, negotiated.getCipherId(), samba.execInContainer("smbd", "--version").getStdout().trim(), bytes.length);
+                    c.isEncryptData(), negotiated.getNegotiatedProtocol().getDialect(), signing, negotiated.getCipherId(),
+                    samba.execInContainer("smbd", "--version").getStdout().trim(), bytes.length);
             try (DiskShare share = (DiskShare) session.connectShare("user")) {
                 Future<Long> fut = null;
                 try (File f = share.openFile("bigfile", EnumSet.of(AccessMask.GENERIC_WRITE), null,
