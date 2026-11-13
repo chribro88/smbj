@@ -43,6 +43,12 @@ signer-observation fixture.
 
 ## Implemented foundations
 
+- Ordinary plaintext responses use the matching request's SessionId for signing
+  policy and channel-key selection. A changed response SessionId cannot bypass
+  required signing or substitute another session's key. Unknown nonzero request
+  sessions are discarded before granting credits or completing requests. Signed
+  error replies follow the same request ownership; initial/binding authentication,
+  notifications and permitted unsigned interim replies retain their phase handling.
 - Initial authentication verifies the final wire response with the newly derived
   signing key before establishing or publishing the session. Session keys follow
   the protocol's 16-byte truncation/right-padding rule. Missing keys, invalid or
@@ -127,6 +133,7 @@ pool available; losing the last channel stops it.
 | Authentication `check` milestone | PASS: 778 tests, zero failures/skips | Full unit suite, license checks and JaCoCo; includes 22 initial-authentication and 28 binding-response cases, phase-specific credit acceptance and mismatched-command rejection |
 | Authentication live compatibility repeat | PASS: 8 tests, zero failures/skips | Actual SMB 3.1.1 initial authentication and full 8 MiB + 10 byte readback; both transports and BC/JCE-with-BC; CMAC and optional/required CCM encryption |
 | Modern forced-GMAC single-session matrix | PASS: 16 tests, zero failures/skips | Samba 4.23.10; NTLM; both transports; BC/default JCE; GMAC with GCM encryption off/on; write-through off/on; exact readback and unsafe-binding containment |
+| Receive-policy `check` milestone | PASS: 798 tests, zero failures/skips | Full unit suite, license checks and JaCoCo; 19 request-session response regressions; includes the concurrent local bound-channel SESSION_SETUP key-selection patch and its one test |
 | Bounded auxiliary-session research | PASS: 5 tests, zero failures/skips | Detached checkout only; direct TCP, BC, NTLM, Samba 4.23.10; 0/3/7 replacements, lost-binding reservation, independent GMAC/MID verification and unsafe-flow negative control; G0 remains open |
 | Independent legitimate-binding observation | NONCE REUSE CONFIRMED | Pinned Go donor + Samba 4.23.10: two successful bindings; 17 independently verified signed messages across three actual key domains; two distinct-message original-key/nonce reuses |
 
@@ -137,7 +144,7 @@ sanitized trace were committed in `5fe1c32`. See
 profiles, resource limits, commands and checksums. The observer is outside SMBJ's
 guarded production path and does not qualify unsafe bindings as supported.
 
-The latest unit source revision is `0357c30bf743ee311d18aa32530bc08fd14bb0e3`;
+The preceding authentication unit source revision is `0357c30bf743ee311d18aa32530bc08fd14bb0e3`;
 the live source revision is `97841a15d169476ce310c04ab22dbfcebb169790`. Their
 production, unit-test and build configuration trees are identical. The latter
 adds the negotiated dialect to sanitized live metadata. Exact reports, checksums,
@@ -159,6 +166,16 @@ filters and results are in [validation-exhaustion.json](validation-exhaustion.js
 These counts describe distinct executions at their respective source states, not
 an additive acceptance total. The full scenario/variant assertions in
 [test-matrix.csv](test-matrix.csv) remain unproven unless recorded there.
+
+The receive-policy run used the combined local source state, including concurrent
+Session changes. Exact changed-file hashes and separate baseline/focused/full
+results are recorded in
+[validation-response-authentication.json](validation-response-authentication.json).
+The first full run exposed an admission fixture that omitted primary-session
+registration and a large-write timeout. The fixture was corrected; both affected
+suites then passed with the original deadlines, followed by the successful full
+run. The supplied Session key-selection test is a narrow unit check, not a
+reauthentication lifecycle or interoperability qualification.
 
 Reproduce the clean check with the existing JDK 21 and Gradle wrapper:
 

@@ -601,15 +601,16 @@ public class Session implements AutoCloseable {
 
     public SecretKey getSigningKey(SMB2PacketHeader header, boolean signing, Connection receivingConnection) {
         if (connection.getNegotiatedProtocol().getDialect().isSmb3x()) {
-            if (header.getMessage() == SMB2MessageCommandCode.SMB2_SESSION_SETUP) {
-                if (signing) {
-                    return sessionContext.getSigningKey();
-                }
-                if (header.getStatusCode() != NtStatus.STATUS_SUCCESS.getValue()) {
-                    return sessionContext.getSigningKey();
-                }
-            }
             SecretKey channelKey = receivingConnection == null ? null : channelKeys.get(receivingConnection);
+            if (header.getMessage() == SMB2MessageCommandCode.SMB2_SESSION_SETUP) {
+                // Binding on a not-yet-bound connection uses the original session key.
+                // Reauthentication on an already-bound channel instead uses that channel's
+                // signing key, including its non-final SESSION_SETUP responses.  The
+                // connection-specific key must not be selected merely because the
+                // candidate's temporary session table contains the logical session.
+                // See MS-SMB2 3.3.5.2.4 and the ksmbd/Samba reauthentication handling.
+                return channelKey == null ? sessionContext.getSigningKey() : channelKey;
+            }
             return channelKey == null ? sessionContext.getSigningKey() : channelKey;
         }
 

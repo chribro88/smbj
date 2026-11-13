@@ -117,6 +117,11 @@ public class SMB2SignatureVerificationPacketHandler extends SMB2PacketHandler {
         }
     }
 
+    public SMB2SignatureVerificationPacketHandler(SessionTable sessionTable, Signatory signatory,
+            com.hierynomus.smbj.connection.Connection connection, OutstandingRequests outstandingRequests) {
+        this(sessionTable, signatory, outstandingRequests, connection);
+    }
+
     boolean isValid(SMB2PacketData packetData) {
         if (packetData.isDecrypted()) {
             return true;
@@ -152,7 +157,7 @@ public class SMB2SignatureVerificationPacketHandler extends SMB2PacketHandler {
             }
             logger.debug("Signature for packet {} verified.", packetData);
         } else if (!packetData.isIntermediateAsyncResponse() && !packetData.isOplockBreakNotification()
-            && (signingRequired || session != null && session.isSigningRequired())) {
+            && (signingRequired || (session == null ? sessionId != 0 : session.isSigningRequired()))) {
             logger.warn("Illegal request, session requires message signing, but packet {} is not signed.", packetData);
             return false;
         }

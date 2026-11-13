@@ -201,6 +201,9 @@ class SMBChannelAdmissionTest {
             established.setSessionFlags(Collections.emptySet());
             session.getSessionContext().established(established);
             session.getSessionContext().setSigningKey(new SecretKeySpec(new byte[16], "AesCmac"));
+            java.lang.reflect.Method register = SessionTable.class.getDeclaredMethod("registerSession", Long.class, Session.class);
+            register.setAccessible(true);
+            register.invoke(get(primary, "sessionTable"), 47L, session);
         }
 
         static SmbConfig.Builder configuration(Operation operation, int size) {

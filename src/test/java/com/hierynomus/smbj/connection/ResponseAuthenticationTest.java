@@ -62,7 +62,7 @@ class ResponseAuthenticationTest {
     }
 
     @Test
-    void_anotherSessionsValidSignatureCannotCompleteRequest() throws Exception {
+    void anotherSessionsValidSignatureCannotCompleteRequest() throws Exception {
         try (Fixture f = new Fixture(true)) {
             byte[] otherKey = new byte[16]; otherKey[0] = 1;
             f.connection.handle(new SMB2PacketData(response(48, otherKey)));
@@ -89,6 +89,26 @@ class ResponseAuthenticationTest {
         }
     }
 
+    @ParameterizedTest
+    @ValueSource(longs = {0, 48, 999})
+    void signedErrorReplyUsesRequestSessionKey(long responseSession) throws Exception {
+        try (Fixture f = new Fixture(true)) {
+            f.connection.handle(new SMB2PacketData(response(responseSession, new byte[16], 0xc0000022)));
+            assertTrue(f.request.getPromise().isFulfilled());
+            assertEquals(0xc0000022L, f.request.getPromise().future().get().getHeader().getStatusCode());
+            assertEquals(8, f.connection.sequenceWindow.available());
+        }
+    }
+
+    @Test
+    void unsignedReplyForUnknownRequestSessionIsRejected() throws Exception {
+        try (Fixture f = new Fixture(false)) {
+            ((SMB2Echo) f.request.getPacket()).getHeader().setSessionId(999);
+            f.connection.handle(new SMB2PacketData(response(48, null)));
+            f.assertRejected();
+        }
+    }
+
     @Test
     void unsignedInterimReplyRemainsPermitted() throws Exception {
         try (Fixture f = new Fixture(true)) {
@@ -103,12 +123,17 @@ class ResponseAuthenticationTest {
     }
 
     private byte[] response(long session, byte[] key) throws Exception {
-        byte[] wire = new byte[68];
+        return response(session, key, 0);
+    }
+
+    private byte[] response(long session, byte[] key, int status) throws Exception {
+        byte[] wire = new byte[status == 0 ? 68 : 72];
         ByteBuffer header = ByteBuffer.wrap(wire).order(ByteOrder.LITTLE_ENDIAN);
         header.putInt(0, 0x424d53fe); header.putShort(4, (short) 64);
         header.putShort(12, (short) 13); header.putShort(14, (short) 7);
         header.putInt(16, key == null ? 1 : 9); header.putLong(24, 123);
-        header.putLong(40, session); header.putShort(64, (short) 4);
+        header.putInt(8, status); header.putLong(40, session);
+        header.putShort(64, (short) (status == 0 ? 4 : 9));
         if (key != null) {
             byte[] nonce = new byte[12]; nonce[0] = 123; nonce[8] = 1;
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
