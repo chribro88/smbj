@@ -39,6 +39,10 @@ signer-observation fixture.
   Receive verification enforces the server role, signed flag and message extent,
   preserves received bytes, and compares tags in constant time. GMAC retains the
   configured SMBJ AEAD provider and validates its 128-bit signing key input.
+- Per-connection sequence allocation rejects unsigned MessageId exhaustion before
+  wrap or the reserved notification MID, while allowing the signed-long boundary.
+  Credit charges are bounded before range allocation. Signing/serialization
+  failures settle registered requests and retire only the failed channel.
 - Request cancellation atomically captures synchronous/asynchronous identity and
   claims one attempt, including AsyncId zero. Failed cancellation cannot re-sign
   changed bytes under the same CANCEL nonce. Cancellation callbacks execute
@@ -71,9 +75,13 @@ cryptographic dependency or hand-written AES/GHASH implementation was added.
 | Signing/cancellation/notifications | PASS: 31 tests | Both providers; fixed vector; malformed extents; compound padding; concurrent provider state; cancellation snapshot/failure; actual Connection notification chain |
 | Integrated prerequisites | PASS: 99 tests | Lifecycle, real blocked socket write, late SocketFactory, Connection publication, admission (read/write/transact), ownership and signing foundations |
 | Initial additional lifecycle run | PASS: 37 tests | Both transports, async read/write failure, concurrent close, direct candidate configuration |
+| Exhaustion/provider-failure follow-up | PASS: 55 focused tests | Unsigned boundary/wrap; concurrent exhaustion; bounded credit charge; invalid provider tags; request cleanup and healthy-channel continuation |
 | `clean check` milestone | PASS: 716 tests, zero failures/skips | Full unit suite, Java 8 release compilation, license checks and JaCoCo report; integration tests remain separate |
 
 The clean-check source revision is `cec9f6f2bd43a4e1174656bf08b247616ff1b825`.
+
+The exhaustion/failure follow-up source revision is `863d3ae66072a4581aa38fbaacc846497156b15d`; its exact
+filters and results are in [validation-exhaustion.json](validation-exhaustion.json).
 
 These counts describe distinct executions at their respective source states, not
 an additive acceptance total. The full scenario/variant assertions in
@@ -113,7 +121,7 @@ pass is claimed.
 
 Specific remaining implementation work includes the approved G0 mechanism,
 phase-aware initial/reauthentication handling, complete notification coverage,
-sequence exhaustion, bounded async short-write handling, replay/fencing and
+bounded async short-write handling, replay/fencing and
 recovery semantics, and the remaining matrix assertions. Existing synchronous
 short-write and effective-admission behavior are retained; they do not establish
 all async or GMAC binding requirements.

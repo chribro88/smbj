@@ -1,0 +1,56 @@
+{
+  "source_revision": "863d3ae66072a4581aa38fbaacc846497156b15d",
+  "result": "PASS",
+  "tests": 55,
+  "failures": 0,
+  "skipped": 0,
+  "task": "test",
+  "filters": [
+    "*SequenceWindowExhaustionTest",
+    "*SequenceWindowSpec",
+    "*GmacSigningTest",
+    "*ChannelRequestsTest",
+    "*ConnectionAbortTest"
+  ],
+  "runtime_java_home": "/tmp/smb-relay-java21/opt/java/openjdk",
+  "production_release": 8,
+  "log_path": "/tmp/smbj-full-gmac-exhaustion.log",
+  "log_sha256": "089371256b8542ea0bf1de3cfd9a30dd9780017657fb2dd7abd930a5b27068f3",
+  "suites": [
+    {
+      "name": "com.hierynomus.smbj.connection.ChannelRequestsTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "com.hierynomus.smbj.connection.ConnectionAbortTest",
+      "tests": 17,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "com.hierynomus.smbj.connection.GmacSigningTest",
+      "tests": 17,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "com.hierynomus.smbj.connection.SequenceWindowExhaustionTest",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "com.hierynomus.smbj.connection.SequenceWindowSpec",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  ]
+}
