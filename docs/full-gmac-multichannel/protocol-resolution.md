@@ -89,7 +89,7 @@ qualification. Exact sources and profiles are in
 | Reauthenticate to rotate the original key | Rejected as an assumed mechanism; [§3.3.5.5.2](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/5ecc02fb-0e60-4cba-afeb-f13100a6e65e) retains the existing session key. |
 | Advance MIDs with unauthenticated ECHO | Not portable: [§3.3.5.17](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/fa23e613-2768-49e5-aa68-97c4bba72379) says the server should disconnect when no session exists. |
 | Reuse an identical first signed request | Rejected as a general solution: later authentication bytes and server challenges still vary. |
-| Authenticate auxiliary sessions and consume MIDs under unrelated keys | Unvalidated research candidate. Requires full lifecycle proof, server acceptance and performance analysis; catching up to primary traffic may require O(primary MID) extra requests. |
+| Authenticate auxiliary sessions and consume MIDs under unrelated keys | Partially validated research candidate: sequential pre-I/O bootstrap, NTLM replacements and one lost-binding boundary pass on Samba 4.23.10. Costs, retired-original-connection API impact and unproven lifetime paths are explicit in [auxiliary-candidate.md](research/auxiliary-candidate.md). Not selected; G0 remains open. |
 | Reject GMAC binding or force CMAC | Containment only; does not meet the agreed completion criterion. |
 
 ## 5. Related upstream evidence and wording issues

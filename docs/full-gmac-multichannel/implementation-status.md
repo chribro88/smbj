@@ -7,6 +7,12 @@ The inherited GMAC-binding rejection remains containment and does not satisfy G0
 An independent live Go/Samba trace now confirms the ordinary legitimate-binding
 collision in both directions; see [research evidence](research/README.md).
 
+A bounded auxiliary-session candidate now passes four independently observed
+bootstrap/replacement cases and an unsafe-flow negative control. It is isolated
+research, not a selected production construction; see
+[validation-auxiliary.json](validation-auxiliary.json) and
+[its design limits](research/auxiliary-candidate.md).
+
 ## Inputs and history
 
 - Branch: `feature/full-gmac-multichannel`.
@@ -121,6 +127,7 @@ pool available; losing the last channel stops it.
 | Authentication `check` milestone | PASS: 778 tests, zero failures/skips | Full unit suite, license checks and JaCoCo; includes 22 initial-authentication and 28 binding-response cases, phase-specific credit acceptance and mismatched-command rejection |
 | Authentication live compatibility repeat | PASS: 8 tests, zero failures/skips | Actual SMB 3.1.1 initial authentication and full 8 MiB + 10 byte readback; both transports and BC/JCE-with-BC; CMAC and optional/required CCM encryption |
 | Modern forced-GMAC single-session matrix | PASS: 16 tests, zero failures/skips | Samba 4.23.10; NTLM; both transports; BC/default JCE; GMAC with GCM encryption off/on; write-through off/on; exact readback and unsafe-binding containment |
+| Bounded auxiliary-session research | PASS: 5 tests, zero failures/skips | Detached checkout only; direct TCP, BC, NTLM, Samba 4.23.10; 0/3/7 replacements, lost-binding reservation, independent GMAC/MID verification and unsafe-flow negative control; G0 remains open |
 | Independent legitimate-binding observation | NONCE REUSE CONFIRMED | Pinned Go donor + Samba 4.23.10: two successful bindings; 17 independently verified signed messages across three actual key domains; two distinct-message original-key/nonce reuses |
 
 The modern native source is `0be7f6f`; its production and unit-test trees remain

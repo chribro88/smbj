@@ -119,6 +119,7 @@ cleanup. Do not modify the existing shared Samba test containers.
 Copying the donor's successful binding flow cannot close G0. A proposed
 construction must change the key/MID lifetime relationship in a protocol-allowed
 way and pass this independent observation, together with the complete lifetime
-and interoperability requirements in `../protocol-resolution.md`. Auxiliary
-sessions remain an unvalidated research candidate; this experiment does not
-select them or establish their operational cost.
+and interoperability requirements in `../protocol-resolution.md`. A separate [auxiliary-session experiment](auxiliary-candidate.md) now exercises
+a bounded sequential NTLM construction on the same Samba version, including
+replacement and one lost-binding boundary. Its independent verifier and negative
+control pass. That research does not select a production design or close G0.

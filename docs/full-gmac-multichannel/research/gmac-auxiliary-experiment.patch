@@ -1,0 +1,15 @@
+diff --git a/src/main/java/com/hierynomus/smbj/connection/SMBSessionBuilder.java b/src/main/java/com/hierynomus/smbj/connection/SMBSessionBuilder.java
+index 8fa3065..09085db 100644
+--- a/src/main/java/com/hierynomus/smbj/connection/SMBSessionBuilder.java
++++ b/src/main/java/com/hierynomus/smbj/connection/SMBSessionBuilder.java
+@@ -142,9 +142,7 @@ public class SMBSessionBuilder {
+                 || session.isGuest() || session.isAnonymous() || session.getSessionContext().getSigningKey() == null) {
+             throw new IOException("SMB channel does not match the established authenticated SMB 3.x server/session policy");
+         }
+-        if (signingAlgorithm(original) == SMB3SigningAlgorithm.AES_GMAC) {
+-            throw new IOException("GMAC session binding is unsupported: signing nonce uniqueness cannot be guaranteed");
+-        }
++        // RESEARCH ONLY: the detached driver owns the experimental signing-slot reservations.
+         session.validateChannelLimits(connectionContext.getNegotiatedProtocol());
+         if (sessionTable.find(session.getSessionId()) != null) {
+             throw new IOException("Connection already contains this SMB session");
