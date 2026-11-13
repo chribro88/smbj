@@ -18,6 +18,7 @@ package com.hierynomus.protocol.commons.concurrent;
 import com.hierynomus.smbj.common.SMBRuntimeException;
 
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -58,12 +59,34 @@ public class CancellableFuture<V> extends AFuture<V> {
 
     @Override
     public V get() throws InterruptedException, ExecutionException {
-        return wrappedFuture.get();
+        checkCancelled();
+        try {
+            V value = wrappedFuture.get();
+            checkCancelled();
+            return value;
+        } catch (ExecutionException e) {
+            checkCancelled();
+            throw e;
+        }
     }
 
     @Override
     public V get(long timeout, TimeUnit unit) throws InterruptedException, ExecutionException, TimeoutException {
-        return wrappedFuture.get(timeout, unit);
+        checkCancelled();
+        try {
+            V value = wrappedFuture.get(timeout, unit);
+            checkCancelled();
+            return value;
+        } catch (ExecutionException e) {
+            checkCancelled();
+            throw e;
+        }
+    }
+
+    private void checkCancelled() {
+        if (cancelled.get()) {
+            throw new CancellationException("Request cancelled");
+        }
     }
 
     public interface CancelCallback {

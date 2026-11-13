@@ -49,6 +49,23 @@ class RequestCancellationTest {
     }
 
     @Test
+    void cancellationWakesAnExistingGetAndRejectsLaterGets() throws Exception {
+        Request request = request();
+        AFuture<?> future = request.getFuture(() -> { });
+        ExecutorService worker = Executors.newSingleThreadExecutor();
+        try {
+            Future<CancellationException> waiting = worker.submit(() -> assertThrows(CancellationException.class, future::get));
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+            while (!request.getPromise().hasWaiters() && System.nanoTime() < deadline) Thread.yield();
+            assertTrue(request.getPromise().hasWaiters());
+            assertTrue(future.cancel(false));
+            assertNotNull(waiting.get(1, TimeUnit.SECONDS));
+            assertThrows(CancellationException.class, future::get);
+            assertThrows(CancellationException.class, () -> future.get(1, TimeUnit.SECONDS));
+        } finally { worker.shutdownNow(); }
+    }
+
+    @Test
     void asyncSnapshotIncludesZeroIdAndIsImmutableAfterClaim() {
         Request request = request();
         request.setAsyncId(0);

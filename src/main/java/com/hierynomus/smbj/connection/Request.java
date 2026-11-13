@@ -29,6 +29,7 @@ import com.hierynomus.smbj.common.SMBRuntimeException;
 
 import java.util.Date;
 import java.util.UUID;
+import java.util.concurrent.CancellationException;
 
 public class Request {
 
@@ -132,7 +133,13 @@ public class Request {
 
     @SuppressWarnings("unchecked")
     <T extends SMB2Packet> AFuture<T> getFuture(final CancellableFuture.CancelCallback callback) {
-        return (AFuture<T>) new CancellableFuture<>(promise.future(), callback);
+        return (AFuture<T>) new CancellableFuture<>(promise.future(), () -> {
+            try {
+                callback.cancel();
+            } finally {
+                promise.deliverError(new CancellationException("Request cancelled"));
+            }
+        });
 
     }
 
