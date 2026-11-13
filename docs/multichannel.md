@@ -60,23 +60,19 @@ outcome uncertain. The caller must decide how to recover the file or generation.
 An acknowledgement of a partial write only retries the unacknowledged suffix;
 this is different from replaying a write with an unknown result.
 
-## Deferred upstream lifecycle defects
+## Lifecycle status
 
-Pinned upstream: `hierynomus/smbj@1c5b9345df2898b8d57cf34d50ae599cab07b2b8`.
-The implementation deliberately retains these generic limitations:
+The feature includes reviewed adaptations of SMBJ PRs #907/#910, plus additional
+shutdown and async-transport fixes. Terminal failure settles outstanding requests
+and credit waiters; raw socket closure can interrupt a blocked writer; late socket
+candidates are rejected; concurrent Connection closes share cleanup completion.
+The corresponding focused regressions include a real stalled loopback socket.
 
-- `DirectTcpTransport.disconnect` can wait behind a blocked socket write because
-  stream/socket closure is behind the transport locks.
-- A blocked SocketFactory can return after disconnect and publish a live socket.
-  Connection may then send a late NEGOTIATE. The feature's closed flag and null
-  cleanup guard do not establish a terminal connect/disconnect lifecycle.
-
-No bounded forced shutdown, cancellation of a blocked SocketFactory, or absence
-of late NEGOTIATE is promised. `isConnected()` continues to report the actual
-transport, including the problematic closed-but-connected state. These are Java
-implementation limitations, not evidence of a JDK defect. Reassess when an
-upstream fix merges, a maintainer requires it, or a required feature guarantee
-needs it. SMBJ PR 910 and its dependency are not included by this change.
+Full GMAC multichannel support remains incomplete. See the
+[implementation status](full-gmac-multichannel/implementation-status.md),
+[protocol decision record](full-gmac-multichannel/protocol-resolution.md) and
+[acceptance matrix](full-gmac-multichannel/test-matrix.csv). Prior fixture results
+below describe their recorded revisions and do not qualify this combined branch.
 
 ## Reproducible integration and transfer measurements
 

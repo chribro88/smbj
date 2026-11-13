@@ -1,0 +1,2 @@
+11f3020d0675230695a1d9d8ce460c94c30a84266b54f66d622df01932610407  smbj-full-gmac-multichannel-plan.md
+73a5dbea5586f9f6ee1f4e92e15c4e32d1a49b5f01b9872a84b40e3375aeeacb  smbj-full-gmac-multichannel-plan-and-skeleton.zip
