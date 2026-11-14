@@ -22,14 +22,11 @@ import com.hierynomus.msfscc.directory.FileNotifyInformation;
 import com.hierynomus.mssmb2.SMB2CreateDisposition;
 import com.hierynomus.mssmb2.SMB2ShareAccess;
 import com.hierynomus.mssmb2.messages.SMB2ChangeNotifyResponse;
-import com.hierynomus.protocol.commons.concurrent.Futures;
-import com.hierynomus.smbj.common.SMBRuntimeException;
 import com.hierynomus.smbj.io.ArrayByteChunkProvider;
 import com.hierynomus.smbj.share.Directory;
 import com.hierynomus.smbj.share.DiskShare;
 import com.hierynomus.smbj.share.File;
 import com.hierynomus.smbj.testcontainers.SambaContainer;
-import org.assertj.core.api.InstanceOfAssertFactories;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.testcontainers.junit.jupiter.Container;
@@ -38,14 +35,16 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.nio.charset.StandardCharsets;
 import java.util.EnumSet;
 import java.util.concurrent.Future;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.TimeUnit;
 
 import static com.hierynomus.mssmb2.SMB2CompletionFilter.FILE_NOTIFY_CHANGE_FILE_NAME;
 import static com.hierynomus.mssmb2.SMB2CompletionFilter.FILE_NOTIFY_CHANGE_LAST_WRITE;
 import static com.hierynomus.mssmb2.SMB2CompletionFilter.FILE_NOTIFY_CHANGE_SIZE;
 import static com.hierynomus.smbj.testing.TestingUtils.DEFAULT_AUTHENTICATION_CONTEXT;
-import static org.assertj.core.api.Assertions.as;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 @Testcontainers
 public class ChangeNotifyIntegrationTest {
@@ -93,10 +92,9 @@ public class ChangeNotifyIntegrationTest {
                         SMB2CreateDisposition.FILE_OPEN, null)) {
                     d.deleteOnClose();
                     Future<SMB2ChangeNotifyResponse> fut = d.watchAsync(EnumSet.of(FILE_NOTIFY_CHANGE_FILE_NAME), true);
-                    fut.cancel(true);
-                    SMB2ChangeNotifyResponse resp = assertDoesNotThrow(
-                            () -> Futures.get(fut, SMBRuntimeException.Wrapper));
-                    assertThat(resp).extracting("fileNotifyInfoList", as(InstanceOfAssertFactories.LIST)).isEmpty();
+                    assertTrue(fut.cancel(true));
+                    assertTrue(fut.isCancelled());
+                    assertThrows(CancellationException.class, () -> fut.get(5, TimeUnit.SECONDS));
                 }
             }
         });

@@ -15,7 +15,9 @@ import xml.etree.ElementTree as ET
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--output', type=Path, required=True)
-parser.add_argument('--java8-home', type=Path)
+profile = parser.add_mutually_exclusive_group()
+profile.add_argument('--java8-home', type=Path)
+profile.add_argument('--async-cancel', action='store_true')
 arguments = parser.parse_args()
 if not Path('gradlew').is_file():
     parser.error('Run from the SMBJ feature worktree')
@@ -87,7 +89,7 @@ try:
                     '-Porg.gradle.java.installations.auto-detect=false', '-Porg.gradle.java.installations.auto-download=false',
                     '--init-script', 'docs/full-gmac-multichannel/research/java8-runtime-profile.gradle', 'java8RuntimeTest']
     else:
-        command += ['integrationTest', '--tests', '*SingleChannelSigningIT']
+        command += ['integrationTest', '--tests', '*GmacAsyncCancellationIT' if arguments.async_cancel else '*SingleChannelSigningIT']
     command += ['-x', 'buildSambaImage', 'licenseIntegrationTest']
     raw = output / 'client-raw.log'
     try:
@@ -98,15 +100,17 @@ try:
         raw.unlink(missing_ok=True)
     assert result.returncode == 0, result.returncode
     reports = output / 'java8-reports' if arguments.java8_home else Path('build/test-results/integrationTest')
-    report = reports / 'TEST-com.hierynomus.smbj.SingleChannelSigningIT.xml'
+    test_class = 'com.hierynomus.smbj.connection.GmacAsyncCancellationIT' if arguments.async_cancel else 'com.hierynomus.smbj.SingleChannelSigningIT'
+    report = reports / ('TEST-' + test_class + '.xml')
+    expected_count = 4 if arguments.async_cancel else 16
     root = ET.parse(report).getroot()
-    assert int(root.attrib['tests']) == 16, root.attrib
+    assert int(root.attrib['tests']) == expected_count, root.attrib
     assert all(int(root.attrib[name]) == 0 for name in ('failures', 'errors', 'skipped')), root.attrib
     metadata['suite'] = dict(root.attrib)
     text = '\n'.join(node.text or '' for node in root.iter('system-out'))
-    metadata['profiles'] = [line.strip() for line in text.splitlines() if line.startswith('SIGNING_SINGLE ')]
-    assert len(metadata['profiles']) == 16, len(metadata['profiles'])
-    assert len(set(metadata['profiles'])) == 16
+    metadata['profiles'] = [line.strip() for line in text.splitlines() if line.startswith('GMAC_ASYNC ' if arguments.async_cancel else 'SIGNING_SINGLE ')]
+    assert len(metadata['profiles']) == expected_count, len(metadata['profiles'])
+    assert len(set(metadata['profiles'])) == expected_count
     assert all('signing=AES_GMAC' in line for line in metadata['profiles'])
     assert all('cipher=AES_128_GCM' in line for line in metadata['profiles'] if 'encrypt=true' in line)
     if arguments.java8_home:
@@ -123,7 +127,7 @@ try:
             metadata['java8_local_suites'].append(dict(suite.attrib))
         metadata['java8_home'] = str(arguments.java8_home)
     (output / report.name).write_text(report.read_text().replace(password, '<disposable-fixture-secret>'))
-    print('16 forced-GMAC/GCM single-session cases passed.')
+    print(str(expected_count) + ' forced-GMAC ' + ('async cancellation' if arguments.async_cancel else 'single-session') + ' cases passed.')
 finally:
     if cid:
         server_log = subprocess.run(['docker', 'logs', cid], capture_output=True, text=True)

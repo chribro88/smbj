@@ -415,6 +415,45 @@ the supplied installations. Normal invocation without `--java8-home` retains the
 ordinary test path. G0 and the complete Java 8 multichannel/authentication,
 failure/load and peer matrix remain unqualified.
 
+The [native async cancellation follow-up](validation-async-cancellation.json)
+passes four forced-GMAC Samba 4.23.10 profiles across both TCP transports and
+BC/default JCE. Each profile gates an actual unsigned `STATUS_PENDING` before
+Request publication, cancels that watch with its synchronous identity, cancels a
+second after AsyncId publication, and races eight cancellation callers on a third.
+Exactly one synchronous and two asynchronous CANCEL inputs are emitted. A fourth
+watch completes after a real file creation, using the same connection.
+
+A bounded observer captures serializer inputs and incoming frames, separately
+from SMBJ's signing and verification code. It independently checks all eleven
+signed tags per profile, prescribed MID/direction/CANCEL nonces, no repeated
+nonce under that profile's actual channel key, matching AsyncIds/final statuses,
+consecutive native request ranges despite CANCEL, and removal from the owning
+connection's outstanding-request table after every final response. Each CANCEL tag rejects
+the ordinary-request nonce. Peer responses corroborate successful transmission;
+this is transport-boundary observation, not a packet capture. The observer
+exports only phase metadata, with no keys, authentication tokens or SessionIds.
+
+The existing CHANGE_NOTIFY cancellation test now expects `CancellationException`
+from the cancelled Future. Its two default-fixture cases and 73 connected local
+crypto, cancellation and response/notification-authentication cases pass. The
+ordinary 16-case GMAC/GCM single-session runner is checked separately. Main/unit
+sources, dependencies and production JAR remain unchanged. This follow-up covers
+NTLM/plaintext/single-channel behavior on Java 21; encrypted cancellation,
+Kerberos, bound-channel routing, timeout/disconnect races and the full lifetime
+argument remain unqualified. G0 stays open.
+
+Reproduce the new native profile with the existing build JDK selected:
+
+```sh
+JAVA_HOME=/tmp/smb-relay-java21/opt/java/openjdk \
+PATH=/tmp/smb-relay-java21/opt/java/openjdk/bin:$PATH \
+python3 docs/full-gmac-multichannel/research/run-gmac-single-fixture.py \
+  --async-cancel --output /tmp/smbj-gmac-async-cancel/new-validation
+```
+
+`--async-cancel` and `--java8-home` select separate opt-in profiles. The output
+directory must be new; the runner removes its exact owner-labelled Samba fixture.
+
 ## Remaining contract and release gates
 
 | Gate | Result | Missing authoritative evidence |
