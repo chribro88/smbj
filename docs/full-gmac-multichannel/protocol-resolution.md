@@ -152,6 +152,14 @@ the next bounded original-key reservation below the advanced operational cursor.
 This qualifies that limited peer behavior, not the contradictory wording or a
 complete selected construction. See [the three-case evidence](validation-reauthentication.json).
 
+The [native Kerberos extension](research/kerberos-native/README.md) now observes
+the same channel-key behavior on Samba AD DC 4.23.10 with real AES-128/AES-256
+GSS contexts and NTLM disabled. Six bounded cases pass, including later binding,
+reauthentication, cross-channel use of one open and wrong-original-key controls.
+Those one-round exchanges complement the earlier two-round NTLM traces. This is
+further peer evidence; the public API, whole lifetime/cost proof and authoritative
+Windows/ONTAP interpretation remain open.
+
 ### Zero-length nonce paper
 
 Shen's [A Note on the Influence of a Zero Length Nonce on GCM and GMAC](https://arxiv.org/html/2608.06061v1)

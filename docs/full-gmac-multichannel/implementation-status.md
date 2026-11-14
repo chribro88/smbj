@@ -474,6 +474,29 @@ retain the unqualified public-connection ownership, padding cost, Kerberos,
 expiry/failure/concurrency, encryption, other transport/runtime and Windows/ONTAP
 boundaries. The production tree and GMAC guard are unchanged; G0 stays open.
 
+The [native Kerberos follow-up](validation-kerberos-native.json) passes six
+research cases on a real Samba AD DC 4.23.10/KDC, NTLM disabled, Direct TCP,
+BC and Java 21. The original/bound/wrong-original-key cases run with both AES-128
+and AES-256 Kerberos context keys, verified through extended GSS inquiry; SMB
+signing remains AES-128-GMAC. Actual initial/binding builders process the final
+peer token and derive channel keys from the current context's normalized key.
+
+Ten reauthentications succeed. A later binding at MID 18 uses 16 real auxiliary
+ECHOs; the same open carries authenticated I/O on both operational channels.
+Four positive traces independently verify 748 signed messages without observed
+distinct-message actual-key/nonce reuse. Both wrong-original-key controls get
+`STATUS_ACCESS_DENIED`, followed by a successful channel-key ECHO. This closes
+the earlier real-KDC-only observation's native SMB gap for this bounded profile.
+It does not qualify a production bootstrap/reauthentication API or close G0.
+
+The [fixture/source/reproduction record](research/kerberos-native/README.md)
+explains the rootless UID range, omitted SYSVOL ACL setup, user-xattr share and
+strict separation of initial infrastructure failures from final protocol results.
+Windows/ONTAP, alternate IP/SPN routing, explicit native GSS credentials,
+expiry/failure/concurrency, encryption, async transport, Java 8, sustained costs
+and complete lifetime/API ownership remain unqualified. Production source and
+the GMAC binding guard remain unchanged.
+
 ## Remaining contract and release gates
 
 | Gate | Result | Missing authoritative evidence |

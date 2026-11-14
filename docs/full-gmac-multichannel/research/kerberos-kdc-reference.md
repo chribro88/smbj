@@ -61,3 +61,9 @@ The opt-in environment guard keeps this test out of ordinary fixture-free runs.
 The fixture follows MIT's [KDC listener configuration](https://web.mit.edu/~kerberos/krb5-1.20/doc/admin/conf_files/kdc_conf.html)
 and the JDK's [keytab login options](https://docs.oracle.com/javase/8/docs/jre/api/security/jaas/spec/com/sun/security/auth/module/Krb5LoginModule.html).
 No MIT or Linux implementation source was copied into SMBJ.
+
+The later [native SMB/Kerberos research](kerberos-native/README.md) now supplies
+six passing real Samba AD DC cases with actual GMAC initial authentication,
+binding, reauthentication and same-open I/O, for AES-128/AES-256 GSS contexts.
+Its bounded construction and fixture limits remain explicit; this earlier
+MIT-KDC-only record and its original evidence boundary are unchanged.
