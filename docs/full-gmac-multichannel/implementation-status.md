@@ -32,8 +32,10 @@ NTLM/direct-TCP/BC construction with quadratic padding cost; see
 - Upstream baseline: `1c5b9345df2898b8d57cf34d50ae599cab07b2b8`.
 - Original feature implementation: `c2c8994` (ancestor of the selected base).
 - Production compilation target: Java 8 (`compileJava.options.release = 8`).
-- Build/test runtime used here: the existing Temurin 21 installation at
+- Ordinary build/test runtime: the existing Temurin 21 installation at
   `/tmp/smb-relay-java21/opt/java/openjdk`; Gradle 8.13; Bouncy Castle 1.86.
+- The optional compatibility profile also executes on Temurin 8u512; its Gradle
+  process/compiler remain on Java 21 and compile the isolated tests with release 8.
 - Input checksums: [input-sha256.txt](input-sha256.txt).
 - Resolved production graph: [runtime-dependencies.txt](runtime-dependencies.txt).
 
@@ -151,6 +153,7 @@ pool available; losing the last channel stops it.
 | Real Kerberos SPNEGO | PASS: 6 integration cases, zero failures/skips | Isolated MIT KDC and actual JDK GSS; AES-128/AES-256 keys; implicit Subject/explicit GSS credentials; CIFS target and client identity; mutual authentication; fresh context exports; missing-SPN rejection; no SMB-server binding or GMAC qualification |
 | Ready WRITE response scheduling | PASS: 28 connected tests; clean check 861/861; 8 native async cases | Latch regression fails before the five-line fix and passes after it; completed responses drain before an empty-input wait; unfinished-response pipelining and memory bounds retained; above-2-GiB case passes its unchanged deadline; live CMAC/CCM full readback on both transports/providers |
 | Late WRITE response wakeup | PASS: 15 new cases; 51 connected; clean check 876/876; 8 legacy async + 16 GMAC async single-session cases | Request completion wakes the input monitor after publication; late success/error/cancel handled without native polling; opaque Future fallback retained; real GMAC/GCM async overwrite and changed-byte readback on both transports/providers; full multichannel remains unqualified |
+| Java 8 runtime compatibility | PASS: 40 cases on 8u512; 16 default Java 21 native regression cases | 24 unchanged local cases plus 16 forced-GMAC/GCM async profiles with an odd-length payload; actual test JVM recorded; same production JAR in both runs; all 511 production classes have Java 8 bytecode; isolated test tooling only; full feature remains incomplete |
 | Bounded auxiliary-session research | PASS: 5 tests, zero failures/skips | Detached checkout only; direct TCP, BC, NTLM, Samba 4.23.10; 0/3/7 replacements, lost-binding reservation, independent GMAC/MID verification and unsafe-flow negative control; G0 remains open |
 | Concurrent auxiliary-session research | PASS: 7 tests, zero failures/skips | Detached checkout only; direct TCP, BC, NTLM, Samba 4.23.10; four operational channels, concurrent held-open I/O, complete/partial binding loss and fresh retry, safe bootstrap abort and two nonce-reuse controls; G0 remains open |
 | Independent legitimate-binding observation | NONCE REUSE CONFIRMED | Pinned Go donor + Samba 4.23.10: two successful bindings; 17 independently verified signed messages across three actual key domains; two distinct-message original-key/nonce reuses |
@@ -319,7 +322,7 @@ recorded diagnostic timings do not prove the sole cause of every earlier
 deadline failure or qualify sustained throughput. A response completing only
 after the worker has already entered its empty-input wait was outside that
 five-line change; the later wakeup follow-up below handles it. Native GMAC
-multichannel, Java 8 runtime execution and
+multichannel and
 the full G0/G5 requirements remain open. No API, dependency, build configuration,
 chunk/window limit, logging setting or test deadline changed.
 
@@ -363,10 +366,54 @@ filesystem assumptions. It generates private test credentials, forces actual
 test execution, retains sanitized evidence and removes only its verified owner
 container. With the existing JDK 21 selected, run it from this worktree using
 `python3 docs/full-gmac-multichannel/research/run-gmac-single-fixture.py --output <new-private-directory>`.
-G0, the full peer/authentication matrix, Java 8 runtime execution and sustained
+G0, the full peer/authentication matrix and sustained
 operational/performance qualification remain open. This follow-up does not
 interrupt a caller-owned blocking source read or qualify a response that never
 completes while that source is blocked.
+
+The [Java 8 runtime follow-up](validation-java8-runtime.json) executes the actual
+client on Temurin 8u512, not merely Java 8 bytecode on a newer JVM. Six existing
+test/support sources compile with release 8 into a private directory using Java
+21. A separate opt-in Test task uses a Java 8 launcher and the unchanged complete
+production JAR/runtime dependencies. Its 24 local cases cover Request/Promise
+publication and cancellation, CMAC response/padding verification and MessageId
+exhaustion/concurrency. All 16 native profiles force GMAC and exercise actual
+async overwrite/readback with both transports, BC/default JCE, GCM off/on and
+write-through off/on. The payload now has a five-byte tail to exercise unaligned
+GMAC/GCM data and credit rounding. All 40 cases pass without failures or skips.
+
+The native output records Java 8 in every case. The launcher metadata records
+Java 21 for the build/compiler and Java 8 for execution; all isolated test
+classes and all 511 production classes have major version 52. The ordinary
+Java 21 runner also passes its 16 current native cases. Its production JAR is
+byte-for-byte identical to the one exercised on Java 8. Task-owned fixtures and
+the never-started runtime extraction container were removed.
+
+The profile reuses existing JUnit artifacts while omitting incompatible or
+unused test-only infrastructure. In particular, the current Logback test backend
+has Java 11 bytecode; Java 8 uses SLF4J API NOP logging. No production dependency,
+default classpath, implementation/unit source, or build file was changed. This
+is not the full 876-test suite on Java 8, and its timings are not a logging-matched
+performance comparison. The preceding full-suite milestone remains the current
+876-test result; it was not repeated for this harness-only change.
+
+To reproduce, extract `/opt/java/openjdk` from the exact Temurin image digest in
+the validation record into a fresh local runtime directory, then use the existing
+JDK 21 for the build:
+
+```sh
+JAVA_HOME=/tmp/smb-relay-java21/opt/java/openjdk \
+PATH=/tmp/smb-relay-java21/opt/java/openjdk/bin:$PATH \
+python3 docs/full-gmac-multichannel/research/run-gmac-single-fixture.py \
+  --java8-home /tmp/smbj-java8-runtime/openjdk \
+  --output /tmp/smbj-java8-runtime/new-validation
+```
+
+The output directory must be new. The [profile](research/java8-runtime-profile.gradle)
+keeps test outputs separate and disables toolchain downloads/discovery beyond
+the supplied installations. Normal invocation without `--java8-home` retains the
+ordinary test path. G0 and the complete Java 8 multichannel/authentication,
+failure/load and peer matrix remain unqualified.
 
 ## Remaining contract and release gates
 
@@ -374,7 +421,7 @@ completes while that source is blocked.
 |---|---|---|
 | G0 | BLOCKED | Supported binding nonce mechanism, full safe actual-key lifetime proof, authoritative interpretation and independent validation of that construction; ordinary-flow collision now confirmed live |
 | G1 | BLOCKED | All four reproductions resolved together; nonce collision remains unsolved |
-| G2 | NOT_RUN | Complete local matrix across providers/transports/runtimes; Java 8 runtime execution |
+| G2 | NOT_RUN | Complete local matrix across providers/transports/runtimes; the 40-case Java 8 profile passes, but the complete Java 8 multichannel/authentication/failure matrix remains unqualified |
 | G3 | BLOCKED | Complete NTLM/Kerberos authentication lifecycle and reauthentication variants, all applicable notifications, replay/fencing and GMAC binding cases |
 | G4 | BLOCKED | Forced-GMAC multi-channel runs on capable independent Samba/Windows peers and target ONTAP release/configuration |
 | G5 | NOT_RUN | Sustained concurrent I/O and cancellation-churn memory (including transport queues), replacement/recovery and comparative measurements |

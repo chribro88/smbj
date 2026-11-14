@@ -1,0 +1,56 @@
+import groovy.json.JsonOutput
+import org.gradle.api.tasks.compile.JavaCompile
+import org.gradle.api.tasks.testing.Test
+import org.gradle.jvm.toolchain.JavaLanguageVersion
+import org.gradle.jvm.toolchain.JavaToolchainService
+
+allprojects { project ->
+    afterEvaluate {
+        def output = new File(System.getenv('SMBJ_JAVA8_OUTPUT'))
+        def toolchains = project.extensions.getByType(JavaToolchainService)
+        def junit = (project.configurations.integrationTestRuntimeClasspath.resolvedConfiguration.resolvedArtifacts
+                + project.configurations.integrationTestCompileClasspath.resolvedConfiguration.resolvedArtifacts)
+                .findAll { it.moduleVersion.id.group in ['org.junit.jupiter', 'org.junit.platform', 'org.apiguardian', 'org.opentest4j'] }
+                .collect { it.file }.unique()
+        def runtime = project.files(project.tasks.named('jar').flatMap { it.archiveFile },
+                project.configurations.runtimeClasspath, junit)
+        def classes = new File(output, 'java8-classes')
+        def compile = project.tasks.register('compileJava8RuntimeTest', JavaCompile) {
+            dependsOn project.tasks.named('jar')
+            source = project.files(
+                    'src/it/java/com/hierynomus/smbj/SingleChannelSigningIT.java',
+                    'src/it/java/com/hierynomus/smbj/testing/MultichannelTestSupport.java',
+                    'src/test/java/com/hierynomus/protocol/commons/concurrent/PromiseBackedFutureTest.java',
+                    'src/test/java/com/hierynomus/smbj/connection/RequestCancellationTest.java',
+                    'src/test/java/com/hierynomus/smbj/connection/PacketSignatoryTest.java',
+                    'src/test/java/com/hierynomus/smbj/connection/SequenceWindowExhaustionTest.java')
+            classpath = runtime
+            destinationDirectory.set(classes)
+            javaCompiler.set(toolchains.compilerFor { languageVersion.set(JavaLanguageVersion.of(21)) })
+            options.release.set(8)
+        }
+        project.tasks.register('java8RuntimeTest', Test) {
+            dependsOn compile
+            testClassesDirs = project.files(classes)
+            classpath = project.files(classes, runtime)
+            javaLauncher.set(toolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(8)) })
+            useJUnitPlatform()
+            include '**/SingleChannelSigningIT.class', '**/PromiseBackedFutureTest.class',
+                    '**/RequestCancellationTest.class', '**/PacketSignatoryTest.class', '**/SequenceWindowExhaustionTest.class'
+            reports.junitXml.outputLocation.set(new File(output, 'java8-reports'))
+            reports.html.outputLocation.set(new File(output, 'java8-html'))
+            doFirst {
+                assert javaLauncher.get().metadata.languageVersion.asInt() == 8
+                new File(output, 'java8-profile.json').text = JsonOutput.prettyPrint(JsonOutput.toJson([
+                        buildJava: System.getProperty('java.version'),
+                        compilerJava: compile.get().javaCompiler.get().metadata.languageVersion.asInt(),
+                        testJava: javaLauncher.get().metadata.languageVersion.asInt(),
+                        javaHome: javaLauncher.get().metadata.installationPath.asFile.absolutePath,
+                        release: compile.get().options.release.get(),
+                        runtimeClasspath: runtime.files.collect { it.absolutePath }.sort(),
+                        sources: compile.get().source.files.collect { it.absolutePath }.sort()
+                ])) + '\n'
+            }
+        }
+    }
+}

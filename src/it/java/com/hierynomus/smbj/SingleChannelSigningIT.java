@@ -75,15 +75,15 @@ class SingleChannelSigningIT {
              Connection primary = client.connect(hostname(), Integer.parseInt(port));
              Session session = primary.authenticate(authentication());
              DiskShare share = (DiskShare) session.connectShare(shareName())) {
-            System.out.printf("SIGNING_SINGLE provider=%s backend=%s transport=%s encrypt=%s writeThrough=%s dialect=%s signing=%s cipher=%s%n",
-                    settings.getSecurityProvider().getClass().getSimpleName(), jce && gmac ? "default-JCE" : "BC",
+            System.out.printf("SIGNING_SINGLE java=%s provider=%s backend=%s transport=%s encrypt=%s writeThrough=%s dialect=%s signing=%s cipher=%s%n",
+                    System.getProperty("java.version"), settings.getSecurityProvider().getClass().getSimpleName(), jce && gmac ? "default-JCE" : "BC",
                     async ? "AsyncDirectTcpTransport" : "DirectTcpTransport", encryption, writeThrough,
                     primary.getNegotiatedProtocol().getDialect(), primary.getConnectionContext().getSigningAlgorithm(),
                     primary.getConnectionContext().getCipherId());
             try (File file = share.openFile(name, EnumSet.of(AccessMask.GENERIC_READ, AccessMask.GENERIC_WRITE),
                     EnumSet.of(FileAttributes.FILE_ATTRIBUTE_NORMAL), SMB2ShareAccess.ALL, SMB2CreateDisposition.FILE_CREATE,
                     writeThrough ? EnumSet.of(SMB2CreateOptions.FILE_WRITE_THROUGH) : EnumSet.noneOf(SMB2CreateOptions.class))) {
-                byte[] bytes = new byte[131072];
+                byte[] bytes = new byte[131072 + 5];
                 new Random(47).nextBytes(bytes);
                 assertEquals(bytes.length, file.write(bytes, 0));
                 new Random(48).nextBytes(bytes);

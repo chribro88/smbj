@@ -15,9 +15,16 @@ import xml.etree.ElementTree as ET
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--output', type=Path, required=True)
+parser.add_argument('--java8-home', type=Path)
 arguments = parser.parse_args()
 if not Path('gradlew').is_file():
     parser.error('Run from the SMBJ feature worktree')
+if arguments.java8_home:
+    if not os.environ.get('JAVA_HOME'):
+        parser.error('Select the Java 21 build JDK with JAVA_HOME when using --java8-home')
+    arguments.java8_home = arguments.java8_home.resolve()
+    if not (arguments.java8_home / 'bin/java').is_file():
+        parser.error('--java8-home must contain bin/java')
 os.umask(0o077)
 output = arguments.output.resolve()
 output.mkdir(mode=0o700, parents=True, exist_ok=False)
@@ -72,20 +79,26 @@ try:
     client_environment.update(SMB_TEST_HOST='127.0.0.1', SMB_TEST_PORTS=str(port), SMB_TEST_USERNAME='smbtest',
                               SMB_TEST_PASSWORD=password, SMB_TEST_DOMAIN='WORKGROUP', SMB_TEST_SHARE='share',
                               SMB_TEST_SIGNING_ALGORITHM='AES_GMAC', SMB_TEST_DIALECT='SMB_3_1_1')
+    command = ['./gradlew', '--offline', '--no-daemon', '--max-workers=1',
+               '-Dorg.gradle.jvmargs=-Xmx192m -XX:ActiveProcessorCount=2', '--init-script', str(init)]
+    if arguments.java8_home:
+        client_environment['SMBJ_JAVA8_OUTPUT'] = str(output)
+        command += ['-Porg.gradle.java.installations.paths=' + str(arguments.java8_home) + ',' + os.environ['JAVA_HOME'],
+                    '-Porg.gradle.java.installations.auto-detect=false', '-Porg.gradle.java.installations.auto-download=false',
+                    '--init-script', 'docs/full-gmac-multichannel/research/java8-runtime-profile.gradle', 'java8RuntimeTest']
+    else:
+        command += ['integrationTest', '--tests', '*SingleChannelSigningIT']
+    command += ['-x', 'buildSambaImage', 'licenseIntegrationTest']
     raw = output / 'client-raw.log'
     try:
         with raw.open('wb') as log:
-            result = subprocess.run([
-                './gradlew', '--offline', '--no-daemon', '--max-workers=1',
-                '-Dorg.gradle.jvmargs=-Xmx192m -XX:ActiveProcessorCount=2', '--init-script',
-                str(init), 'integrationTest', '-x', 'buildSambaImage',
-                '--tests', '*SingleChannelSigningIT', 'licenseIntegrationTest'
-            ], env=client_environment, stdout=log, stderr=subprocess.STDOUT)
+            result = subprocess.run(command, env=client_environment, stdout=log, stderr=subprocess.STDOUT)
         (output / 'client.log').write_text(raw.read_text().replace(password, '<disposable-fixture-secret>'))
     finally:
         raw.unlink(missing_ok=True)
     assert result.returncode == 0, result.returncode
-    report = Path('build/test-results/integrationTest/TEST-com.hierynomus.smbj.SingleChannelSigningIT.xml')
+    reports = output / 'java8-reports' if arguments.java8_home else Path('build/test-results/integrationTest')
+    report = reports / 'TEST-com.hierynomus.smbj.SingleChannelSigningIT.xml'
     root = ET.parse(report).getroot()
     assert int(root.attrib['tests']) == 16, root.attrib
     assert all(int(root.attrib[name]) == 0 for name in ('failures', 'errors', 'skipped')), root.attrib
@@ -96,6 +109,19 @@ try:
     assert len(set(metadata['profiles'])) == 16
     assert all('signing=AES_GMAC' in line for line in metadata['profiles'])
     assert all('cipher=AES_128_GCM' in line for line in metadata['profiles'] if 'encrypt=true' in line)
+    if arguments.java8_home:
+        assert all('java=1.8.' in line for line in metadata['profiles'])
+        expected = {'PromiseBackedFutureTest': 5, 'RequestCancellationTest': 9,
+                    'PacketSignatoryTest': 2, 'SequenceWindowExhaustionTest': 8}
+        metadata['java8_local_suites'] = []
+        for name, count in expected.items():
+            local = list(reports.glob('TEST-*.' + name + '.xml'))
+            assert len(local) == 1, local
+            suite = ET.parse(local[0]).getroot()
+            assert int(suite.attrib['tests']) == count, suite.attrib
+            assert all(int(suite.attrib[key]) == 0 for key in ('failures', 'errors', 'skipped')), suite.attrib
+            metadata['java8_local_suites'].append(dict(suite.attrib))
+        metadata['java8_home'] = str(arguments.java8_home)
     (output / report.name).write_text(report.read_text().replace(password, '<disposable-fixture-secret>'))
     print('16 forced-GMAC/GCM single-session cases passed.')
 finally:
