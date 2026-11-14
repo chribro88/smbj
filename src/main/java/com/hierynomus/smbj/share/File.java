@@ -15,6 +15,8 @@
  */
 package com.hierynomus.smbj.share;
 
+import com.hierynomus.mssmb2.messages.SMB2WriteResponse;
+
 import com.hierynomus.mserref.NtStatus;
 import com.hierynomus.msfscc.fileinformation.FileEndOfFileInformation;
 import com.hierynomus.msfscc.fileinformation.FileStandardInformation;
@@ -120,6 +122,19 @@ public class File extends DiskEntry {
      */
     public Future<Long> writeAsync(ByteChunkProvider provider) {
         return writer.writeAsync(provider);
+    }
+
+    // CUSTOM ADDED: a single exact request exposes its real status/count for bounded callers.
+    public int getWriteRequestSize() {
+        return share.getWriteBufferSize();
+    }
+
+    public Future<SMB2WriteResponse> writeRequest(byte[] bytes, long fileOffset, int offset, int length) {
+        if (fileOffset < 0 || offset < 0 || length <= 0 || offset > bytes.length - length || length > getWriteRequestSize()) {
+            throw new IllegalArgumentException("Invalid single-request SMB write range");
+        }
+        Math.addExact(fileOffset, length);
+        return share.writeAsync(fileId, new com.hierynomus.smbj.io.ArrayByteChunkProvider(bytes, offset, length, fileOffset));
     }
 
     public OutputStream getOutputStream() {

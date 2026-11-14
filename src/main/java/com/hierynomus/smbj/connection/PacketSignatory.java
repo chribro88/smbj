@@ -15,6 +15,11 @@
  */
 package com.hierynomus.smbj.connection;
 
+import com.hierynomus.security.AEADBlockCipher;
+import com.hierynomus.security.Cipher;
+import javax.crypto.spec.GCMParameterSpec;
+import com.hierynomus.mssmb2.SMB2MessageFlag;
+import com.hierynomus.mssmb2.SMB2MessageCommandCode;
 import static com.hierynomus.mssmb2.SMB2MessageFlag.SMB2_FLAGS_SIGNED;
 import static com.hierynomus.mssmb2.SMB2PacketHeader.EMPTY_SIGNATURE;
 import static com.hierynomus.mssmb2.SMB2PacketHeader.SIGNATURE_OFFSET;
@@ -61,10 +66,11 @@ public class PacketSignatory implements Signatory {
     public boolean verify(SMB2PacketData packet, SecretKey secretKey) {
         try {
             SMBBuffer buffer = packet.getDataBuffer();
-            Mac mac = getMac(secretKey, securityProvider);
+            Mac mac = getMac(secretKey, packet.getHeader(), securityProvider);
             mac.update(buffer.array(), packet.getHeader().getHeaderStartPosition(), SIGNATURE_OFFSET);
             mac.update(EMPTY_SIGNATURE);
-            mac.update(buffer.array(), STRUCTURE_SIZE, packet.getHeader().getMessageEndPosition() - STRUCTURE_SIZE);
+            mac.update(buffer.array(), packet.getHeader().getHeaderStartPosition() + STRUCTURE_SIZE,
+                    packet.getHeader().getMessageEndPosition() - packet.getHeader().getHeaderStartPosition() - STRUCTURE_SIZE);
             byte[] signature = mac.doFinal();
             byte[] receivedSignature = packet.getHeader().getSignature();
             for (int i = 0; i < SIGNATURE_SIZE; i++) {
@@ -82,15 +88,47 @@ public class PacketSignatory implements Signatory {
         }
     }
 
-    private static Mac getMac(SecretKey secretKey, SecurityProvider securityProvider) throws SecurityException {
-        Mac mac = securityProvider.getMac(secretKey.getAlgorithm());
+    private static Mac getMac(SecretKey secretKey, SMB2PacketHeader header, SecurityProvider securityProvider) throws SecurityException {
+        Mac mac = "AES-GMAC".equals(secretKey.getAlgorithm()) ? new Gmac(securityProvider, header)
+                : securityProvider.getMac(secretKey.getAlgorithm());
         mac.init(secretKey.getEncoded());
         return mac;
+    }
+
+    /** GMAC authenticates the wire packet as AAD; its nonce is mandated by MS-SMB2 3.1.4.1. */
+    private static final class Gmac implements Mac {
+        private final AEADBlockCipher cipher;
+        private final byte[] nonce = new byte[12];
+        private final byte[] singleByte = new byte[1];
+
+        Gmac(SecurityProvider provider, SMB2PacketHeader header) throws SecurityException {
+            cipher = provider.getAEADBlockCipher("AES/GCM/NoPadding");
+            long messageId = header.getMessageId();
+            for (int i = 0; i < 8; i++) nonce[i] = (byte) (messageId >>> (8 * i));
+            if (header.isFlagSet(SMB2MessageFlag.SMB2_FLAGS_SERVER_TO_REDIR)) nonce[8] |= 1;
+            if (header.getMessage() == SMB2MessageCommandCode.SMB2_CANCEL) nonce[8] |= 2;
+        }
+
+        public void init(byte[] key) throws SecurityException {
+            cipher.init(Cipher.CryptMode.ENCRYPT, key, new GCMParameterSpec(128, nonce));
+        }
+        public void update(byte value) { singleByte[0] = value; update(singleByte); }
+        public void update(byte[] bytes) { update(bytes, 0, bytes.length); }
+        public void update(byte[] bytes, int offset, int length) {
+            try { cipher.updateAAD(bytes, offset, length); }
+            catch (SecurityException e) { throw new IllegalStateException(e); }
+        }
+        public byte[] doFinal() {
+            try { return cipher.doFinal(EMPTY_SIGNATURE, 0, 0); }
+            catch (SecurityException e) { throw new IllegalStateException(e); }
+        }
+        public void reset() { cipher.reset(); }
     }
 
     public class SignedPacketWrapper extends SMB2Packet {
         private final SMB2Packet wrappedPacket;
         private SecretKey secretKey;
+        private SMBBuffer serializedBuffer;
 
         SignedPacketWrapper(SMB2Packet packet, SecretKey secretKey) {
             this.wrappedPacket = packet;
@@ -104,12 +142,14 @@ public class PacketSignatory implements Signatory {
 
         @Override
         public void write(SMBBuffer buffer) {
+            serializedBuffer = buffer;
             try {
                 wrappedPacket.getHeader().setFlag(SMB2_FLAGS_SIGNED);
                 int packetStartPos = buffer.wpos();
                 SigningBuffer signingBuffer = new SigningBuffer(buffer);
                 // Write the real packet to the buffer
                 wrappedPacket.write(signingBuffer);
+                wrappedPacket.getHeader().setMessageEndPosition(buffer.wpos());
                 // The MAC in the signingbuffer now contains the right signature.
                 byte[] signature = signingBuffer.mac.doFinal();
                 // Copy the signature into the buffer's data at the right point.
@@ -120,13 +160,19 @@ public class PacketSignatory implements Signatory {
             }
         }
 
+        // CUSTOM ADDED: preauthentication hashes must cover the actual signed wire bytes.
+        @Override
+        public SMBBuffer getBuffer() {
+            return serializedBuffer;
+        }
+
         private class SigningBuffer extends SMBBuffer {
             private SMBBuffer wrappedBuffer;
             private final Mac mac;
 
             SigningBuffer(SMBBuffer wrappedBuffer) throws SecurityException {
                 this.wrappedBuffer = wrappedBuffer;
-                mac = getMac(secretKey, PacketSignatory.this.securityProvider);
+                mac = getMac(secretKey, wrappedPacket.getHeader(), PacketSignatory.this.securityProvider);
             }
 
             @Override

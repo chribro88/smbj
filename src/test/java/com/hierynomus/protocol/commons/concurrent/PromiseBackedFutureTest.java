@@ -16,6 +16,7 @@
 package com.hierynomus.protocol.commons.concurrent;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -34,10 +35,11 @@ public class PromiseBackedFutureTest {
     }
 
     @Test
-    public void shouldBeDoneAfterValueDelivered() {
+    public void shouldBeDoneAfterValueDelivered() throws Exception {
         Promise<String, TransportException> promise = new Promise<>("test", TransportException.Wrapper);
         promise.deliver("value");
         assertTrue(promise.future().isDone());
+        assertEquals("value", promise.future().get());
     }
 
     @Test

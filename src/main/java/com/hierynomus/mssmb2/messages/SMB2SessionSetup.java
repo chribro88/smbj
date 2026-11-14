@@ -38,6 +38,7 @@ public class SMB2SessionSetup extends SMB2Packet {
     private long clientCapabilities;
     private byte[] securityBuffer;
     private long previousSessionId;
+    private boolean binding;
 
     private Set<SMB2SessionFlags> sessionFlags;
 
@@ -57,7 +58,7 @@ public class SMB2SessionSetup extends SMB2Packet {
         buffer.putUInt16(structureSize); // StructureSize (2 bytes)
         putFlags(buffer); // Flags (1 byte)
         buffer.putByte(securityMode); // SecurityMode (1 byte)
-        buffer.putUInt32(clientCapabilities & 0xFF); // Capabilities (4 bytes)
+        buffer.putUInt32(clientCapabilities & SMB2GlobalCapability.SMB2_GLOBAL_CAP_DFS.getValue()); // Capabilities (4 bytes)
         buffer.putReserved4(); // Channel (4 bytes)
         buffer.putUInt16(SMB2PacketHeader.STRUCTURE_SIZE + 25 - 1); // SecurityBufferOffset (2 bytes) (header structure size + Session setup structure size - 1)
         buffer.putUInt16((securityBuffer != null) ? securityBuffer.length : 0); // SecurityBufferLength (2 bytes)
@@ -88,7 +89,7 @@ public class SMB2SessionSetup extends SMB2Packet {
     }
 
     private void putFlags(SMBBuffer buffer) {
-        if (negotiatedDialect.isSmb3x() && previousSessionId != 0L) {
+        if (negotiatedDialect.isSmb3x() && binding) {
             buffer.putByte((byte) 0x01);
         } else {
             buffer.putByte((byte) 0);
@@ -101,6 +102,11 @@ public class SMB2SessionSetup extends SMB2Packet {
 
     public void setSessionFlags(Set<SMB2SessionFlags> sessionFlags) {
         this.sessionFlags = sessionFlags;
+    }
+
+    // CUSTOM ADDED: binding is independent of reconnecting a previous session.
+    public void setBinding(boolean binding) {
+        this.binding = binding;
     }
 
     public void setPreviousSessionId(long previousSessionId) {

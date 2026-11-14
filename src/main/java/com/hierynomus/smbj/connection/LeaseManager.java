@@ -21,7 +21,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.slf4j.Logger;
@@ -33,9 +35,9 @@ import com.hierynomus.mssmb2.messages.SMB2LeaseBreakNotification;
 import com.hierynomus.smbj.share.Directory;
 
 /**
- * Per-{@link Connection} lease table. An inbound lease break carries no session/tree id,
- * so the table must live on the connection where any break can resolve a {@link LeaseKey}
- * to its {@link LeaseEntry} (spec 06). A directory's lease key is minted <b>once per node
+ * Lease table owned by a logical session, with a connection-local table for legacy callers.
+ * An inbound lease break carries no session/tree id, so receiving connections resolve its
+ * {@link LeaseKey} through their registered sessions. A directory's lease key is minted <b>once per node
  * (path)</b> and reused (Apple's per-node key); the {@code path -> key} map also lets a
  * child open thread its parent directory's own lease key.
  */
@@ -44,6 +46,7 @@ public class LeaseManager implements Closeable {
 
     private final ConcurrentMap<LeaseKey, LeaseEntry> byKey = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, LeaseKey> byPath = new ConcurrentHashMap<>();
+    private final AtomicBoolean closed = new AtomicBoolean();
 
     // A break must be resolved/acknowledged OFF the transport read thread: sending the ack is
     // itself an SMB2 request whose reply can only arrive on that same read thread.
@@ -75,8 +78,17 @@ public class LeaseManager implements Closeable {
 
     /** Register an entry BEFORE sending its CREATE (a break can race the grant response). */
     public void register(LeaseEntry entry) {
+        if (closed.get()) {
+            throw new IllegalStateException("Lease manager is closed");
+        }
         byKey.put(entry.getLeaseKey(), entry);
         byPath.putIfAbsent(normalize(entry.getPath()), entry.getLeaseKey());
+        if (closed.get()) {
+            byKey.remove(entry.getLeaseKey(), entry);
+            byPath.remove(normalize(entry.getPath()), entry.getLeaseKey());
+            entry.invalidateCache(false);
+            throw new IllegalStateException("Lease manager closed during lease registration");
+        }
     }
 
     /** Resolve an inbound break's lease key to its entry (spec 06). */
@@ -96,12 +108,21 @@ public class LeaseManager implements Closeable {
 
     @Override
     public void close() {
+        close(true);
+    }
+
+    /** Discard local cache state without sending SMB requests during forced teardown. */
+    public void abort() {
+        close(false);
+    }
+
+    private void close(boolean closeHandles) {
+        if (!closed.compareAndSet(false, true)) {
+            return;
+        }
         breakExecutor.shutdownNow();
         for (LeaseEntry entry : byKey.values()) {
-            Directory d = entry.getCacheDirectory();
-            if (d != null) {
-                d.closeSilently();
-            }
+            entry.invalidateCache(closeHandles);
         }
         byKey.clear();
         byPath.clear();
@@ -112,16 +133,25 @@ public class LeaseManager implements Closeable {
      * work OFF the read thread.
      */
     public void dispatchBreak(final SMB2LeaseBreakNotification notification) {
-        breakExecutor.execute(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    onBreak(notification);
-                } catch (Throwable t) {
-                    logger.error("Lease-break handling failed for {}", notification.getLeaseKey(), t);
+        if (closed.get()) {
+            return;
+        }
+        try {
+            breakExecutor.execute(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        onBreak(notification);
+                    } catch (Throwable t) {
+                        logger.error("Lease-break handling failed for {}", notification.getLeaseKey(), t);
+                    }
                 }
+            });
+        } catch (RejectedExecutionException e) {
+            if (!closed.get()) {
+                throw e;
             }
-        });
+        }
     }
 
     /** Resolve → epoch-check → invalidate → update state → ack (runs on {@link #breakExecutor}). */

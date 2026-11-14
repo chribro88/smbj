@@ -89,8 +89,10 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
     private PathResolver pathResolver;
 
     private final SMBClient client;
+    private final Session owningSession;
     final ServerList serverList;
 
+    private final java.util.concurrent.atomic.AtomicLong writeRequests = new java.util.concurrent.atomic.AtomicLong();
     private Signatory signatory;
     private PacketEncryptor encryptor;
 
@@ -109,8 +111,14 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
     private volatile IOException teardownFailure;
 
     public Connection(SmbConfig config, SMBClient client, SMBEventBus bus, ServerList serverList) {
+        this(config, client, bus, serverList, null);
+    }
+
+    /** Create an exclusively session-owned channel, or a caller-owned connection when owner is null. */
+    public Connection(SmbConfig config, SMBClient client, SMBEventBus bus, ServerList serverList, Session owningSession) {
         this.config = config;
         this.client = client;
+        this.owningSession = owningSession;
         this.transport = config.getTransportLayerFactory().createTransportLayer(new PacketHandlers<>(new SMBPacketSerializer(), this, converter), config);
         this.bus = bus;
         this.serverList = serverList;
@@ -131,8 +139,8 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
         this.packetHandlerChain = new SMB3DecryptingPacketHandler(sessionTable, encryptor).setNext(
             new SMB2CompoundedPacketHandler().setNext(
                 new SMB2IsOutstandingPacketHandler(outstandingRequests).setNext(
-                    new SMB2LeaseBreakPacketHandler(leaseManager).setNext(
-                    new SMB2SignatureVerificationPacketHandler(sessionTable, signatory).setNext(
+                    new SMB2LeaseBreakPacketHandler(this::dispatchLeaseBreak).setNext(
+                    new SMB2SignatureVerificationPacketHandler(sessionTable, signatory, this).setNext(
                         new SMB2CreditGrantingPacketHandler(sequenceWindow).setNext(
                             new SMB2AsyncResponsePacketHandler(outstandingRequests).setNext(
                                 new SMB2ProcessResponsePacketHandler(messageConverter, outstandingRequests).setNext(
@@ -141,6 +149,7 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
 
     public Connection(Connection connection) {
         this.client = connection.client;
+        this.owningSession = connection.owningSession;
         this.config = connection.config;
         this.transport = connection.transport;
         this.bus = connection.bus;
@@ -149,6 +158,12 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
     }
 
     public void connect(String hostname, int port) throws IOException {
+        connect(hostname, new InetSocketAddress(hostname, port));
+    }
+
+    // CUSTOM ADDED: preserve the authentication hostname while selecting another server interface.
+    public void connect(String hostname, InetSocketAddress address) throws IOException {
+        final int port = address.getPort();
         if (isConnected()) {
             throw new IllegalStateException(format("This connection is already connected to %s", getRemoteHostname()));
         }
@@ -158,7 +173,7 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
         }
         this.connectionContext = new ConnectionContext(config.getClientGuid(), hostname, port, config);
         try {
-            transport.connect(new InetSocketAddress(hostname, port));
+            transport.connect(address);
             failure = error.get();
             if (failure != null) {
                 // An abort can win before the transport has opened its socket.
@@ -290,7 +305,7 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
             transport.disconnect();
         } finally {
             try {
-                leaseManager.close();
+                leaseManager.abort();
             } finally {
                 bus.unsubscribe(this);
                 if (connectionContext != null) {
@@ -313,6 +328,21 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
                 return new Session(Connection.this, config, context, bus, pathResolver, signatory, encryptor);
             }
         }).establish(authContext);
+    }
+
+    // CUSTOM ADDED: bind this independent physical connection to an existing logical session.
+    public Session bind(Session session) throws IOException {
+        if (owningSession != null && owningSession != session) {
+            throw new IOException("SMB channel belongs to a different session");
+        }
+        boolean registered = session.beginBinding(this);
+        try {
+            return new SMBSessionBuilder(this, config, null).bind(session, signatory);
+        } finally {
+            if (registered) {
+                session.endBinding(this);
+            }
+        }
     }
 
     /**
@@ -356,6 +386,9 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
         } catch (TransportException e) {
             handleError(e);
             throw e;
+        }
+        if (packet.getHeader().getMessage() == SMB2MessageCommandCode.SMB2_WRITE) {
+            writeRequests.incrementAndGet();
         }
         return f;
     }
@@ -435,6 +468,10 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
         return connectionContext.getServer().getServerName();
     }
 
+    public long getWriteRequestCount() {
+        return writeRequests.get();
+    }
+
     /** Whether connection teardown has begun, without acquiring transport locks. */
     public boolean isClosed() { return error.get() != null; }
 
@@ -450,9 +487,33 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
         return leaseManager;
     }
 
+    public Session getOwningSession() {
+        return owningSession;
+    }
+
+    private void dispatchLeaseBreak(com.hierynomus.mssmb2.messages.SMB2LeaseBreakNotification notification) {
+        for (Session session : sessionTable.activeSessions()) {
+            LeaseManager owner = session.getLeaseManager();
+            if (owner.lookup(notification.getLeaseKey()) != null) {
+                owner.dispatchBreak(notification);
+                return;
+            }
+            owner = session.getConnection().getLeaseManager();
+            if (owner.lookup(notification.getLeaseKey()) != null) {
+                owner.dispatchBreak(notification);
+                return;
+            }
+        }
+        leaseManager.dispatchBreak(notification);
+    }
+
     @Handler
     @SuppressWarnings("unused")
     private void sessionLogoff(SessionLoggedOff loggedOff) {
+        Session session = sessionTable.find(loggedOff.getSessionId());
+        if (session != null && session.isBindingInProgress(this)) {
+            return;
+        }
         sessionTable.removeSession(loggedOff.getSessionId());
         logger.debug("Session << {} >> logged off", loggedOff.getSessionId());
     }
@@ -507,7 +568,7 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
                 request.getMessageId(),
                 request.getAsyncId());
             try {
-                sessionTable.find(sessionId).send(cancel);
+                sessionTable.find(sessionId).send(cancel, Connection.this);
             } catch (TransportException e) {
                 logger.error("Failed to send {}", cancel);
             }

@@ -15,6 +15,7 @@
  */
 package com.hierynomus.smbj.connection;
 
+import com.hierynomus.mssmb2.messages.negotiate.SMB2SigningCapabilities;
 import com.hierynomus.mserref.NtStatus;
 import com.hierynomus.mssmb.SMB1Packet;
 import com.hierynomus.mssmb.messages.SMB1ComNegotiateRequest;
@@ -80,6 +81,10 @@ class SMBProtocolNegotiator {
         }
 
         initializeNegotiationContext();
+        if (resp.getDialect() == SMB2Dialect.SMB_3_1_1 && negotiationContext.signingAlgorithm == null
+                && !config.getSigningAlgorithms().contains(SMB3SigningAlgorithm.AES_CMAC)) {
+            throw new IllegalStateException("Server omitted required signing algorithm negotiation");
+        }
         initializeOrValidateServerDetails();
         connectionContext.negotiated(negotiationContext);
         logger.debug("Negotiated the following connection settings: {}", connectionContext);
@@ -94,6 +99,7 @@ class SMBProtocolNegotiator {
                 boolean seenPreAuth = false;
                 boolean seenEncryption = false;
                 boolean seenCompression = false;
+                boolean seenSigning = false;
                 for (SMB2NegotiateContext negotiateContext: negotiateContextList) {
                     switch (negotiateContext.getNegotiateContextType()) {
                         case SMB2_PREAUTH_INTEGRITY_CAPABILITIES:
@@ -109,6 +115,15 @@ class SMBProtocolNegotiator {
                             }
                             seenEncryption = true;
                             handleEncryptionNegotiateContext((SMB2EncryptionCapabilities) negotiateContext);
+                            break;
+                        case SMB2_SIGNING_CAPABILITIES:
+                            if (seenSigning) throw new IllegalStateException("Duplicate SMB2_SIGNING_CAPABILITIES");
+                            seenSigning = true;
+                            List<SMB3SigningAlgorithm> algorithms = ((SMB2SigningCapabilities) negotiateContext).getAlgorithms();
+                            if (algorithms.size() != 1 || !config.getSigningAlgorithms().contains(algorithms.get(0))) {
+                                throw new IllegalStateException("Server selected an unoffered signing algorithm");
+                            }
+                            negotiationContext.signingAlgorithm = algorithms.get(0);
                             break;
                         case SMB2_COMPRESSION_CAPABILITIES:
                             if (seenCompression) {
@@ -189,7 +204,7 @@ class SMBProtocolNegotiator {
     private SMB2NegotiateResponse smb2OnlyNegotiate() throws TransportException {
         byte[] salt = new byte[32];
         config.getRandomProvider().nextBytes(salt);
-        SMB2Packet negotiatePacket = new SMB2NegotiateRequest(config.getSupportedDialects(), connectionContext.getClientGuid(), config.isSigningRequired(), config.getClientCapabilities(), salt);
+        SMB2Packet negotiatePacket = new SMB2NegotiateRequest(config.getSupportedDialects(), connectionContext.getClientGuid(), config.isSigningRequired(), config.getClientCapabilities(), salt, config.getSigningAlgorithms());
         this.negotiationContext.negotiationRequest = negotiatePacket;
         return connection.sendAndReceive(negotiatePacket);
     }
@@ -229,7 +244,12 @@ class SMBProtocolNegotiator {
         } else if (temp.validate(cachedServer)) {
             negotiationContext.server = cachedServer;
         } else {
-            throw new TransportException(String.format("Different server found for same hostname '%s', disconnecting...", temp.getServerName()));
+            throw new TransportException(String.format(
+                    "Different server found for same hostname '%s': expected GUID=%s, dialect=%s, securityMode=%s, capabilities=%s; "
+                            + "received GUID=%s, dialect=%s, securityMode=%s, capabilities=%s",
+                    temp.getServerName(), cachedServer.getServerGUID(), cachedServer.getDialectRevision(),
+                    cachedServer.getSecurityMode(), cachedServer.getCapabilities(), temp.getServerGUID(),
+                    temp.getDialectRevision(), temp.getSecurityMode(), temp.getCapabilities()));
         }
     }
 
@@ -237,6 +257,7 @@ class SMBProtocolNegotiator {
         private SMBPacket<?, ?> negotiationRequest;
         private SMB2NegotiateResponse negotiationResponse;
         private SMB3EncryptionCipher cipher;
+        private SMB3SigningAlgorithm signingAlgorithm;
         private SMB3HashAlgorithm preauthIntegrityHashId;
         private Set<SMB3CompressionAlgorithm> compressionIds = EnumSet.noneOf(SMB3CompressionAlgorithm.class);
         private byte[] preauthIntegrityHashValue;
@@ -249,6 +270,8 @@ class SMBProtocolNegotiator {
         public SMB2NegotiateResponse getNegotiationResponse() {
             return negotiationResponse;
         }
+
+        public SMB3SigningAlgorithm getSigningAlgorithm() { return signingAlgorithm; }
 
         public SMB3EncryptionCipher getCipher() {
             return cipher;

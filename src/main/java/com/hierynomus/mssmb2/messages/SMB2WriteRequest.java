@@ -44,10 +44,10 @@ public class SMB2WriteRequest extends SMB2MultiCreditPacket {
         buffer.putUInt64(byteProvider.getOffset()); // Offset (8 bytes)
         fileId.write(buffer);  // FileId (16 bytes)
         buffer.putUInt32(0); // Channel (4 bytes)
-        buffer.putUInt32(Math.max(0, byteProvider.bytesLeft() - getPayloadSize())); // RemainingBytes (4 bytes)
+        buffer.putUInt32(0); // RemainingBytes (4 bytes)
         buffer.putUInt16(0); // WriteChannelInfoOffset (2 bytes)
         buffer.putUInt16(0); // WriteChannelInfoLength (2 bytes)
         buffer.putUInt32(0); // Flags (4 bytes)
-        byteProvider.writeChunks(buffer, getCreditsAssigned());
+        byteProvider.writeBytes(buffer, getPayloadSize());
     }
 }

@@ -177,13 +177,13 @@ public class DiskShare extends Share {
 
     /**
      * Open a directory requesting an SMB3 directory lease (V2 RqLs, RH). The {@link LeaseEntry}
-     * is registered in the connection's {@link LeaseManager} <b>before</b> the CREATE is sent
+     * is registered in the session's {@link LeaseManager} <b>before</b> the CREATE is sent
      * (an async break can race the grant response), then folded with the granted state.
      */
     private Directory openDirectoryWithLease(String path, Set<AccessMask> accessMask, Set<FileAttributes> attributes,
                                              Set<SMB2ShareAccess> shareAccesses, SMB2CreateDisposition createDisposition,
                                              Set<SMB2CreateOptions> createOptions) {
-        LeaseManager lm = session.getConnection().getLeaseManager();
+        LeaseManager lm = session.getLeaseManager();
         SmbPath full = new SmbPath(smbPath, path);
         String rel = full.getPath() == null ? "" : full.getPath();
 
@@ -200,6 +200,7 @@ public class DiskShare extends Share {
         LeaseEntry existing = lm.getByPath(rel);
         boolean reuse = existing != null && !existing.isBroken();
         LeaseEntry entry = reuse ? existing : new LeaseEntry(leaseKey, parentKey, requestedState, rel);
+        entry.setOwner(session, getTreeConnect().getTreeId(), getTreeConnect().getNegotiatedProtocol().getDialect());
         if (!reuse) {
             lm.register(entry); // *** register BEFORE send ***
         }
@@ -370,7 +371,7 @@ public class DiskShare extends Share {
         // and populate. With leasing off / no lease / a real searchPattern this is the unchanged
         // open-enumerate-close behaviour.
         if (getConnectionContext().supportsDirectoryLeasing() && LeasedDirectoryCache.isCacheable(searchPattern)) {
-            LeaseManager lm = session.getConnection().getLeaseManager();
+            LeaseManager lm = session.getLeaseManager();
             SmbPath full = new SmbPath(smbPath, path);
             String rel = full.getPath() == null ? "" : full.getPath();
 

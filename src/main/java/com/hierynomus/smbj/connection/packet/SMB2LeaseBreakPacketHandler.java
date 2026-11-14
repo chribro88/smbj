@@ -23,6 +23,7 @@ import com.hierynomus.mssmb2.messages.SMB2LeaseBreakNotification;
 import com.hierynomus.protocol.commons.buffer.Buffer;
 import com.hierynomus.protocol.transport.TransportException;
 import com.hierynomus.smbj.connection.LeaseManager;
+import java.util.function.Consumer;
 
 /**
  * Intercepts server-pushed SMB2 break notifications (unsolicited, {@code MessageId = 0xFFFF…},
@@ -40,10 +41,14 @@ public class SMB2LeaseBreakPacketHandler extends SMB2PacketHandler {
     private static final int LEASE_BREAK_NOTIFICATION_SIZE = 44;
     private static final int OPLOCK_BREAK_NOTIFICATION_SIZE = 24;
 
-    private final LeaseManager leaseManager;
+    private final Consumer<SMB2LeaseBreakNotification> dispatch;
 
     public SMB2LeaseBreakPacketHandler(LeaseManager leaseManager) {
-        this.leaseManager = leaseManager;
+        this(leaseManager::dispatchBreak);
+    }
+
+    public SMB2LeaseBreakPacketHandler(Consumer<SMB2LeaseBreakNotification> dispatch) {
+        this.dispatch = dispatch;
     }
 
     @Override
@@ -67,7 +72,7 @@ public class SMB2LeaseBreakPacketHandler extends SMB2PacketHandler {
             SMB2LeaseBreakNotification notification = new SMB2LeaseBreakNotification().parse(packetData);
             logger.debug("Lease break for {} {}->{} ackRequired={}", notification.getLeaseKey(),
                 notification.getCurrentLeaseState(), notification.getNewLeaseState(), notification.isAckRequired());
-            leaseManager.dispatchBreak(notification); // resolve/ack happens OFF this read thread
+            dispatch.accept(notification); // resolve/ack happens OFF this read thread
         } catch (Buffer.BufferException e) {
             logger.warn("Malformed lease break notification, dropping", e);
         }
