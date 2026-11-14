@@ -111,6 +111,17 @@ all failure boundaries, unsigned exhaustion, resource limits, sustained cost and
 independent Windows/target ONTAP behavior remain unqualified. G0 stays open and
 the production GMAC binding guard remains intact.
 
+The later [shared caller-connection experiment](research/public-anchor/README.md)
+qualifies a bounded alternative to exposing retired R: bind the unpublished main
+session onto live caller U, promote U after verified binding and retire private R
+without LOGOFF. An older session/open on U survives and progresses between the
+NTLM rounds. Its interleaving produces sparse original-key MIDs (13/20 or
+1037/1044). A later fresh candidate excludes those inputs while keeping a low
+native cursor; the busy-U case needs zero padding. Both independent traces pass.
+This removes the happy-path retired-public-connection limitation in that detached
+prototype. It does not resolve public publication/close races or bad/lost-final
+cleanup on borrowed U, and is not a selected production mechanism.
+
 ## 4. Alternatives and decisions
 
 | Approach | Decision |

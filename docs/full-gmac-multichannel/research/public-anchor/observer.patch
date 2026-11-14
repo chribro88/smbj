@@ -1,0 +1,72 @@
+--- a/GmacWireObserver.java
++++ b/GmacWireObserver.java
+@@ -13,7 +13,9 @@
+  * See the License for the specific language governing permissions and
+  * limitations under the License.
+  */
+-package com.hierynomus.smbj.connection;
++package com.hierynomus.smbj.session;
++
++import com.hierynomus.smbj.connection.Connection;
+
+ import com.hierynomus.mssmb2.SMB2Dialect;
+ import com.hierynomus.mssmb2.messages.SMB2Echo;
+@@ -75,6 +77,20 @@
+         channelKeys.put(owners.get(connection).id, key);
+     }
+
++    synchronized Set<Long> bindingMids(Connection connection) {
++        Set<Long> mids = new HashSet<>();
++        int socket = owners.get(connection).id;
++        for (Event event : events) {
++            if (event.connection == socket && event.sessionId == mainSessionId
++                    && event.command == 1 && event.signed && !event.server) {
++                assertTrue(mids.add(event.mid), "One original-key input per native binding MID");
++            }
++        }
++        assertFalse(mids.isEmpty());
++        assertTrue(mids.size() <= 16, "Native builder's bounded authentication exchange count");
++        return mids;
++    }
++
+     synchronized void failNextBinding(Connection connection) { owners.get(connection).failBinding = true; }
+     synchronized boolean faultTriggered(Connection connection) { return owners.get(connection).injectedClose; }
+
+@@ -100,6 +116,7 @@
+     synchronized void verifyAndReport(String run, int replacements, int minimumOperational) throws GeneralSecurityException {
+         Map<String, String> authenticatedInputs = new HashMap<>();
+         Set<String> actualKeys = new HashSet<>();
++        Set<Integer> readers = new HashSet<>(), writers = new HashSet<>();
+         int verified = 0;
+         int operational = 0;
+         int preparedOnly = 0;
+@@ -156,6 +173,10 @@
+             if (event.connection == originalSocket && event.sessionId == mainSessionId) {
+                 originalApplicationTraffic |= event.command != 1;
+             }
++            if (event.sessionId == mainSessionId && !event.server) {
++                if (event.command == 8) readers.add(event.connection);
++                if (event.command == 9) writers.add(event.connection);
++            }
+             actualKeys.add(keyId);
+             verified++;
+             if (event.preparedOnly) preparedOnly++;
+@@ -167,6 +188,9 @@
+                         event.preparedOnly ? "write-attempt" : "complete-frame");
+             }
+         }
++        assertEquals(2, readers.size(), "The same main open reads on both operational connections");
++        assertEquals(readers, writers, "The same main open writes on both operational connections");
++        System.out.printf("PUBLIC_ANCHOR_IO run=%s readerConnections=%d writerConnections=%d%n", run, readers.size(), writers.size());
+         assertFalse(originalApplicationTraffic, "Original key connection must not carry application traffic");
+         assertTrue(operational >= minimumOperational, "Expected application traffic must be included in the independent verification");
+         for (ObservedSocket socket : sockets) {
+@@ -203,7 +227,7 @@
+     @Override public Socket createSocket(InetAddress host, int port, InetAddress local, int localPort) throws IOException { return open(host.getHostAddress(), port, local, localPort); }
+
+     private synchronized Socket open(String host, int port, InetAddress local, int localPort) throws IOException {
+-        if (!"127.0.0.1".equals(host) || port != 36535) throw new IOException("Only the owned loopback research fixture is permitted");
++        if (!"127.0.0.1".equals(host) || port != Integer.parseInt(System.getenv("SMB_TEST_PORTS"))) throw new IOException("Only the owned loopback research fixture is permitted");
+         ObservedSocket socket = new ObservedSocket(sockets.size());
+         sockets.add(socket);
+         try {

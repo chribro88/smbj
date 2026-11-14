@@ -497,6 +497,27 @@ expiry/failure/concurrency, encryption, async transport, Java 8, sustained costs
 and complete lifetime/API ownership remain unqualified. Production source and
 the GMAC binding guard remain unchanged.
 
+The [shared caller-connection follow-up](research/public-anchor/README.md) passes
+both native NTLM/Direct TCP/BC cases on Samba 4.23.10. An unpublished main session
+moves from a private bootstrap onto the caller's existing connection; its public
+connection, real SMBClient and pooled identity remain live. An older session/open
+performs I/O between the two binding authentication rounds and remains usable
+after bootstrap retirement and new-session close. The main open reads and writes
+on both operational channels.
+
+The busy caller signs original-key binding inputs at MIDs 1037 and 1044, while a
+later fresh candidate binds at MID 3 with zero padding. Recording the bounded
+initial anchor's sparse original-key inputs avoids raising the fresh-candidate
+cursor to the caller's high operational cursor. The two traces independently
+verify 2,332 signed inputs without observed distinct-message actual-key/nonce
+reuse; [the evidence record](validation-public-anchor.json) pins all sources.
+
+This qualifies a bounded happy-path handoff, not production public authentication
+or failure cleanup. Client-close during bootstrap, borrowed-connection cleanup
+after a bad/lost final response, arbitrary shared additional channels, full
+allocator/cost proof and remaining peer/auth/transport variants stay open. The
+production source and GMAC guard are unchanged; G0 remains open.
+
 ## Remaining contract and release gates
 
 | Gate | Result | Missing authoritative evidence |

@@ -1,0 +1,32 @@
+diff --git a/src/main/java/com/hierynomus/smbj/session/Session.java b/src/main/java/com/hierynomus/smbj/session/Session.java
+index 4b049d3..53808f1 100644
+--- a/src/main/java/com/hierynomus/smbj/session/Session.java
++++ b/src/main/java/com/hierynomus/smbj/session/Session.java
+@@ -61,7 +61,7 @@ public class Session implements AutoCloseable {
+     private static final Logger logger = LoggerFactory.getLogger(Session.class);
+     private long sessionId;
+
+-    private final Connection connection;
++    private volatile Connection connection;
+     private final SmbConfig config;
+     private SMBEventBus bus;
+     private final PathResolver pathResolver;
+@@ -364,6 +364,18 @@ public class Session implements AutoCloseable {
+         }
+     }
+
++    // Research only: caller connection becomes canonical before the unpublished session escapes.
++    void adoptBootstrapChannel(Connection bootstrap, Connection channel) {
++        synchronized (channels) {
++            if (connection != bootstrap || bootstrap == channel || closing || closed || channelsFailed.get()
++                    || !channels.contains(channel) || !channelKeys.containsKey(channel)
++                    || !channel.isConnected() || channel.isClosed()) {
++                throw new IllegalStateException("Cannot adopt an unverified or inactive bootstrap channel");
++            }
++            connection = channel;
++        }
++    }
++
+     public Connection getConnection() {
+         return connection;
+     }

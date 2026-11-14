@@ -1,0 +1,157 @@
+{
+  "result": "BOUNDED_SHARED_CALLER_OWNERSHIP_PASS_G0_OPEN",
+  "base_revision": "29cfb137b8d6cdb20ff7c6055a9e3a0079ba0099",
+  "production_source_changed": false,
+  "production_binding_guard_retained": true,
+  "production_main_source_tree": "3b8c51db5ad1ba35d3608f1e0564b0ace45b00c6",
+  "suite": {
+    "name": "com.hierynomus.smbj.session.GmacPublicAnchorIT",
+    "tests": "2",
+    "skipped": "0",
+    "failures": "0",
+    "errors": "0",
+    "timestamp": "2026-11-14T07:28:12.595Z",
+    "hostname": "chribro-firefly",
+    "time": "2.003"
+  },
+  "profile": {
+    "peer": "Samba 4.23.10",
+    "authentication": "NTLM",
+    "dialect": "SMB_3_1_1",
+    "signing": "AES-128-GMAC",
+    "transport": "DirectTcpTransport",
+    "provider": "BCSecurityProvider 1.86",
+    "independent_tag_verifier": "default JCE AES/GCM/NoPadding",
+    "production_release": 8,
+    "runtime": "Temurin 21",
+    "gradle": "8.13",
+    "application_encryption": false
+  },
+  "source_pins": [
+    {
+      "path": "docs/full-gmac-multichannel/research/public-anchor/GmacPublicAnchorIT.java",
+      "sha256": "a94420c982bf5c1078a39d662b9a075b91f3395c7018c050f06c0665bd500969"
+    },
+    {
+      "path": "docs/full-gmac-multichannel/research/public-anchor/ownership.patch",
+      "sha256": "c39495cef40c02cdd457f3b02337188dec546992b5b0ce6e24ed7fc03afc0db3"
+    },
+    {
+      "path": "docs/full-gmac-multichannel/research/public-anchor/observer.patch",
+      "sha256": "728df134250d9245f0047a19d8eda6e184728bd842cc119559d35619d3f41e33"
+    },
+    {
+      "path": "docs/full-gmac-multichannel/research/concurrent/GmacWireObserver.java",
+      "sha256": "62664419c6c2d9013229e363da17528e31c0968a18f5fec4df9ef6cfbc116b77"
+    },
+    {
+      "path": "docs/full-gmac-multichannel/research/gmac-auxiliary-experiment.patch",
+      "sha256": "641b7ac488b5905aa409b6694c8cbf33b0aa8d8f8c34905f515a3c3848e39f81"
+    },
+    {
+      "path": "docs/full-gmac-multichannel/research/run-gmac-single-fixture.py",
+      "sha256": "c09d7a9c3f20ef91e6e071ce146d27228c1d308a5b906ce9da6c59b181ae76b8"
+    }
+  ],
+  "executed_java_pins": [
+    {
+      "path": "/tmp/smbj-gmac-public-anchor-29cfb13/checkout/src/main/java/com/hierynomus/smbj/session/Session.java",
+      "sha256": "9acf80c9c2ca5a3c47f8e41f9575381424667ef17e2d268bbc761da39bae5eb1"
+    },
+    {
+      "path": "/tmp/smbj-gmac-public-anchor-29cfb13/checkout/src/main/java/com/hierynomus/smbj/connection/SMBSessionBuilder.java",
+      "sha256": "9dac542e28cb92bcae8ae927af9a10fc558fa560ee04fbc4b426d76ff0746490"
+    },
+    {
+      "path": "/tmp/smbj-gmac-public-anchor-29cfb13/checkout/src/it/java/com/hierynomus/smbj/session/GmacPublicAnchorIT.java",
+      "sha256": "a94420c982bf5c1078a39d662b9a075b91f3395c7018c050f06c0665bd500969"
+    },
+    {
+      "path": "/tmp/smbj-gmac-public-anchor-29cfb13/checkout/src/it/java/com/hierynomus/smbj/session/GmacWireObserver.java",
+      "sha256": "8a4e6cb85204389b88342ccd63aa61f4724b4def9f3ce692d9abfa361831425d"
+    }
+  ],
+  "source_reproduction": "Both main patches and the observer patch reapply to pinned inputs and byte-equal the executed sources; versioned driver and runner byte-equal executed files",
+  "fixture": {
+    "image": "dockurr/samba@sha256:2a0452a12b7a244a22f18d0f233101bb8d4952b5500ae263905e3b9dad3bf2ae",
+    "owner": "smbj-late-response-295d6520-903c-473e-9e5a-6315e8a25abe",
+    "config": "/tmp/smbj-gmac-public-anchor-29cfb13/checkout/docs/full-gmac-multichannel/research/smb-gmac-gcm.conf",
+    "config_sha256": "a92cdd46897f6bf16c0dba5e0e676dc0a58bf0082f20a6792e01d805c650595f",
+    "container_id": "c9f7ed6ba9acf9ffd858d80dff72e58f4a61b2cc15e47fa6765f419bbc9f6f8c",
+    "port": 33071,
+    "version": "Version 4.23.10",
+    "image_id": "sha256:2a0452a12b7a244a22f18d0f233101bb8d4952b5500ae263905e3b9dad3bf2ae",
+    "suite": {
+      "name": "com.hierynomus.smbj.session.GmacPublicAnchorIT",
+      "tests": "2",
+      "skipped": "0",
+      "failures": "0",
+      "errors": "0",
+      "timestamp": "2026-11-14T07:28:12.595Z",
+      "hostname": "chribro-firefly",
+      "time": "2.003"
+    },
+    "profiles": [
+      "PUBLIC_ANCHOR_COMPLETE run=public-anchor-0 canonicalConnectionLive=true clientIdentityPreserved=true pooledIdentityPreserved=true olderSessionSurvives=true signing=AES_GMAC olderOpenReadbackBytes=655385",
+      "PUBLIC_ANCHOR_COMPLETE run=public-anchor-1024 canonicalConnectionLive=true clientIdentityPreserved=true pooledIdentityPreserved=true olderSessionSurvives=true signing=AES_GMAC olderOpenReadbackBytes=655385"
+    ],
+    "removed": true
+  },
+  "observations": [
+    "PUBLIC_ANCHOR_OVERLAP run=public-anchor-0 olderOpenReadbackBytes=131077 authenticationRoundHeld=true",
+    "PUBLIC_ANCHOR_BOUND run=public-anchor-0 originalPrefixEnd=3 anchorMids=[13, 20] freshReservationFirst=21 freshReservationEnd=37 padding=18 sameOpenReadbackBytes=1179693",
+    "PUBLIC_ANCHOR_COMPLETE run=public-anchor-0 canonicalConnectionLive=true clientIdentityPreserved=true pooledIdentityPreserved=true olderSessionSurvives=true signing=AES_GMAC olderOpenReadbackBytes=655385",
+    "PUBLIC_ANCHOR_IO run=public-anchor-0 readerConnections=2 writerConnections=2",
+    "AUXWIRE_COMPLETE run=public-anchor-0 replacements=1 observedEvents=178 independentlyVerified=160 preparedOnly=0 operationalSignedMessages=72 actualKeyDomains=6 distinctMessageNonceReuses=0 transcriptFingerprint=1cd2382c7b2ccedf0d01ce441529afb4882aefbf208bb525438504c30c4447d3",
+    "PUBLIC_ANCHOR_OVERLAP run=public-anchor-1024 olderOpenReadbackBytes=131077 authenticationRoundHeld=true",
+    "PUBLIC_ANCHOR_BOUND run=public-anchor-1024 originalPrefixEnd=3 anchorMids=[1037, 1044] freshReservationFirst=3 freshReservationEnd=19 padding=0 sameOpenReadbackBytes=1179693",
+    "PUBLIC_ANCHOR_COMPLETE run=public-anchor-1024 canonicalConnectionLive=true clientIdentityPreserved=true pooledIdentityPreserved=true olderSessionSurvives=true signing=AES_GMAC olderOpenReadbackBytes=655385",
+    "PUBLIC_ANCHOR_IO run=public-anchor-1024 readerConnections=2 writerConnections=2",
+    "AUXWIRE_COMPLETE run=public-anchor-1024 replacements=1 observedEvents=2190 independentlyVerified=2172 preparedOnly=0 operationalSignedMessages=72 actualKeyDomains=6 distinctMessageNonceReuses=0 transcriptFingerprint=85754c1e2f1d247d9a16c01c66c5b96971245ba64f4942a0723592bfd5399c1e"
+  ],
+  "totals": {
+    "positive_cases": 2,
+    "independently_verified_signed_inputs": 2332,
+    "distinct_message_actual_key_nonce_reuses_observed": 0,
+    "main_open_readback_bytes": 2359386,
+    "older_open_readback_bytes": 1310770,
+    "older_open_readback_bytes_while_binding_authentication_held": 262154,
+    "read_and_write_connections_per_main_open": 2
+  },
+  "checks": {
+    "native_integration": "PASS: 2 cases, zero failures/errors/skips; actual execution forced",
+    "licenseIntegrationTest": "SUCCESS (UP-TO-DATE)",
+    "python_compile": "PASS",
+    "git_diff_check": "PASS",
+    "all_four_exact_owned_fixture_ids_absent": true,
+    "JDT.LS": "STOPPED through this connector; user-authorized available checks used",
+    "secrets": "No findings; unsuccessful-authentication warning, not an authenticated SonarQube result"
+  },
+  "private_evidence": [
+    {
+      "path": "/tmp/smbj-gmac-public-anchor-29cfb13/final/client.log",
+      "sha256": "95e861cd618f0a8f1f62b4037f92ae7401b7591a3212776017e78b178eeb43ea"
+    },
+    {
+      "path": "/tmp/smbj-gmac-public-anchor-29cfb13/final/TEST-com.hierynomus.smbj.session.GmacPublicAnchorIT.xml",
+      "sha256": "d45c25e3e5777866001bd09ee9d80d65be7a814c004c43b2579ab6390c00083c"
+    },
+    {
+      "path": "/tmp/smbj-gmac-public-anchor-29cfb13/final/metadata.json",
+      "sha256": "f356fe7dab965c9d55f2501ae46f0022d774aa8e18adbf22cd33af42fadcc8a0"
+    }
+  ],
+  "diagnostic_history": [
+    "Initial shared socket-write gate retained transport write lock; older-session I/O could not progress and timed out. Moved gate to actual NTLM authenticator round boundary.",
+    "Preliminary corrected two-case native run passed, but fixture runner rejected its different report marker. Final source-pinned run passes both tests and report collection."
+  ],
+  "remaining": [
+    "No production public authenticate/openChannel bootstrap integration",
+    "Private bootstrap tracking and close/publication races",
+    "Bad/lost final binding response cleanup while preserving unrelated borrowed-connection sessions",
+    "Arbitrary shared additional channels and concurrent existing-connection binds",
+    "Full actual-key lifetime, unsigned exhaustion, bounded resource and sustained padding/cost proof",
+    "Kerberos handoff, async transport, encryption and native Java 8 variants",
+    "Independent Windows/ONTAP interpretation and interoperability"
+  ]
+}
