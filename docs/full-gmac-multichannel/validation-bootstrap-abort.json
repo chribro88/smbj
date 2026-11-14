@@ -1,0 +1,208 @@
+{
+  "result": "BOUNDED_BOOTSTRAP_ABORT_RESEARCH_PASS_G0_OPEN",
+  "base_revision": "c25dcf2eacd59b1a298ca13626d307bbedb9fdf6",
+  "production_binding_guard_retained": true,
+  "production_source_changed": false,
+  "production_release": 8,
+  "isolation": "Detached checkout at the recorded base; only SMBSessionBuilder GMAC guard removed; executed driver and observer match versioned artifacts byte-for-byte.",
+  "profile": {
+    "peer": "Samba 4.23.10",
+    "image": "dockurr/samba@sha256:2a0452a12b7a244a22f18d0f233101bb8d4952b5500ae263905e3b9dad3bf2ae",
+    "dialect": "SMB_3_1_1",
+    "signing": "AES_GMAC",
+    "transport": "DirectTcpTransport",
+    "authentication": "NTLM",
+    "provider": "BCSecurityProvider",
+    "independent_tag_verifier": "JCE AES/GCM/NoPadding",
+    "application_encryption": false
+  },
+  "runtime": {
+    "java": "Temurin 21",
+    "gradle": "8.13",
+    "bouncy_castle": "1.86"
+  },
+  "fixture": {
+    "owner": "smbj-late-response-04f4ae21-45e4-4eee-be15-aff679c3189a",
+    "container_id": "5998009295ae1e0a80e18e04f36ad87594e0731bd7bc242929ea952624d310f0",
+    "port": 33075,
+    "version": "Version 4.23.10",
+    "config_sha256": "a92cdd46897f6bf16c0dba5e0e676dc0a58bf0082f20a6792e01d805c650595f",
+    "removed": true
+  },
+  "suite": {
+    "name": "com.hierynomus.smbj.connection.GmacBootstrapAbortIT",
+    "tests": 6,
+    "skipped": 0,
+    "failures": 0,
+    "errors": 0,
+    "timestamp_utc": "2026-11-14T13:59:41.743Z",
+    "time_seconds": 8.328,
+    "client_build": "BUILD SUCCESSFUL in 35s",
+    "licenseIntegrationTest": "UP-TO-DATE"
+  },
+  "positive_cases": [
+    {
+      "name": "bad-final-fresh",
+      "fault": "flip one signature byte at client input",
+      "binding_mids": [
+        4,
+        5
+      ],
+      "reserved_abort_mid": 3,
+      "padding_echoes": 1,
+      "independently_verified_inputs": 34,
+      "observed_events": 44,
+      "actual_key_domains": 3,
+      "distinct_message_nonce_reuses": 0,
+      "fresh_readback_bytes": 131077,
+      "fingerprint": "32a091af4e88ee448b6d76a61e9a6c1540abbd100b07b3cf9ba7d7c731a300ca"
+    },
+    {
+      "name": "bad-final-open",
+      "fault": "flip one signature byte at client input",
+      "binding_mids": [
+        11,
+        12
+      ],
+      "reserved_abort_mid": 3,
+      "padding_echoes": 0,
+      "independently_verified_inputs": 58,
+      "observed_events": 68,
+      "actual_key_domains": 3,
+      "distinct_message_nonce_reuses": 0,
+      "held_open_readback_bytes": 393231,
+      "fresh_readback_bytes": 131077,
+      "fingerprint": "3f2262074f5cc1e05bfd0e7f25739aaa3a77644e7d217b66e4532a579ae61561"
+    },
+    {
+      "name": "lost-final-fresh",
+      "fault": "discard complete final frame at client input",
+      "binding_mids": [
+        4,
+        5
+      ],
+      "reserved_abort_mid": 3,
+      "padding_echoes": 1,
+      "independently_verified_inputs": 34,
+      "observed_events": 44,
+      "actual_key_domains": 3,
+      "distinct_message_nonce_reuses": 0,
+      "fresh_readback_bytes": 131077,
+      "fingerprint": "57b4e28856550fc832eb40bb8b6eeb4b3f90a4b41397a5b48e52ccfd864ffbc2"
+    },
+    {
+      "name": "lost-final-open",
+      "fault": "discard complete final frame at client input",
+      "binding_mids": [
+        11,
+        12
+      ],
+      "reserved_abort_mid": 3,
+      "padding_echoes": 0,
+      "independently_verified_inputs": 58,
+      "observed_events": 68,
+      "actual_key_domains": 3,
+      "distinct_message_nonce_reuses": 0,
+      "held_open_readback_bytes": 393231,
+      "fresh_readback_bytes": 131077,
+      "fingerprint": "77bcde7ae885019ee81b13e642b458d96851e6f639b5135a865c5ac15fc08154"
+    }
+  ],
+  "negative_controls": [
+    {
+      "fault": "bad-final",
+      "result": "expected_nonce_reuse_detected",
+      "binding_mids": [
+        3,
+        4
+      ],
+      "reserved_abort_mid": null
+    },
+    {
+      "fault": "lost-final",
+      "result": "expected_nonce_reuse_detected",
+      "binding_mids": [
+        3,
+        4
+      ],
+      "reserved_abort_mid": null
+    }
+  ],
+  "totals_positive_only": {
+    "independently_verified_signed_inputs": 184,
+    "observed_events": 224,
+    "actual_key_domains_per_case": 3,
+    "distinct_message_nonce_reuses": 0,
+    "held_open_readback_bytes": 786462,
+    "fresh_open_readback_bytes": 524308,
+    "total_readback_bytes": 1310770,
+    "all_cases_older_session_live": true,
+    "pooled_identity_preserved": true,
+    "bootstrap_transport_closed": true,
+    "unpublished_channels": 0,
+    "lost_final_open_case_older_echo_and_file_io_completed_while_bind_wait_pending": true
+  },
+  "source_pins": [
+    {
+      "path": "docs/full-gmac-multichannel/research/bootstrap-abort/GmacBootstrapAbortIT.java",
+      "sha256": "1d75aefccffc9dd4b4e9c8ed34d2e55564581f85c71141908fece2d1ac0ffeae"
+    },
+    {
+      "path": "docs/full-gmac-multichannel/research/bootstrap-abort/observer.patch",
+      "sha256": "ca2ca41f84a05f2905a05615a25ef9321ca60c806ab8271eb6e8c84bf3a7bbd3"
+    },
+    {
+      "path": "docs/full-gmac-multichannel/research/concurrent/GmacWireObserver.java",
+      "sha256": "62664419c6c2d9013229e363da17528e31c0968a18f5fec4df9ef6cfbc116b77"
+    },
+    {
+      "path": "docs/full-gmac-multichannel/research/gmac-auxiliary-experiment.patch",
+      "sha256": "641b7ac488b5905aa409b6694c8cbf33b0aa8d8f8c34905f515a3c3848e39f81"
+    },
+    {
+      "path": "docs/full-gmac-multichannel/research/run-gmac-single-fixture.py",
+      "sha256": "abd3cc8c4f584381a1b7927f769a062c1f33bacec124e125183362da1c2c6ede"
+    },
+    {
+      "path": "detached/src/main/java/com/hierynomus/smbj/connection/SMBSessionBuilder.java",
+      "sha256": "9dac542e28cb92bcae8ae927af9a10fc558fa560ee04fbc4b426d76ff0746490",
+      "note": "Detached research guard removal only; not production source."
+    },
+    {
+      "path": "detached guard-removal patch",
+      "sha256": "641b7ac488b5905aa409b6694c8cbf33b0aa8d8f8c34905f515a3c3848e39f81"
+    },
+    {
+      "path": "executed observer at detached src/it/java/com/hierynomus/smbj/connection/GmacWireObserver.java",
+      "sha256": "a4a5aac6ff116511fa8eadc5081f74c3458687f611da43969fee2514c3c0fd5d"
+    }
+  ],
+  "report_artifacts": {
+    "junit_xml_sha256": "71a0c622021c04d73fb4733fabceef997c3bf7dabddc240fd9b0500977f145bc",
+    "client_log_sha256": "33a0005adec6754ef6e73cc63503af05c4d961e86ccb79f16183eb52828edd25",
+    "server_log_sha256": "df29b393c26affee9df33856c7edd5cbff1db46a16e54729023d70b97949313f",
+    "raw_keys_tokens_raw_session_ids_exported": false
+  },
+  "limits": [
+    "Conditional NTLM, Direct TCP, BC, Samba 4.23.10 detached research only.",
+    "Bootstrap must remain live and quiescent; root loss and LOGOFF failure are untested.",
+    "Close/authentication/publication races, arbitrary shared channels and the full key/nonce lifetime are unproven.",
+    "Other GSS rounds, CANCEL, notifications, reauthentication, exhaustion, cost, runtime/provider/transport variants, Windows and ONTAP remain open.",
+    "Client-input corruption/drop is not a claim that an invalid signature or lost response was emitted by the server or lost on the network."
+  ],
+  "archive": {
+    "path": "/tmp/smbj-gmac-bootstrap-abort-c25dcf2/executed-sources",
+    "sha256_manifest": {
+      "TEST-com.hierynomus.smbj.connection.GmacBootstrapAbortIT.xml": "71a0c622021c04d73fb4733fabceef997c3bf7dabddc240fd9b0500977f145bc",
+      "build.gradle": "23f0c657fba87e92e58728ecbf87b17a25403a9429c7a56f2350da8148ae447f",
+      "client.log": "33a0005adec6754ef6e73cc63503af05c4d961e86ccb79f16183eb52828edd25",
+      "detached-guard-removal.patch": "641b7ac488b5905aa409b6694c8cbf33b0aa8d8f8c34905f515a3c3848e39f81",
+      "metadata.json": "73e530c3a2f505af732b1e19cbeab5ab6249f3ae4a4d28649eb2608c65a0d429",
+      "server.log": "df29b393c26affee9df33856c7edd5cbff1db46a16e54729023d70b97949313f",
+      "src/it/java/com/hierynomus/smbj/connection/GmacBootstrapAbortIT.java": "1d75aefccffc9dd4b4e9c8ed34d2e55564581f85c71141908fece2d1ac0ffeae",
+      "src/it/java/com/hierynomus/smbj/connection/GmacWireObserver.java": "a4a5aac6ff116511fa8eadc5081f74c3458687f611da43969fee2514c3c0fd5d",
+      "src/main/java/com/hierynomus/smbj/connection/SMBSessionBuilder.java": "9dac542e28cb92bcae8ae927af9a10fc558fa560ee04fbc4b426d76ff0746490",
+      "test.gradle": "d30e96f8e466ea84fe926e7a58bb9b8c5325aa5e5b6210c6f1eae148fc3038af"
+    }
+  }
+}

@@ -111,6 +111,17 @@ all failure boundaries, unsigned exhaustion, resource limits, sustained cost and
 independent Windows/target ONTAP behavior remain unqualified. G0 stays open and
 the production GMAC binding guard remains intact.
 
+The [reserved-nonce bootstrap-abort follow-up](research/bootstrap-abort/README.md)
+passes four bad/lost-final cases and two unsafe controls. It reserves the private
+bootstrap's next native MID for possible original-key LOGOFF and keeps borrowed
+caller binding inputs above it. The private connection remains live and quiescent
+until cleanup. The observer independently verifies 184 signed inputs across four
+positive cases without distinct-message actual-key/nonce reuse; both controls
+without the reservation detect reuse. This qualifies only that bounded cleanup
+path. Root loss, LOGOFF failure, publication/close races, all key-lifetime paths
+and production integration remain open; G0 is unchanged. See
+[exact validation](validation-bootstrap-abort.json).
+
 The later [shared caller-connection experiment](research/public-anchor/README.md)
 qualifies a bounded alternative to exposing retired R: bind the unpublished main
 session onto live caller U, promote U after verified binding and retire private R

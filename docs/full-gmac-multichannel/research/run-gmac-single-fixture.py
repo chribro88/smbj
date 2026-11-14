@@ -19,6 +19,7 @@ profile = parser.add_mutually_exclusive_group()
 profile.add_argument('--java8-home', type=Path)
 profile.add_argument('--async-cancel', action='store_true')
 profile.add_argument('--public-anchor-research', action='store_true')
+profile.add_argument('--bootstrap-abort-research', action='store_true')
 arguments = parser.parse_args()
 if not Path('gradlew').is_file():
     parser.error('Run from the SMBJ feature worktree')
@@ -31,6 +32,21 @@ if arguments.java8_home:
 if arguments.public_anchor_research:
     if os.environ.get('SMBJ_GMAC_AUX_RESEARCH') != 'true' or not Path('src/it/java/com/hierynomus/smbj/session/GmacPublicAnchorIT.java').is_file():
         parser.error('--public-anchor-research requires the detached research checkout and explicit opt-in')
+if arguments.bootstrap_abort_research:
+    if os.environ.get('SMBJ_GMAC_AUX_RESEARCH') != 'true' or not Path('src/it/java/com/hierynomus/smbj/connection/GmacBootstrapAbortIT.java').is_file():
+        parser.error('--bootstrap-abort-research requires the detached research checkout and explicit opt-in')
+if arguments.bootstrap_abort_research:
+    test_class, expected_count, marker, label = ('com.hierynomus.smbj.connection.GmacBootstrapAbortIT', 6,
+                                               'BOOTSTRAP_ABORT_COMPLETE ', 'bootstrap-abort research')
+elif arguments.public_anchor_research:
+    test_class, expected_count, marker, label = ('com.hierynomus.smbj.session.GmacPublicAnchorIT', 2,
+                                               'PUBLIC_ANCHOR_COMPLETE ', 'public-anchor research')
+elif arguments.async_cancel:
+    test_class, expected_count, marker, label = ('com.hierynomus.smbj.connection.GmacAsyncCancellationIT', 4,
+                                               'GMAC_ASYNC ', 'async cancellation')
+else:
+    test_class, expected_count, marker, label = ('com.hierynomus.smbj.SingleChannelSigningIT', 16,
+                                               'SIGNING_SINGLE ', 'single-session')
 os.umask(0o077)
 output = arguments.output.resolve()
 output.mkdir(mode=0o700, parents=True, exist_ok=False)
@@ -93,7 +109,7 @@ try:
                     '-Porg.gradle.java.installations.auto-detect=false', '-Porg.gradle.java.installations.auto-download=false',
                     '--init-script', 'docs/full-gmac-multichannel/research/java8-runtime-profile.gradle', 'java8RuntimeTest']
     else:
-        command += ['integrationTest', '--tests', '*GmacPublicAnchorIT' if arguments.public_anchor_research else ('*GmacAsyncCancellationIT' if arguments.async_cancel else '*SingleChannelSigningIT')]
+        command += ['integrationTest', '--tests', test_class]
     command += ['-x', 'buildSambaImage', 'licenseIntegrationTest']
     raw = output / 'client-raw.log'
     try:
@@ -104,17 +120,20 @@ try:
         raw.unlink(missing_ok=True)
     assert result.returncode == 0, result.returncode
     reports = output / 'java8-reports' if arguments.java8_home else Path('build/test-results/integrationTest')
-    test_class = 'com.hierynomus.smbj.session.GmacPublicAnchorIT' if arguments.public_anchor_research else ('com.hierynomus.smbj.connection.GmacAsyncCancellationIT' if arguments.async_cancel else 'com.hierynomus.smbj.SingleChannelSigningIT')
     report = reports / ('TEST-' + test_class + '.xml')
-    expected_count = 2 if arguments.public_anchor_research else (4 if arguments.async_cancel else 16)
     root = ET.parse(report).getroot()
     assert int(root.attrib['tests']) == expected_count, root.attrib
     assert all(int(root.attrib[name]) == 0 for name in ('failures', 'errors', 'skipped')), root.attrib
     metadata['suite'] = dict(root.attrib)
     text = '\n'.join(node.text or '' for node in root.iter('system-out'))
-    metadata['profiles'] = [line.strip() for line in text.splitlines() if line.startswith('PUBLIC_ANCHOR_COMPLETE ' if arguments.public_anchor_research else ('GMAC_ASYNC ' if arguments.async_cancel else 'SIGNING_SINGLE '))]
-    assert len(metadata['profiles']) == expected_count, len(metadata['profiles'])
-    assert len(set(metadata['profiles'])) == expected_count
+    metadata['profiles'] = [line.strip() for line in text.splitlines() if line.startswith(marker)]
+    expected_profiles = 4 if arguments.bootstrap_abort_research else expected_count
+    assert len(metadata['profiles']) == expected_profiles, len(metadata['profiles'])
+    assert len(set(metadata['profiles'])) == expected_profiles
+    if arguments.bootstrap_abort_research:
+        metadata['negative_controls'] = [line.strip() for line in text.splitlines() if line.startswith('BOOTSTRAP_ABORT_UNSAFE_CONTROL ')]
+        assert len(metadata['negative_controls']) == 2
+        assert all('result=expected_nonce_reuse_detected' in line for line in metadata['negative_controls'])
     assert all('signing=AES_GMAC' in line for line in metadata['profiles'])
     assert all('cipher=AES_128_GCM' in line for line in metadata['profiles'] if 'encrypt=true' in line)
     if arguments.java8_home:
@@ -131,7 +150,7 @@ try:
             metadata['java8_local_suites'].append(dict(suite.attrib))
         metadata['java8_home'] = str(arguments.java8_home)
     (output / report.name).write_text(report.read_text().replace(password, '<disposable-fixture-secret>'))
-    print(str(expected_count) + ' forced-GMAC ' + ('public-anchor research' if arguments.public_anchor_research else ('async cancellation' if arguments.async_cancel else 'single-session')) + ' cases passed.')
+    print(str(expected_count) + ' forced-GMAC ' + label + ' cases passed.')
 finally:
     if cid:
         server_log = subprocess.run(['docker', 'logs', cid], capture_output=True, text=True)
