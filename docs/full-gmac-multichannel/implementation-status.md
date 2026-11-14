@@ -518,6 +518,34 @@ after a bad/lost final response, arbitrary shared additional channels, full
 allocator/cost proof and remaining peer/auth/transport variants stay open. The
 production source and GMAC guard are unchanged; G0 remains open.
 
+The [authentication-timeout lifecycle follow-up](validation-authentication-timeout.json)
+fixes a production prerequisite for lost-final binding cleanup. A failed synchronous
+SESSION_SETUP wait now removes both request lookups and settles the abandoned
+promise without cancelling an unrelated session or fabricating response credits.
+Late replies, including retirement during response parsing, cannot complete that
+request again. Ordinary operation timeout tracking is retained. Promise waits now
+restore the interrupt flag before wrapping interruption.
+
+Six new regressions and 70 connected cases pass. The clean milestone passes
+**882 tests in 101 suites, zero failures/errors/skips**, with license and JaCoCo
+checks. Native compatibility then passes 16 forced-GMAC cases on Temurin 21 and
+40 cases on actual Temurin 8u512 (16 native and 24 selected local), using the changed
+production JAR. These native runs cover successful authentication/I/O and do not
+inject final binding loss. The six timeout regressions use Mockito on Java 21;
+they are not a full Java 8 authentication-failure matrix.
+
+The next unverified abort candidate reserves the private bootstrap's next native
+MID exclusively for possible original-key LOGOFF, keeping all binding inputs off
+that MID. An initial caller auxiliary session can consume the reserved MID with
+a real ECHO before binding. Bad/lost-final native tests, root-loss handling and
+shutdown/publication races are still required; this is not a selected mechanism.
+
+This fixes abandoned-request lifetime and response races. It does not establish
+safe peer-session LOGOFF/abort after an unverified final binding on a borrowed
+connection. Native failure cleanup, production bootstrap/publication and the
+complete actual-key lifetime argument remain required. G0 and the production
+GMAC binding guard remain unchanged.
+
 ## Remaining contract and release gates
 
 | Gate | Result | Missing authoritative evidence |

@@ -58,14 +58,20 @@ public class OutstandingRequests {
     }
 
     public Request receivedResponseFor(Long messageId) {
+        Request request = remove(messageId);
+        if (request == null) {
+            throw new SMBRuntimeException("Unable to find outstanding request for messageId " + messageId);
+        }
+        return request;
+    }
+
+    /** Atomically retire both lookups; returns null if another completion already retired the request. */
+    public Request remove(Long messageId) {
         lock.writeLock().lock();
         try {
-            Request r = lookup.remove(messageId);
-            if (r == null) {
-                throw new SMBRuntimeException("Unable to find outstanding request for messageId " + messageId);
-            }
-            cancelLookup.remove(r.getCancelId());
-            return r;
+            Request request = lookup.remove(messageId);
+            if (request != null) cancelLookup.remove(request.getCancelId());
+            return request;
         } finally {
             lock.writeLock().unlock();
         }

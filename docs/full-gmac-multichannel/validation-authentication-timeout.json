@@ -1,0 +1,425 @@
+{
+  "result": "AUTHENTICATION_TIMEOUT_LIFECYCLE_PASS_G0_OPEN",
+  "base_revision": "7cac15e523a8ef61fc6fcae50d39cf713f0b9916",
+  "production_source_changed": true,
+  "production_binding_guard_retained": true,
+  "production_release": 8,
+  "changes": [
+    "Retire both MID/cancel lookups after a failed synchronous SESSION_SETUP response wait; settle its promise outside the request-table lock",
+    "Ignore already-retired authentication replies, including races during async lookup and response parsing",
+    "Preserve the promise waiter interrupt flag",
+    "Keep ordinary-operation timeout tracking and the strict receivedResponseFor API contract"
+  ],
+  "source_pins": [
+    {
+      "path": "src/main/java/com/hierynomus/protocol/commons/concurrent/Promise.java",
+      "sha256": "904dfdc431e42efd749628f2ce7d1dfc129d1d7b3621461f0d5e6bc1fb13d0ea"
+    },
+    {
+      "path": "src/main/java/com/hierynomus/smbj/connection/Connection.java",
+      "sha256": "22a1108f8b02f9835326c8571a02f72132f8156b6d5999b942771a2c392ee22f"
+    },
+    {
+      "path": "src/main/java/com/hierynomus/smbj/connection/OutstandingRequests.java",
+      "sha256": "7286c40d2122f9c167095e24b6f7f26936752c6fb00710d08a9ef053aa5659b5"
+    },
+    {
+      "path": "src/main/java/com/hierynomus/smbj/connection/packet/SMB2AsyncResponsePacketHandler.java",
+      "sha256": "9589b91346d07b0424cf13db1fee76a65634457015e85196941701d5a1dc66f3"
+    },
+    {
+      "path": "src/main/java/com/hierynomus/smbj/connection/packet/SMB2ProcessResponsePacketHandler.java",
+      "sha256": "24abc485311612685e5c602c8f8518f468c5c1e8f112a9718f4315f5e1300b0e"
+    },
+    {
+      "path": "src/test/java/com/hierynomus/smbj/connection/AuthenticationTimeoutTest.java",
+      "sha256": "ea9998703f3126f4dd0d63c55f2ef69d71e576ea38eda341ee944b775cf776d0"
+    }
+  ],
+  "production_diff": {
+    "path": "/tmp/smbj-authentication-timeout-main-source.diff",
+    "sha256": "b74ef8d68472441391377db23ad616c0b2c2a5824ca34f3d86fc9567fa9485de"
+  },
+  "production_jar": {
+    "path": "/workspace/smbj-worktrees/full-gmac-multichannel/build/libs/smbj-0.15.1-feature-full-gmac-multichannel-SNAPSHOT.jar",
+    "sha256": "b75926da9ac2f18ac676d8225dcb15ff995d13738fa3c06d20e7029262ac2216"
+  },
+  "regression_evidence": {
+    "valid_baseline_suite": {
+      "name": "com.hierynomus.smbj.connection.AuthenticationTimeoutTest",
+      "tests": "4",
+      "skipped": "0",
+      "failures": "2",
+      "errors": "0",
+      "timestamp": "2026-11-14T07:44:58.230Z",
+      "hostname": "chribro-firefly",
+      "time": "1.779"
+    },
+    "valid_baseline_result": "Four earlier correctly constructed request cases executed; two failed: timeout leaves an outstanding request, interruption flag is cleared. The remaining baseline cases passed. Earlier constructor/import fixture mistakes are excluded.",
+    "new_suite": {
+      "name": "com.hierynomus.smbj.connection.AuthenticationTimeoutTest",
+      "tests": "6",
+      "skipped": "0",
+      "failures": "0",
+      "errors": "0",
+      "timestamp": "2026-11-14T07:48:13.862Z",
+      "hostname": "chribro-firefly",
+      "time": "0.218"
+    },
+    "new_cases": [
+      {
+        "name": "timeoutDuringResponseParsingCannotCompleteOrAbortAnAbandonedRequest()",
+        "classname": "com.hierynomus.smbj.connection.AuthenticationTimeoutTest",
+        "time": "0.037"
+      },
+      {
+        "name": "[1] false",
+        "classname": "com.hierynomus.smbj.connection.AuthenticationTimeoutTest",
+        "time": "0.122"
+      },
+      {
+        "name": "[2] true",
+        "classname": "com.hierynomus.smbj.connection.AuthenticationTimeoutTest",
+        "time": "0.004"
+      },
+      {
+        "name": "requestRetiredBeforeLaterPipelineLookupIsIgnored()",
+        "classname": "com.hierynomus.smbj.connection.AuthenticationTimeoutTest",
+        "time": "0.001"
+      },
+      {
+        "name": "lateSetupAfterTimeoutIsIgnoredWithoutClosingTransportOrAcceptingCredits()",
+        "classname": "com.hierynomus.smbj.connection.AuthenticationTimeoutTest",
+        "time": "0.026"
+      },
+      {
+        "name": "ordinaryOperationTimeoutKeepsItsOutstandingResponseContract()",
+        "classname": "com.hierynomus.smbj.connection.AuthenticationTimeoutTest",
+        "time": "0.024"
+      }
+    ],
+    "connected_suites": [
+      {
+        "name": "com.hierynomus.smbj.connection.ConnectionAbortTest",
+        "tests": "17",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-14T07:46:07.964Z",
+        "hostname": "chribro-firefly",
+        "time": "4.225"
+      },
+      {
+        "name": "com.hierynomus.smbj.connection.AuthenticationTimeoutTest",
+        "tests": "6",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-14T07:46:06.154Z",
+        "hostname": "chribro-firefly",
+        "time": "1.786"
+      },
+      {
+        "name": "com.hierynomus.protocol.commons.concurrent.PromiseBackedFutureTest",
+        "tests": "5",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-14T07:46:07.946Z",
+        "hostname": "chribro-firefly",
+        "time": "0.015"
+      },
+      {
+        "name": "com.hierynomus.smbj.connection.ResponseAuthenticationTest",
+        "tests": "39",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-14T07:46:12.254Z",
+        "hostname": "chribro-firefly",
+        "time": "0.368"
+      },
+      {
+        "name": "com.hierynomus.smbj.connection.RequestCancellationTest",
+        "tests": "9",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-14T07:46:12.191Z",
+        "hostname": "chribro-firefly",
+        "time": "0.061"
+      }
+    ],
+    "connected_totals": {
+      "tests": 76,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "clean_check": {
+    "command": "JAVA_HOME=/tmp/smb-relay-java21/opt/java/openjdk PATH=/tmp/smb-relay-java21/opt/java/openjdk/bin:$PATH ./gradlew --offline --no-daemon --max-workers=1 '-Dorg.gradle.jvmargs=-Xmx192m -XX:ActiveProcessorCount=2' --init-script /tmp/smbj-full-gmac-test-limits.gradle clean check",
+    "result": "BUILD SUCCESSFUL",
+    "elapsed": "55s",
+    "suites": 101,
+    "totals": {
+      "tests": 882,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "licenses": "SUCCESS (licenseMain/licenseTest/licenseIntegrationTest UP-TO-DATE)",
+    "jacocoTestReport": "SUCCESS",
+    "manifest": {
+      "path": "/tmp/smbj-authentication-timeout-clean-check-reports/manifest.json",
+      "sha256": "812982f7eb0bb167913f9a93a5c23fd18a8263177ee5303e71abc5cb77cd226f"
+    },
+    "log": {
+      "path": "/tmp/smbj-authentication-timeout-clean-check.log",
+      "sha256": "ee5c07adc792181824dd6dca324acfbabcc50d79115a1caa10984e64cb86e9b7"
+    }
+  },
+  "native_java21": {
+    "image": "dockurr/samba@sha256:2a0452a12b7a244a22f18d0f233101bb8d4952b5500ae263905e3b9dad3bf2ae",
+    "owner": "smbj-late-response-fcddcdb8-4342-403b-a900-1d07e6cd65c9",
+    "config": "/workspace/smbj-worktrees/full-gmac-multichannel/docs/full-gmac-multichannel/research/smb-gmac-gcm.conf",
+    "config_sha256": "a92cdd46897f6bf16c0dba5e0e676dc0a58bf0082f20a6792e01d805c650595f",
+    "container_id": "d8ac49c6fbc253026add8dc31b3954189648d6568e55249a3505404870b459cd",
+    "port": 33072,
+    "version": "Version 4.23.10",
+    "image_id": "sha256:2a0452a12b7a244a22f18d0f233101bb8d4952b5500ae263905e3b9dad3bf2ae",
+    "suite": {
+      "name": "com.hierynomus.smbj.SingleChannelSigningIT",
+      "tests": "16",
+      "skipped": "0",
+      "failures": "0",
+      "errors": "0",
+      "timestamp": "2026-11-14T07:50:24.008Z",
+      "hostname": "chribro-firefly",
+      "time": "1.38"
+    },
+    "profiles": [
+      "SIGNING_SINGLE java=21.0.12.1 provider=BCSecurityProvider backend=BC transport=DirectTcpTransport encrypt=false writeThrough=false dialect=SMB_3_1_1 signing=AES_GMAC cipher=null",
+      "SIGNING_SINGLE java=21.0.12.1 provider=JceSecurityProvider backend=default-JCE transport=DirectTcpTransport encrypt=false writeThrough=false dialect=SMB_3_1_1 signing=AES_GMAC cipher=null",
+      "SIGNING_SINGLE java=21.0.12.1 provider=BCSecurityProvider backend=BC transport=AsyncDirectTcpTransport encrypt=false writeThrough=false dialect=SMB_3_1_1 signing=AES_GMAC cipher=null",
+      "SIGNING_SINGLE java=21.0.12.1 provider=JceSecurityProvider backend=default-JCE transport=AsyncDirectTcpTransport encrypt=false writeThrough=false dialect=SMB_3_1_1 signing=AES_GMAC cipher=null",
+      "SIGNING_SINGLE java=21.0.12.1 provider=BCSecurityProvider backend=BC transport=DirectTcpTransport encrypt=false writeThrough=true dialect=SMB_3_1_1 signing=AES_GMAC cipher=null",
+      "SIGNING_SINGLE java=21.0.12.1 provider=JceSecurityProvider backend=default-JCE transport=DirectTcpTransport encrypt=false writeThrough=true dialect=SMB_3_1_1 signing=AES_GMAC cipher=null",
+      "SIGNING_SINGLE java=21.0.12.1 provider=BCSecurityProvider backend=BC transport=AsyncDirectTcpTransport encrypt=false writeThrough=true dialect=SMB_3_1_1 signing=AES_GMAC cipher=null",
+      "SIGNING_SINGLE java=21.0.12.1 provider=JceSecurityProvider backend=default-JCE transport=AsyncDirectTcpTransport encrypt=false writeThrough=true dialect=SMB_3_1_1 signing=AES_GMAC cipher=null",
+      "SIGNING_SINGLE java=21.0.12.1 provider=BCSecurityProvider backend=BC transport=DirectTcpTransport encrypt=true writeThrough=false dialect=SMB_3_1_1 signing=AES_GMAC cipher=AES_128_GCM",
+      "SIGNING_SINGLE java=21.0.12.1 provider=JceSecurityProvider backend=default-JCE transport=DirectTcpTransport encrypt=true writeThrough=false dialect=SMB_3_1_1 signing=AES_GMAC cipher=AES_128_GCM",
+      "SIGNING_SINGLE java=21.0.12.1 provider=BCSecurityProvider backend=BC transport=AsyncDirectTcpTransport encrypt=true writeThrough=false dialect=SMB_3_1_1 signing=AES_GMAC cipher=AES_128_GCM",
+      "SIGNING_SINGLE java=21.0.12.1 provider=JceSecurityProvider backend=default-JCE transport=AsyncDirectTcpTransport encrypt=true writeThrough=false dialect=SMB_3_1_1 signing=AES_GMAC cipher=AES_128_GCM",
+      "SIGNING_SINGLE java=21.0.12.1 provider=BCSecurityProvider backend=BC transport=DirectTcpTransport encrypt=true writeThrough=true dialect=SMB_3_1_1 signing=AES_GMAC cipher=AES_128_GCM",
+      "SIGNING_SINGLE java=21.0.12.1 provider=JceSecurityProvider backend=default-JCE transport=DirectTcpTransport encrypt=true writeThrough=true dialect=SMB_3_1_1 signing=AES_GMAC cipher=AES_128_GCM",
+      "SIGNING_SINGLE java=21.0.12.1 provider=BCSecurityProvider backend=BC transport=AsyncDirectTcpTransport encrypt=true writeThrough=true dialect=SMB_3_1_1 signing=AES_GMAC cipher=AES_128_GCM",
+      "SIGNING_SINGLE java=21.0.12.1 provider=JceSecurityProvider backend=default-JCE transport=AsyncDirectTcpTransport encrypt=true writeThrough=true dialect=SMB_3_1_1 signing=AES_GMAC cipher=AES_128_GCM"
+    ],
+    "removed": true
+  },
+  "actual_java8": {
+    "fixture": {
+      "image": "dockurr/samba@sha256:2a0452a12b7a244a22f18d0f233101bb8d4952b5500ae263905e3b9dad3bf2ae",
+      "owner": "smbj-late-response-95cff94c-8447-40f6-bd4c-c047872b3bbd",
+      "config": "/workspace/smbj-worktrees/full-gmac-multichannel/docs/full-gmac-multichannel/research/smb-gmac-gcm.conf",
+      "config_sha256": "a92cdd46897f6bf16c0dba5e0e676dc0a58bf0082f20a6792e01d805c650595f",
+      "container_id": "9551dd621c85e758db93f9e1ba3f2aea4b82180e17c7ae256014523b016059c0",
+      "port": 33073,
+      "version": "Version 4.23.10",
+      "image_id": "sha256:2a0452a12b7a244a22f18d0f233101bb8d4952b5500ae263905e3b9dad3bf2ae",
+      "suite": {
+        "name": "com.hierynomus.smbj.SingleChannelSigningIT",
+        "tests": "16",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-14T07:51:48.929Z",
+        "hostname": "chribro-firefly",
+        "time": "1.371"
+      },
+      "profiles": [
+        "SIGNING_SINGLE java=1.8.0_512 provider=BCSecurityProvider backend=BC transport=DirectTcpTransport encrypt=false writeThrough=false dialect=SMB_3_1_1 signing=AES_GMAC cipher=null",
+        "SIGNING_SINGLE java=1.8.0_512 provider=JceSecurityProvider backend=default-JCE transport=DirectTcpTransport encrypt=false writeThrough=false dialect=SMB_3_1_1 signing=AES_GMAC cipher=null",
+        "SIGNING_SINGLE java=1.8.0_512 provider=BCSecurityProvider backend=BC transport=AsyncDirectTcpTransport encrypt=false writeThrough=false dialect=SMB_3_1_1 signing=AES_GMAC cipher=null",
+        "SIGNING_SINGLE java=1.8.0_512 provider=JceSecurityProvider backend=default-JCE transport=AsyncDirectTcpTransport encrypt=false writeThrough=false dialect=SMB_3_1_1 signing=AES_GMAC cipher=null",
+        "SIGNING_SINGLE java=1.8.0_512 provider=BCSecurityProvider backend=BC transport=DirectTcpTransport encrypt=false writeThrough=true dialect=SMB_3_1_1 signing=AES_GMAC cipher=null",
+        "SIGNING_SINGLE java=1.8.0_512 provider=JceSecurityProvider backend=default-JCE transport=DirectTcpTransport encrypt=false writeThrough=true dialect=SMB_3_1_1 signing=AES_GMAC cipher=null",
+        "SIGNING_SINGLE java=1.8.0_512 provider=BCSecurityProvider backend=BC transport=AsyncDirectTcpTransport encrypt=false writeThrough=true dialect=SMB_3_1_1 signing=AES_GMAC cipher=null",
+        "SIGNING_SINGLE java=1.8.0_512 provider=JceSecurityProvider backend=default-JCE transport=AsyncDirectTcpTransport encrypt=false writeThrough=true dialect=SMB_3_1_1 signing=AES_GMAC cipher=null",
+        "SIGNING_SINGLE java=1.8.0_512 provider=BCSecurityProvider backend=BC transport=DirectTcpTransport encrypt=true writeThrough=false dialect=SMB_3_1_1 signing=AES_GMAC cipher=AES_128_GCM",
+        "SIGNING_SINGLE java=1.8.0_512 provider=JceSecurityProvider backend=default-JCE transport=DirectTcpTransport encrypt=true writeThrough=false dialect=SMB_3_1_1 signing=AES_GMAC cipher=AES_128_GCM",
+        "SIGNING_SINGLE java=1.8.0_512 provider=BCSecurityProvider backend=BC transport=AsyncDirectTcpTransport encrypt=true writeThrough=false dialect=SMB_3_1_1 signing=AES_GMAC cipher=AES_128_GCM",
+        "SIGNING_SINGLE java=1.8.0_512 provider=JceSecurityProvider backend=default-JCE transport=AsyncDirectTcpTransport encrypt=true writeThrough=false dialect=SMB_3_1_1 signing=AES_GMAC cipher=AES_128_GCM",
+        "SIGNING_SINGLE java=1.8.0_512 provider=BCSecurityProvider backend=BC transport=DirectTcpTransport encrypt=true writeThrough=true dialect=SMB_3_1_1 signing=AES_GMAC cipher=AES_128_GCM",
+        "SIGNING_SINGLE java=1.8.0_512 provider=JceSecurityProvider backend=default-JCE transport=DirectTcpTransport encrypt=true writeThrough=true dialect=SMB_3_1_1 signing=AES_GMAC cipher=AES_128_GCM",
+        "SIGNING_SINGLE java=1.8.0_512 provider=BCSecurityProvider backend=BC transport=AsyncDirectTcpTransport encrypt=true writeThrough=true dialect=SMB_3_1_1 signing=AES_GMAC cipher=AES_128_GCM",
+        "SIGNING_SINGLE java=1.8.0_512 provider=JceSecurityProvider backend=default-JCE transport=AsyncDirectTcpTransport encrypt=true writeThrough=true dialect=SMB_3_1_1 signing=AES_GMAC cipher=AES_128_GCM"
+      ],
+      "java8_local_suites": [
+        {
+          "name": "com.hierynomus.protocol.commons.concurrent.PromiseBackedFutureTest",
+          "tests": "5",
+          "skipped": "0",
+          "failures": "0",
+          "errors": "0",
+          "timestamp": "2026-11-14T07:51:48.870Z",
+          "hostname": "chribro-firefly",
+          "time": "0.049"
+        },
+        {
+          "name": "com.hierynomus.smbj.connection.RequestCancellationTest",
+          "tests": "9",
+          "skipped": "0",
+          "failures": "0",
+          "errors": "0",
+          "timestamp": "2026-11-14T07:51:50.323Z",
+          "hostname": "chribro-firefly",
+          "time": "0.125"
+        },
+        {
+          "name": "com.hierynomus.smbj.connection.PacketSignatoryTest",
+          "tests": "2",
+          "skipped": "0",
+          "failures": "0",
+          "errors": "0",
+          "timestamp": "2026-11-14T07:51:50.308Z",
+          "hostname": "chribro-firefly",
+          "time": "0.009"
+        },
+        {
+          "name": "com.hierynomus.smbj.connection.SequenceWindowExhaustionTest",
+          "tests": "8",
+          "skipped": "0",
+          "failures": "0",
+          "errors": "0",
+          "timestamp": "2026-11-14T07:51:50.455Z",
+          "hostname": "chribro-firefly",
+          "time": "0.025"
+        }
+      ],
+      "java8_home": "/tmp/smbj-java8-runtime/openjdk",
+      "removed": true
+    },
+    "runtime": "Temurin 1.8.0_512-b09",
+    "build_runtime": "Temurin 21.0.12.1+1",
+    "profile": {
+      "buildJava": "21.0.12.1",
+      "compilerJava": 21,
+      "testJava": 8,
+      "javaHome": "/tmp/smbj-java8-runtime/openjdk",
+      "release": 8
+    },
+    "suites": [
+      {
+        "name": "com.hierynomus.protocol.commons.concurrent.PromiseBackedFutureTest",
+        "tests": "5",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-14T07:51:48.870Z",
+        "hostname": "chribro-firefly",
+        "time": "0.049"
+      },
+      {
+        "name": "com.hierynomus.smbj.SingleChannelSigningIT",
+        "tests": "16",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-14T07:51:48.929Z",
+        "hostname": "chribro-firefly",
+        "time": "1.371"
+      },
+      {
+        "name": "com.hierynomus.smbj.connection.RequestCancellationTest",
+        "tests": "9",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-14T07:51:50.323Z",
+        "hostname": "chribro-firefly",
+        "time": "0.125"
+      },
+      {
+        "name": "com.hierynomus.smbj.connection.PacketSignatoryTest",
+        "tests": "2",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-14T07:51:50.308Z",
+        "hostname": "chribro-firefly",
+        "time": "0.009"
+      },
+      {
+        "name": "com.hierynomus.smbj.connection.SequenceWindowExhaustionTest",
+        "tests": "8",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-14T07:51:50.455Z",
+        "hostname": "chribro-firefly",
+        "time": "0.025"
+      }
+    ],
+    "totals": {
+      "tests": 40,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "limitations": "Six Mockito-based timeout regressions ran on Java 21. Java 8 profile runs the existing 16 native GMAC/GCM cases and 24 selected local cases, not the full 882-test suite."
+  },
+  "native_profile_scope": "Pinned Samba 4.23.10; initial successful authentication and signed/encrypted I/O across Direct TCP/Async and BC/default JCE; these runs do not inject lost final binding responses",
+  "cleanup": "Both exact task-owned fixture IDs verified absent after runner owner-checked removal",
+  "private_evidence": [
+    {
+      "path": "/tmp/smbj-authentication-timeout-baseline.xml",
+      "sha256": "b0c29887fffb1028999bb682a596d0efaefd20d8a4821bee0cf73898e9a083da"
+    },
+    {
+      "path": "/tmp/smbj-authentication-timeout-baseline.log",
+      "sha256": "9b68cca96c21deb0d0cf4998fd1bc0ce5534f8cd93b865d21903d76576ad881b"
+    },
+    {
+      "path": "/tmp/smbj-authentication-timeout-connected-reports/manifest.json",
+      "sha256": "83ae17b1ac58b4c0f5b345b392a429fccd2508f1ecda31be44126ad8f6fb3726"
+    },
+    {
+      "path": "/tmp/smbj-authentication-timeout-native16/metadata.json",
+      "sha256": "f86cb6bb9eaf63a3e06671bdb8c5cc5e350e3b378970e5f4c3f1fd76c01e55ee"
+    },
+    {
+      "path": "/tmp/smbj-authentication-timeout-native16/TEST-com.hierynomus.smbj.SingleChannelSigningIT.xml",
+      "sha256": "d7c7698095e0bd3adc50040a0488be6f3dc891622569a1641bb245e89e17d231"
+    },
+    {
+      "path": "/tmp/smbj-authentication-timeout-java8/metadata.json",
+      "sha256": "aa797c8be55c99e18095d4745123e7daacee88a810f2675c24e0f9e4b8f23e80"
+    },
+    {
+      "path": "/tmp/smbj-authentication-timeout-java8/java8-profile.json",
+      "sha256": "ec178bd419933f7e54e0fe39f161d433e3e910c77c32806fcd64c8bbc5d5259e"
+    }
+  ],
+  "unavailable_checks": {
+    "JDT.LS": "STOPPED through this connector; earlier user authorization to continue available checks retained",
+    "SonarQube": "Secrets scans report no findings with unsuccessful-authentication warnings; no authenticated analysis claimed"
+  },
+  "remaining": [
+    "Native failed-final/timed-out GMAC binding cleanup while preserving other sessions on a borrowed caller connection",
+    "Selected and integrated production bootstrap mechanism and full actual-key/nonce lifetime proof",
+    "All outstanding plan gates including concurrency/retry/resource cost and Windows/ONTAP interoperability"
+  ],
+  "next_unverified_experiment": {
+    "status": "NOT_RUN",
+    "candidate": "Reserve the private bootstrap next MID exclusively for a possible original-key abort LOGOFF; every binding avoids that MID, padding an initial caller auxiliary session with a real ECHO when necessary. Keep bootstrap quiescent and live until handoff or abort; never release the reserved slot.",
+    "required_evidence": [
+      "Bad final signature and discarded/lost final response on a borrowed connection",
+      "Native original-key LOGOFF at its reserved MID without distinct-message nonce reuse",
+      "Older session/open and pooled caller identity survive",
+      "Timed-out request is fully retired; no provisional channel publication",
+      "Root transport loss, cleanup failure and close/publication races still require separate handling"
+    ]
+  }
+}

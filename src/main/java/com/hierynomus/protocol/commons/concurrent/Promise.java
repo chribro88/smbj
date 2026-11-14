@@ -194,6 +194,7 @@ public class Promise<V, T extends Throwable> {
 
             return val;
         } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
             throw wrapper.wrap(ie);
         } finally {
             lock.unlock();

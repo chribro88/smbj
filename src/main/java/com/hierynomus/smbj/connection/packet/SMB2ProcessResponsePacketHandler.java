@@ -53,6 +53,7 @@ public class SMB2ProcessResponsePacketHandler extends SMB2PacketHandler {
     @Override
     protected void doSMB2Handle(SMB2PacketData packetData) throws TransportException {
         Request request = outstandingRequests.getRequestByMessageId(packetData.getHeader().getMessageId());
+        if (request == null) return;
 
         SMB2Packet packet = null;
         try {
@@ -63,6 +64,8 @@ public class SMB2ProcessResponsePacketHandler extends SMB2PacketHandler {
             throw new TransportException("Unable to deserialize SMB2 Packet Data.", e);
         }
 
-        outstandingRequests.receivedResponseFor(packet.getHeader().getMessageId()).getPromise().deliver(packet);
+        if (outstandingRequests.remove(packet.getHeader().getMessageId()) != null) {
+            request.getPromise().deliver(packet);
+        }
     }
 }

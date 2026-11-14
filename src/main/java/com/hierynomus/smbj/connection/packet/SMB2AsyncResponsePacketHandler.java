@@ -45,6 +45,7 @@ public class SMB2AsyncResponsePacketHandler extends SMB2PacketHandler {
     @Override
     protected void doSMB2Handle(SMB2PacketData packetData) throws TransportException {
         Request request = outstandingRequests.getRequestByMessageId(packetData.getHeader().getMessageId());
+        if (request == null) return;
         logger.trace("Send/Recv of packet {} took << {} ms >>", packetData, System.currentTimeMillis() - request.getTimestamp().getTime());
 
         // [MS-SMB2] 3.2.5.1.5 Handling Asynchronous Responses

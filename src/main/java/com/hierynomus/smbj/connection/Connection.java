@@ -358,7 +358,17 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
     }
 
     <T extends SMB2Packet> T sendAndReceive(SMB2Packet packet) throws TransportException {
-        return Futures.get(this.<T>send(packet), config.getTransactTimeout(), TimeUnit.MILLISECONDS, TransportException.Wrapper);
+        Future<T> response = this.<T>send(packet);
+        try {
+            return Futures.get(response, config.getTransactTimeout(), TimeUnit.MILLISECONDS, TransportException.Wrapper);
+        } catch (TransportException failure) {
+            // The authentication builder cannot consume a reply after its wait has failed.
+            if (packet.getHeader().getMessage() == SMB2MessageCommandCode.SMB2_SESSION_SETUP) {
+                Request abandoned = outstandingRequests.remove(packet.getHeader().getMessageId());
+                if (abandoned != null) abandoned.getPromise().deliverError(failure);
+            }
+            throw failure;
+        }
     }
 
     void sessionSetupAccepted(com.hierynomus.mssmb2.messages.SMB2SessionSetup response) {
