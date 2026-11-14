@@ -454,6 +454,26 @@ python3 docs/full-gmac-multichannel/research/run-gmac-single-fixture.py \
 `--async-cancel` and `--java8-home` select separate opt-in profiles. The output
 directory must be new; the runner removes its exact owner-labelled Samba fixture.
 
+The [native reauthentication research](validation-reauthentication.json) now
+passes three detached cases on Samba 4.23.10/NTLM/Direct TCP/BC/Java 21. Original
+and bound channels complete five reauthentications in total. On the bound
+channels, outgoing setup requests and both intermediate/final peer replies use
+the existing channel key; those reply tags reject the original signing key.
+An original-key request on a bound channel receives `STATUS_ACCESS_DENIED`,
+after which a channel-key ECHO succeeds. The positive cases independently verify
+388 signed messages with no distinct-message actual-key/nonce reuse observed.
+
+After reauthentication advances an operational cursor, a fresh binding still
+starts at original-key MID 19 with 16 actual auxiliary-key ECHOs. The same open
+survives reauthentication and the additional channel. This supports keeping
+original-key reservation state separate from operational MIDs under this peer's
+channel-key interpretation. The research driver uses actual `Session.send` but
+supplies its own GSS loop and setup-response acceptance; it is not a production
+reauthentication API. Its [source, reproduction and limits](research/reauthentication/README.md)
+retain the unqualified public-connection ownership, padding cost, Kerberos,
+expiry/failure/concurrency, encryption, other transport/runtime and Windows/ONTAP
+boundaries. The production tree and GMAC guard are unchanged; G0 stays open.
+
 ## Remaining contract and release gates
 
 | Gate | Result | Missing authoritative evidence |

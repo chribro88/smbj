@@ -143,6 +143,15 @@ The recorded Samba 4.23.10 GMAC binding finals independently verify using the
 final request. This supports that interpretation for this peer; Windows/ONTAP
 and the authoritative wording resolution remain unverified.
 
+The [native reauthentication follow-up](research/reauthentication/README.md)
+now separately observes that Samba 4.23.10 accepts bound-channel setup requests
+under the channel key and signs both intermediate/final replies with that key.
+A request using the original signing key gets `STATUS_ACCESS_DENIED`; subsequent
+channel-key traffic remains usable. A fresh binding after reauthentication uses
+the next bounded original-key reservation below the advanced operational cursor.
+This qualifies that limited peer behavior, not the contradictory wording or a
+complete selected construction. See [the three-case evidence](validation-reauthentication.json).
+
 ### Zero-length nonce paper
 
 Shen's [A Note on the Influence of a Zero Length Nonce on GCM and GMAC](https://arxiv.org/html/2608.06061v1)

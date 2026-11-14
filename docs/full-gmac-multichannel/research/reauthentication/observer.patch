@@ -1,0 +1,106 @@
+--- a/GmacWireObserver.java
++++ b/GmacWireObserver.java
+@@ -45,11 +45,17 @@
+     private final Map<Integer, Map<Long, byte[]>> auxiliaryKeys = new HashMap<>();
+     private final Map<Integer, byte[]> channelKeys = new HashMap<>();
+     private final byte[] fingerprintKey = new byte[32];
++    private final int port;
++    private final boolean allowOriginalApplication;
+     private long mainSessionId;
+     private int originalSocket;
+     private byte[] originalKey;
+-
+-    GmacWireObserver() { new SecureRandom().nextBytes(fingerprintKey); }
++    private int initialAuthenticationEndEvent;
++
++    GmacWireObserver(int port, boolean allowOriginalApplication) {
++        this.port = port; this.allowOriginalApplication = allowOriginalApplication;
++        new SecureRandom().nextBytes(fingerprintKey);
++    }
+
+     synchronized void register(Connection connection) {
+         ObservedSocket socket = sockets.get(sockets.size() - 1);
+@@ -58,6 +64,7 @@
+     }
+
+     synchronized void original(Session main, Connection connection) {
++        initialAuthenticationEndEvent = events.size();
+         mainSessionId = main.getSessionId();
+         originalSocket = owners.get(connection).id;
+         originalKey = main.getSessionContext().getSigningKey().getEncoded().clone();
+@@ -100,6 +107,12 @@
+     synchronized void verifyAndReport(String run, int replacements, int minimumOperational) throws GeneralSecurityException {
+         Map<String, String> authenticatedInputs = new HashMap<>();
+         Set<String> actualKeys = new HashSet<>();
++        Set<String> reauthentication = new HashSet<>();
++        for (Event event : events) {
++            if (event.id > initialAuthenticationEndEvent && !event.server && event.command == 1 && event.sessionId == mainSessionId && (event.wire[66] & 1) == 0)
++                reauthentication.add(event.connection + ":" + event.mid);
++        }
++        Set<Integer> fileIoConnections = new HashSet<>();
+         int verified = 0;
+         int operational = 0;
+         int preparedOnly = 0;
+@@ -117,13 +130,14 @@
+             }
+             byte[] key;
+             String role;
++            boolean reauth = reauthentication.contains(event.connection + ":" + event.mid);
+             if (event.sessionId == mainSessionId) {
+                 ObservedSocket socket = sockets.get(event.connection);
+-                if (event.command == 1 && socket.reservedFirst >= 0) {
++                if (event.command == 1 && !reauth && socket.reservedFirst >= 0) {
+                     assertTrue(event.mid >= socket.reservedFirst && event.mid < socket.reservedEnd,
+                             "Every original-key binding input stays in its reserved interval");
+                 }
+-                if (event.connection == originalSocket || (event.command == 1 && (!event.server || event.status != 0))) {
++                if (event.connection == originalSocket || (event.command == 1 && !reauth && (!event.server || event.status != 0))) {
+                     key = originalKey;
+                     role = "original";
+                 } else {
+@@ -156,18 +170,20 @@
+             if (event.connection == originalSocket && event.sessionId == mainSessionId) {
+                 originalApplicationTraffic |= event.command != 1;
+             }
++            if (event.sessionId == mainSessionId && (event.command == 8 || event.command == 9)) fileIoConnections.add(event.connection);
+             actualKeys.add(keyId);
+             verified++;
+             if (event.preparedOnly) preparedOnly++;
+             transcript.update((domain + fingerprint).getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+             if (event.command == 1 || isAuxiliary) {
+-                System.out.printf("AUXWIRE run=%s event=%d connection=%d session=%s sender=%s command=%d status=%08x mid=%d keyRole=%s keyId=%s nonce=%s fingerprint=%s verified=true input=%s%n",
++                System.out.printf("AUXWIRE run=%s event=%d connection=%d session=%s sender=%s command=%d status=%08x mid=%d keyRole=%s keyId=%s nonce=%s fingerprint=%s verified=true input=%s reauthentication=%s%n",
+                         run, event.id, event.connection, isAuxiliary ? "aux-" + event.connection : "main",
+                         event.server ? "server" : "client", event.command, event.status, event.mid, role, keyId, hex(nonce), fingerprint,
+-                        event.preparedOnly ? "write-attempt" : "complete-frame");
+-            }
+-        }
+-        assertFalse(originalApplicationTraffic, "Original key connection must not carry application traffic");
++                        event.preparedOnly ? "write-attempt" : "complete-frame", reauth);
++            }
++        }
++        assertEquals(run.equals("bound") ? 2 : 1, fileIoConnections.size(), "The same open must carry authenticated file I/O on every operational channel");
++        if (!allowOriginalApplication) assertFalse(originalApplicationTraffic, "Original key connection must not carry application traffic");
+         assertTrue(operational >= minimumOperational, "Expected application traffic must be included in the independent verification");
+         for (ObservedSocket socket : sockets) {
+             assertTrue(socket.isClosed());
+@@ -180,8 +196,8 @@
+             }
+             assertTrue(socket.earlyGrants.isEmpty(), "No response may invent a credit grant without an observed request");
+         }
+-        System.out.printf("AUXWIRE_COMPLETE run=%s replacements=%d observedEvents=%d independentlyVerified=%d preparedOnly=%d operationalSignedMessages=%d actualKeyDomains=%d distinctMessageNonceReuses=0 transcriptFingerprint=%s%n",
+-                run, replacements, events.size(), verified, preparedOnly, operational, actualKeys.size(), hex(transcript.digest()));
++        System.out.printf("AUXWIRE_COMPLETE run=%s replacements=%d observedEvents=%d independentlyVerified=%d preparedOnly=%d operationalSignedMessages=%d actualKeyDomains=%d fileIoConnections=%d distinctMessageNonceReuses=0 transcriptFingerprint=%s%n",
++                run, replacements, events.size(), verified, preparedOnly, operational, actualKeys.size(), fileIoConnections.size(), hex(transcript.digest()));
+     }
+
+     private String fingerprint(byte[] bytes) throws GeneralSecurityException {
+@@ -203,7 +219,7 @@
+     @Override public Socket createSocket(InetAddress host, int port, InetAddress local, int localPort) throws IOException { return open(host.getHostAddress(), port, local, localPort); }
+
+     private synchronized Socket open(String host, int port, InetAddress local, int localPort) throws IOException {
+-        if (!"127.0.0.1".equals(host) || port != 36535) throw new IOException("Only the owned loopback research fixture is permitted");
++        if (!"127.0.0.1".equals(host) || port != GmacWireObserver.this.port) throw new IOException("Only the owned loopback research fixture is permitted");
+         ObservedSocket socket = new ObservedSocket(sockets.size());
+         sockets.add(socket);
+         try {
