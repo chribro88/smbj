@@ -52,6 +52,13 @@ validation. It does not address GMAC nonce reuse during the preceding binding
 exchange, or establish that reauthentication rotates existing signing keys.
 No Linux implementation code has been copied into SMBJ.
 
+The [SMBJ SPNEGO regression follow-up](../validation-kerberos-binding.json) now
+passes 22 focused key-ownership scenarios within a 112-case connected run. It
+uses the actual SPNEGO adapter with controlled GSS contexts and independent
+KDF/tag checks. Both the original session's raw KDF input and a previous binding's
+export produce rejected finals. This validates the local adapter/builder
+connection, not real Kerberos ticket processing or GMAC binding safety.
+
 ## Useful guides and patch history
 
 - [Linux kernel CIFS/SMB usage guide](https://docs.kernel.org/admin-guide/cifs/usage.html):

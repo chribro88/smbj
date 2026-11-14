@@ -19,30 +19,43 @@ import com.hierynomus.mserref.NtStatus;
 import com.hierynomus.mssmb2.*;
 import com.hierynomus.mssmb2.messages.SMB2SessionSetup;
 import com.hierynomus.protocol.commons.ByteArrayUtils;
+import com.hierynomus.security.SecurityProvider;
 import com.hierynomus.security.bc.BCSecurityProvider;
+import com.hierynomus.security.jce.JceSecurityProvider;
 import com.hierynomus.smb.SMBBuffer;
 import com.hierynomus.smbj.SmbConfig;
+import com.hierynomus.smbj.auth.Authenticator;
+import com.hierynomus.smbj.auth.GSSAuthenticationContext;
+import com.hierynomus.smbj.auth.SpnegoAuthenticator;
 import com.hierynomus.smbj.session.Session;
 import com.hierynomus.smbj.session.SessionContext;
 import com.hierynomus.smbj.testing.StubAuthenticator;
 import org.bouncycastle.crypto.engines.AESEngine;
 import org.bouncycastle.crypto.macs.CMac;
 import org.bouncycastle.crypto.params.KeyParameter;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.ietf.jgss.GSSContext;
+import org.ietf.jgss.GSSException;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
 import javax.crypto.Mac;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
+import javax.security.auth.Subject;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
+import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -59,6 +72,8 @@ class SMBBindingResponseTest {
     private SMB2Dialect dialect = SMB2Dialect.SMB_3_1_1;
     private SMB3SigningAlgorithm algorithm = SMB3SigningAlgorithm.AES_CMAC;
     private SecretKey originalKey = new SecretKeySpec(new byte[16], "AesCmac");
+    private SecurityProvider provider = new BCSecurityProvider();
+    private SmbConfig config;
 
     private long messageId = 2;
     private long lastMessageId;
@@ -67,7 +82,8 @@ class SMBBindingResponseTest {
         return builder(required, new StubAuthenticator.Factory());
     }
 
-    private SMBSessionBuilder builder(boolean required, StubAuthenticator.Factory authenticator) {
+    private SMBSessionBuilder builder(boolean required,
+            com.hierynomus.protocol.commons.Factory.Named<Authenticator> authenticator) {
         ConnectionContext context = mock(ConnectionContext.class);
         when(context.getNegotiatedProtocol()).thenReturn(new NegotiatedProtocol(dialect, 1048576, 1048576, 1048576, true));
         when(context.getSigningAlgorithm()).thenReturn(algorithm);
@@ -86,9 +102,138 @@ class SMBBindingResponseTest {
         when(session.getSessionId()).thenReturn(47L);
         keys.setSigningKey(originalKey);
         keys.setEncryptionKey(new SecretKeySpec(new byte[16], "AES"));
-        SmbConfig config = SmbConfig.builder().withSigningRequired(required).withEncryptData(true)
-                .withSecurityProvider(new BCSecurityProvider()).withAuthenticators(authenticator).build();
+        config = SmbConfig.builder().withSigningRequired(required).withEncryptData(true)
+                .withSecurityProvider(provider).withAuthenticators(authenticator).build();
         return new SMBSessionBuilder(secondary, config, null);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"false,7,fresh", "true,7,fresh", "false,16,fresh", "true,16,fresh", "false,32,fresh", "true,32,fresh",
+            "false,7,session", "true,7,session", "false,16,session", "true,16,session", "false,32,session", "true,32,session",
+            "false,7,previous", "true,7,previous", "false,16,previous", "true,16,previous", "false,32,previous", "true,32,previous",
+            "false,16,missing", "true,16,missing", "false,16,failure", "true,16,failure"})
+    void kerberosBindingUsesItsOwnExportedKeyAndPreservesEstablishedKeys(boolean jce, int exportedLength,
+            String finalKeySource) throws Exception {
+        provider = jce ? new JceSecurityProvider(new BouncyCastleProvider()) : new BCSecurityProvider();
+        Class<?> extendedContext = Class.forName("com.sun.security.jgss.ExtendedGSSContext");
+        Field contextField = SpnegoAuthenticator.class.getDeclaredField("gssContext");
+        contextField.setAccessible(true);
+        List<GSSContext> contexts = new ArrayList<>();
+        List<byte[]> exportedKeys = new ArrayList<>();
+        AtomicInteger keyQueries = new AtomicInteger();
+        SpnegoAuthenticator.Factory factory = new SpnegoAuthenticator.Factory() {
+            @Override
+            public SpnegoAuthenticator create() {
+                int contextIndex = contexts.size();
+                byte[] exported = new byte[exportedLength];
+                Arrays.fill(exported, (byte) (0x30 + contextIndex));
+                exportedKeys.add(exported);
+                AtomicInteger legs = new AtomicInteger();
+                GSSContext context = mock(GSSContext.class, withSettings().extraInterfaces(extendedContext).defaultAnswer(call -> {
+                    switch (call.getMethod().getName()) {
+                        case "initSecContext":
+                            byte[] input = call.getArgument(0);
+                            if (legs.getAndIncrement() == 0) {
+                                assertEquals(0, input.length);
+                                return new byte[]{0x60};
+                            }
+                            assertArrayEquals(new byte[]{0x60}, input);
+                            return null;
+                        case "isEstablished":
+                            return legs.get() == 2;
+                        case "inquireSecContext":
+                            assertEquals(2, legs.get(), "The GSS key is unavailable until the final peer token");
+                            assertEquals("KRB5_GET_SESSION_KEY", call.getArgument(0).toString());
+                            keyQueries.incrementAndGet();
+                            if (contextIndex == 1 && "missing".equals(finalKeySource)) return null;
+                            if (contextIndex == 1 && "failure".equals(finalKeySource)) throw new GSSException(GSSException.FAILURE);
+                            return new SecretKeySpec(exported, "AES");
+                        default:
+                            return RETURNS_DEFAULTS.answer(call);
+                    }
+                }));
+                contexts.add(context);
+                SpnegoAuthenticator authenticator = new SpnegoAuthenticator();
+                assertDoesNotThrow(() -> contextField.set(authenticator, context));
+                return authenticator;
+            }
+        };
+        SMBSessionBuilder first = builder(true, factory);
+        when(session.getAuthenticationContext()).thenReturn(new GSSAuthenticationContext("user", "DOMAIN", new Subject(), null));
+        SecretKeySpec sessionKey = new SecretKeySpec(gssKey.clone(), "HmacSHA256");
+        SecretKey cipherKey = keys.getEncryptionKey();
+        SecretKey decryptionKey = new SecretKeySpec(new byte[16], "AES");
+        SecretKey applicationKey = new SecretKeySpec(new byte[16], "AES");
+        keys.setSessionKey(sessionKey);
+        keys.setDecryptionKey(decryptionKey);
+        keys.setApplicationKey(applicationKey);
+        byte[] originalTranscript = new byte[64];
+        Arrays.fill(originalTranscript, (byte) 0x45);
+        keys.setPreauthIntegrityHashValue(originalTranscript.clone());
+        Connection next = mock(Connection.class);
+        doReturn(secondary.getConnectionContext()).when(next).getConnectionContext();
+        SessionTable nextSessions = new SessionTable();
+        when(next.getSessionTable()).thenReturn(nextSessions);
+        Connection[] candidates = {secondary, next};
+        byte[][] expectedChannelKeys = new byte[2][];
+        for (int i = 0; i < candidates.length; i++) {
+            final int candidate = i;
+            when(candidates[i].sendAndReceive(any())).thenAnswer(call -> {
+                assertEquals(candidate, keyQueries.get(), "Binding request precedes this GSS context's key export");
+                byte[] request = requestBytes(call.getArgument(0));
+                byte[] normalized = request.clone();
+                Arrays.fill(normalized, 48, 64, (byte) 0);
+                assertArrayEquals(independentSignature(originalKey.getEncoded(), normalized), Arrays.copyOfRange(request, 48, 64));
+                MessageDigest hash = MessageDigest.getInstance("SHA-512");
+                hash.update(new byte[64]);
+                byte[] transcript = hash.digest(request);
+                expectedChannelKeys[candidate] = channelKey(transcript, Arrays.copyOf(exportedKeys.get(candidate), 16));
+                byte[] signingInput = exportedKeys.get(candidate);
+                if (candidate == 1 && ("session".equals(finalKeySource) || "previous".equals(finalKeySource))) {
+                    signingInput = "session".equals(finalKeySource) ? sessionKey.getEncoded() : exportedKeys.get(0);
+                }
+                return response(0, true, false, channelKey(transcript, Arrays.copyOf(signingInput, 16)), 7);
+            });
+        }
+        assertSame(session, first.bind(session, new PacketSignatory(provider)));
+        org.mockito.ArgumentCaptor<SecretKey> firstKey = org.mockito.ArgumentCaptor.forClass(SecretKey.class);
+        verify(session).addChannel(eq(secondary), firstKey.capture());
+        assertArrayEquals(expectedChannelKeys[0], firstKey.getValue().getEncoded());
+        SMBSessionBuilder second = new SMBSessionBuilder(next, config, null);
+        if ("fresh".equals(finalKeySource)) {
+            assertSame(session, second.bind(session, new PacketSignatory(provider)));
+            org.mockito.ArgumentCaptor<SecretKey> secondKey = org.mockito.ArgumentCaptor.forClass(SecretKey.class);
+            verify(session).addChannel(eq(next), secondKey.capture());
+            assertArrayEquals(expectedChannelKeys[1], secondKey.getValue().getEncoded());
+            assertFalse(Arrays.equals(firstKey.getValue().getEncoded(), secondKey.getValue().getEncoded()));
+            verify(next).sessionSetupAccepted(any());
+        } else {
+            IOException rejected = assertThrows(IOException.class, () -> second.bind(session, new PacketSignatory(provider)));
+            if ("missing".equals(finalKeySource)) {
+                assertTrue(rejected.getMessage().contains("did not export"));
+            } else if ("failure".equals(finalKeySource)) {
+                assertInstanceOf(com.hierynomus.protocol.transport.TransportException.class, rejected);
+                Throwable cause = rejected;
+                while (cause.getCause() != null) cause = cause.getCause();
+                assertInstanceOf(GSSException.class, cause);
+            } else {
+                assertTrue(rejected.getMessage().contains("invalid"));
+            }
+            verify(session, never()).addChannel(eq(next), any());
+            verify(next, never()).sessionSetupAccepted(any());
+            assertNull(nextSessions.find(47L));
+        }
+        assertEquals(2, contexts.size());
+        assertNotSame(contexts.get(0), contexts.get(1));
+        for (GSSContext context : contexts) verify(context, times(2)).initSecContext(any(byte[].class), eq(0), anyInt());
+        assertEquals(2, keyQueries.get());
+        assertSame(session, bindingSessions.find(47L));
+        assertSame(sessionKey, keys.getSessionKey());
+        assertSame(originalKey, keys.getSigningKey());
+        assertSame(cipherKey, keys.getEncryptionKey());
+        assertSame(decryptionKey, keys.getDecryptionKey());
+        assertSame(applicationKey, keys.getApplicationKey());
+        assertArrayEquals(originalTranscript, keys.getPreauthIntegrityHashValue());
     }
 
     @ParameterizedTest
@@ -372,6 +517,10 @@ class SMBBindingResponseTest {
     }
 
     private byte[] channelKey(byte[] transcript) throws Exception {
+        return channelKey(transcript, gssKey);
+    }
+
+    private byte[] channelKey(byte[] transcript, byte[] exportedKey) throws Exception {
         ByteArrayOutputStream input = new ByteArrayOutputStream();
         input.write(new byte[]{0, 0, 0, 1});
         input.write((dialect == SMB2Dialect.SMB_3_1_1 ? "SMBSigningKey\0" : "SMB2AESCMAC\0").getBytes(StandardCharsets.US_ASCII));
@@ -379,7 +528,7 @@ class SMBBindingResponseTest {
         input.write(dialect == SMB2Dialect.SMB_3_1_1 ? transcript : "SmbSign\0".getBytes(StandardCharsets.US_ASCII));
         input.write(new byte[]{0, 0, 0, (byte) 128});
         Mac mac = Mac.getInstance("HmacSHA256");
-        mac.init(new SecretKeySpec(gssKey, "HmacSHA256"));
+        mac.init(new SecretKeySpec(exportedKey, "HmacSHA256"));
         return Arrays.copyOf(mac.doFinal(input.toByteArray()), 16);
     }
 

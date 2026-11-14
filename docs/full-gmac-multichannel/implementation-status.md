@@ -147,6 +147,7 @@ pool available; losing the last channel stops it.
 | Receive-policy `check` milestone | PASS: 798 tests, zero failures/skips | Full unit suite, license checks and JaCoCo; 19 request-session response regressions; includes the concurrent local bound-channel SESSION_SETUP key-selection patch and its one test |
 | Encrypted receive follow-up | PASS: 39 focused cases and 16 live single-session cases; full check 817/818 | All new receive cases pass; the existing above-2-GiB async writer test repeatedly exceeded its unchanged 30-second deadline; diagnostic logging/chunk experiments did not resolve it and were restored |
 | Shared encryption nonce ownership | PASS: 20 new cases; 63 connected cases | Five supported cipher/provider profiles; native Session.send with mocked Connections; concurrent sends, replacement, retained-key reinstallation, provider failure and atomic exhaustion; independent transform tag/plaintext checks |
+| SPNEGO binding key ownership | PASS: 22 new cases; 112 connected cases | Actual SPNEGO adapter with controlled GSS contexts; BC and JCE/BC; fresh final-token key export, 7/16/32-byte normalization, rejection of retained session/previous-binding KDF inputs and missing/failed key export; established keys preserved; live Kerberos and GMAC binding remain unqualified |
 | Bounded auxiliary-session research | PASS: 5 tests, zero failures/skips | Detached checkout only; direct TCP, BC, NTLM, Samba 4.23.10; 0/3/7 replacements, lost-binding reservation, independent GMAC/MID verification and unsafe-flow negative control; G0 remains open |
 | Concurrent auxiliary-session research | PASS: 7 tests, zero failures/skips | Detached checkout only; direct TCP, BC, NTLM, Samba 4.23.10; four operational channels, concurrent held-open I/O, complete/partial binding loss and fresh retry, safe bootstrap abort and two nonce-reuse controls; G0 remains open |
 | Independent legitimate-binding observation | NONCE REUSE CONFIRMED | Pinned Go donor + Samba 4.23.10: two successful bindings; 17 independently verified signed messages across three actual key domains; two distinct-message original-key/nonce reuses |
@@ -264,6 +265,25 @@ per-file diagnostics for SMB2Writer, SMBSessionBuilder and the outstanding-respo
 handler. A complete Gradle project diagnostic pass was
 not established; Java 8 release compilation and actual tests remain the semantic
 validation evidence.
+
+The [SPNEGO binding follow-up](validation-kerberos-binding.json) exercises the
+Linux Kerberos fix's key-ownership scenario through SMBJ's actual
+`SpnegoAuthenticator`, extended-GSS key inquiry and binding builder. Each attempt
+creates a fresh authenticator/GSS context. Its exported key becomes available
+only after the final peer token; binding requests still use the original signing
+key. Independent KDF and wire-tag checks accept the new channel key and reject
+finals derived from the original raw session key or the previous binding's export.
+Missing keys and GSS inquiry failures reject the candidate before publication or
+credit acceptance. The established session, signing, cipher and application keys
+and initial preauthentication transcript remain unchanged.
+
+These 22 new cases pass with both configured provider adapters; all 112 connected
+binding, initial-authentication, channel-key-selection and response-authentication
+cases also pass. The GSS contexts, Session and Connection boundaries are mocked;
+SPN creation, real Kerberos tickets/KDC, concurrent/native GMAC binding and
+reauthentication remain unqualified. Production sources and the GMAC guard are
+unchanged. The full suite was not repeated for this test-only follow-up; its
+earlier large-write deadline failure remains unresolved.
 
 ## Remaining contract and release gates
 
