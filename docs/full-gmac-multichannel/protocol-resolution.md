@@ -176,6 +176,17 @@ uniqueness. Selecting CMAC or HMAC changes the signing algorithm and cannot
 complete the requested GMAC feature. No new nonce format, KDF or algorithm is
 selected from these general patterns.
 
+### Linux client implementation qualification
+
+The [pinned mount.cifs/kernel client reference](research/linux-client-reference.md)
+traces Linux revision `97d73c8251226cf27cc6656b4c542869bb8c69fa`. It uses
+per-connection MIDs, the original session signing key during binding, and a
+derived key for each bound channel. Its signing negotiation and implementation
+remain AES-CMAC, with GMAC marked TODO. Consequently it is not independent
+evidence of a GMAC binding solution. The recorded Kerberos channel-key fix is
+useful for KDF input ownership and regression scenarios; no Linux code is copied
+and G0 remains open.
+
 ## 6. Questions requiring a concrete answer
 
 No question has been sent externally. A protocol-implementer inquiry should include the clause references and minimal trace, then ask:
