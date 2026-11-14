@@ -321,6 +321,11 @@ public class SMB2Writer {
                 while (!end || !pending.isEmpty()) {
                     checkCancelled();
                     while (!end && pending.size() < window) {
+                        if (!pending.isEmpty() && pending.peekFirst().response.isDone()) {
+                            synchronized (input) {
+                                if (input.isEmpty()) break;
+                            }
+                        }
                         WriteChunk chunk = takeInput();
                         if (chunk == null) end = true;
                         else {

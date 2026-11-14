@@ -312,6 +312,39 @@ class SMB2WriterAsyncTest {
     }
 
     @Test
+    void acknowledgesSubmittedWritesWhileTheSourcePreparesTheNextChunk() throws Exception {
+        try (Fixture f = new Fixture(65536)) {
+            CountDownLatch acknowledged = new CountDownLatch(1);
+            f.respond = request -> CompletableFuture.completedFuture(new SMB2WriteResponse() {
+                @Override public int getBytesWritten() {
+                    acknowledged.countDown();
+                    return request.bytes.length;
+                }
+            });
+            ByteChunkProvider source = new ByteChunkProvider() {
+                int chunks;
+                @Override public boolean isAvailable() { return chunks < 2; }
+                @Override public int bytesLeft() { return 65536; }
+                @Override public void prepareWrite(int limit) {
+                    if (chunks == 1) {
+                        try {
+                            assertTrue(acknowledged.await(3, TimeUnit.SECONDS),
+                                    "The worker must consume the ready response while the source prepares more input");
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            throw new AssertionError(e);
+                        }
+                    }
+                }
+                @Override protected int getChunk(byte[] bytes) { chunks++; return bytes.length; }
+            };
+            assertEquals(131072L, f.writer.writeAsync(source).get(3, TimeUnit.SECONDS));
+            assertEquals(2, f.requests.size());
+            assertEquals(131072L, source.getOffset());
+        }
+    }
+
+    @Test
     void asyncStreamingTotalsBeyondTwoGiBUseBoundedChunksAndLongCounts() throws Exception {
         try (Fixture f = new Fixture(65536)) {
             f.capture = false;

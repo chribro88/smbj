@@ -149,6 +149,7 @@ pool available; losing the last channel stops it.
 | Shared encryption nonce ownership | PASS: 20 new cases; 63 connected cases | Five supported cipher/provider profiles; native Session.send with mocked Connections; concurrent sends, replacement, retained-key reinstallation, provider failure and atomic exhaustion; independent transform tag/plaintext checks |
 | SPNEGO binding key ownership | PASS: 22 new cases; 112 connected cases | Actual SPNEGO adapter with controlled GSS contexts; BC and JCE/BC; fresh final-token key export, 7/16/32-byte normalization, rejection of retained session/previous-binding KDF inputs and missing/failed key export; established keys preserved; native SMB Kerberos and GMAC binding remain unqualified |
 | Real Kerberos SPNEGO | PASS: 6 integration cases, zero failures/skips | Isolated MIT KDC and actual JDK GSS; AES-128/AES-256 keys; implicit Subject/explicit GSS credentials; CIFS target and client identity; mutual authentication; fresh context exports; missing-SPN rejection; no SMB-server binding or GMAC qualification |
+| Ready WRITE response scheduling | PASS: 28 connected tests; clean check 861/861; 8 native async cases | Latch regression fails before the five-line fix and passes after it; completed responses drain before an empty-input wait; unfinished-response pipelining and memory bounds retained; above-2-GiB case passes its unchanged deadline; live CMAC/CCM full readback on both transports/providers |
 | Bounded auxiliary-session research | PASS: 5 tests, zero failures/skips | Detached checkout only; direct TCP, BC, NTLM, Samba 4.23.10; 0/3/7 replacements, lost-binding reservation, independent GMAC/MID verification and unsafe-flow negative control; G0 remains open |
 | Concurrent auxiliary-session research | PASS: 7 tests, zero failures/skips | Detached checkout only; direct TCP, BC, NTLM, Samba 4.23.10; four operational channels, concurrent held-open I/O, complete/partial binding loss and fresh retry, safe bootstrap abort and two nonce-reuse controls; G0 remains open |
 | Independent legitimate-binding observation | NONCE REUSE CONFIRMED | Pinned Go donor + Samba 4.23.10: two successful bindings; 17 independently verified signed messages across three actual key domains; two distinct-message original-key/nonce reuses |
@@ -211,8 +212,10 @@ large async streaming test's 30-second deadline, also reproduced in isolation.
 The bounded JFR recorded only 0.53 seconds of GC pauses. Neither suppressing
 writer debug output nor using a larger bounded test chunk resolved the deadline;
 both experiments were restored. Production writer, timeout and logging behavior
-are unchanged. This is an unresolved performance finding, not a qualified
-throughput result. The three license checks pass; target JDT.LS diagnostics remain
+were unchanged by those diagnostic experiments. The later ready-response
+milestone below passes a clean full check without changing the deadline; this
+does not turn the diagnostic timings into qualified throughput results.
+The three license checks pass; target JDT.LS diagnostics remain
 unavailable through this connector, and the user authorized the available checks.
 
 The W7 transmit follow-up verifies the existing retained encryptor through
@@ -231,8 +234,8 @@ they do not form a combined production key-lifetime trace. Channels are installe
 directly without a binding exchange. Authentication-driven replacement, server
 nonce behavior, recovery key freshness and identical key reintroduction through
 independent sessions remain unqualified. Production and build sources are
-unchanged. The full suite was not rerun for this test-only follow-up; the earlier
-large-write deadline failure remains unresolved. G0 and the full ENC-02 matrix
+unchanged by that test-only follow-up. Its full suite was not rerun until the
+later ready-response milestone below. G0 and the full ENC-02 matrix
 remain open.
 
 Reproduce the clean check with the existing JDK 21 and Gradle wrapper:
@@ -287,8 +290,36 @@ and fresh key export through the unmodified SPNEGO adapter: six passing cases
 across AES-128/AES-256 Kerberos keys and both credential modes. It does not send
 SMB packets. Native SMB binding, alternate-IP selection, concurrent GMAC binding
 and reauthentication remain unqualified. Production sources and the GMAC guard are
-unchanged. The full suite was not repeated for this test-only follow-up; its
-earlier large-write deadline failure remains unresolved.
+unchanged by that test-only follow-up. The full suite was not repeated until
+the later ready-response milestone below.
+
+The [ready-response follow-up](validation-ready-ack.json) fixes a concrete
+asynchronous WRITE scheduling defect: when the producer has no queued input,
+the worker waits for more source data even if its oldest submitted response is
+already complete. A latch-based source that prepares its second chunk only
+after consumption of that ready acknowledgement reproduces the stall. Five
+lines in the existing consumer loop drain the completed head response before
+waiting for input. An unfinished response still permits filling the pipeline;
+the existing 64-request/4-MiB backpressure and cancellation checks pass.
+
+All 28 connected writer/session cases pass. A subsequent `clean check` passes
+861 tests across 100 suites with zero failures, errors or skips, Java 8 release
+compilation, coverage reporting and all three license checks. The above-2-GiB
+case takes 6.664 seconds in that full run under its unchanged 30-second deadline.
+Eight native async cases also pass against the cached Samba 4.7.6 fixture,
+including complete 8 MiB + 10 byte readback with both transports and BC/JCE-BC,
+with encryption off or CCM. Both task containers were removed by Testcontainers
+and their exact IDs confirmed absent. Sources, report hashes and a compact
+100-suite manifest are recorded with the follow-up.
+
+The unchanged pre-fix standard case also passed at 29.006 seconds in this
+investigation. The scheduling regression establishes its specific defect; the
+recorded diagnostic timings do not prove the sole cause of every earlier
+deadline failure or qualify sustained throughput. A response completing only
+after the worker has already entered its empty-input wait still has no general
+wake-up mechanism here. Native GMAC multichannel, Java 8 runtime execution and
+the full G0/G5 requirements remain open. No API, dependency, build configuration,
+chunk/window limit, logging setting or test deadline changed.
 
 ## Remaining contract and release gates
 

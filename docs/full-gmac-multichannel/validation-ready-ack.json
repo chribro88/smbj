@@ -1,0 +1,282 @@
+{
+  "result": "READY_RESPONSE_SCHEDULING_PASS_FULL_FEATURE_INCOMPLETE",
+  "base_revision": "3e949357c8372335db4e6a6f912f3cdcf6ed63c6",
+  "work_package": "W6 asynchronous WRITE response progress and bounded ownership",
+  "production_change": "When input is empty, consume the already-completed oldest WRITE response before blocking for new producer input. Unfinished responses still permit filling the pipeline.",
+  "proof": "A source preparing its second chunk waits on consumption of an already-ready first acknowledgement. The old worker waits on more source input instead: regression fails its latch assertion. The five-line scheduling fix makes the identical test pass.",
+  "source_sha256": {
+    "src/main/java/com/hierynomus/smbj/share/SMB2Writer.java": "f53ea83e9936383de3e17f773cb9d3bab606700ca61b8bc5507b231dbf55130b",
+    "src/test/java/com/hierynomus/smbj/share/SMB2WriterAsyncTest.java": "27d87a1c6ce0d8d9cf164ba5245223746a6dcbe1d2371e359985828c621a27f0",
+    "src/it/java/com/hierynomus/smbj/SMB2FileIntegrationTest.java": "11b13d7084c5e94748130632ac9fd8a4d91b0b5220fd8152d1c50f792171c016",
+    "src/it/java/com/hierynomus/smbj/testcontainers/SambaContainer.java": "2836289a0bc654b1abac454d21937ca75b8c7d2f2d8a7c9bedeebe0c1c91a9b3",
+    "build.gradle": "23f0c657fba87e92e58728ecbf87b17a25403a9429c7a56f2350da8148ae447f"
+  },
+  "runtime": {
+    "build_and_test": "Temurin 21",
+    "production_release": 8,
+    "SMB2Writer_class_major": 52,
+    "gradle": "8.13",
+    "bouncy_castle": "1.86"
+  },
+  "unchanged": [
+    "No deadline, test chunk size, logging or coverage change in acceptance runs",
+    "No public API, dependency, build configuration, worker count, request-window or byte-budget change",
+    "Existing original-key GMAC binding rejection retained"
+  ],
+  "regression_before": {
+    "path": "/tmp/smbj-writer-ack-starvation-red.xml",
+    "sha256": "4dfb4c7ad776e8b55b60403eaf3fb3e78f4a22de731f6a8a75c685434833e197",
+    "suite": {
+      "name": "com.hierynomus.smbj.share.SMB2WriterAsyncTest",
+      "tests": "1",
+      "skipped": "0",
+      "failures": "1",
+      "errors": "0",
+      "timestamp": "2026-11-14T02:56:38.322Z",
+      "hostname": "chribro-firefly",
+      "time": "6.113"
+    },
+    "selected_cases": [
+      {
+        "name": "acknowledgesSubmittedWritesWhileTheSourcePreparesTheNextChunk()",
+        "classname": "com.hierynomus.smbj.share.SMB2WriterAsyncTest",
+        "time": "6.113"
+      }
+    ]
+  },
+  "regression_after": {
+    "path": "/tmp/smbj-writer-ack-starvation-green.xml",
+    "sha256": "6757a624fd1088b3624aac3db56bc9f02a18c23078263985b48438e63a0cd66b",
+    "suite": {
+      "name": "com.hierynomus.smbj.share.SMB2WriterAsyncTest",
+      "tests": "1",
+      "skipped": "0",
+      "failures": "0",
+      "errors": "0",
+      "timestamp": "2026-11-14T02:58:10.124Z",
+      "hostname": "chribro-firefly",
+      "time": "3.001"
+    },
+    "selected_cases": [
+      {
+        "name": "acknowledgesSubmittedWritesWhileTheSourcePreparesTheNextChunk()",
+        "classname": "com.hierynomus.smbj.share.SMB2WriterAsyncTest",
+        "time": "3.001"
+      }
+    ]
+  },
+  "connected": {
+    "tests": 28,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "command": "./gradlew --offline --no-daemon --max-workers=1 -Dorg.gradle.jvmargs=\"-Xmx192m -XX:ActiveProcessorCount=2\" --init-script /tmp/smbj-full-gmac-test-limits.gradle test --tests *SMB2WriterAsyncTest --tests *SMB2WriterStreamingTest --tests *SessionAsyncWritesTest licenseMain licenseTest",
+    "reports": [
+      {
+        "path": "/tmp/smbj-writer-ready-ack-connected-reports/TEST-com.hierynomus.smbj.session.SessionAsyncWritesTest.xml",
+        "sha256": "307934f15f61963119b64a12ead721e181b17b041a0353bc1ec3501832bd84c8",
+        "suite": {
+          "name": "com.hierynomus.smbj.session.SessionAsyncWritesTest",
+          "tests": "3",
+          "skipped": "0",
+          "failures": "0",
+          "errors": "0",
+          "timestamp": "2026-11-14T02:59:31.518Z",
+          "hostname": "chribro-firefly",
+          "time": "1.575"
+        },
+        "selected_cases": []
+      },
+      {
+        "path": "/tmp/smbj-writer-ready-ack-connected-reports/TEST-com.hierynomus.smbj.share.SMB2WriterAsyncTest.xml",
+        "sha256": "230cff9856e68f52d2f3cc5003e36d4c60b3f64d6f83b65070202311a5a59903",
+        "suite": {
+          "name": "com.hierynomus.smbj.share.SMB2WriterAsyncTest",
+          "tests": "22",
+          "skipped": "0",
+          "failures": "0",
+          "errors": "0",
+          "timestamp": "2026-11-14T02:59:33.106Z",
+          "hostname": "chribro-firefly",
+          "time": "5.722"
+        },
+        "selected_cases": [
+          {
+            "name": "asyncStreamingTotalsBeyondTwoGiBUseBoundedChunksAndLongCounts()",
+            "classname": "com.hierynomus.smbj.share.SMB2WriterAsyncTest",
+            "time": "4.96"
+          },
+          {
+            "name": "acknowledgesSubmittedWritesWhileTheSourcePreparesTheNextChunk()",
+            "classname": "com.hierynomus.smbj.share.SMB2WriterAsyncTest",
+            "time": "0.008"
+          }
+        ]
+      },
+      {
+        "path": "/tmp/smbj-writer-ready-ack-connected-reports/TEST-com.hierynomus.smbj.share.SMB2WriterStreamingTest.xml",
+        "sha256": "497edd579055bc7207fd4ca498feb61afc1236c93e8cdda8f18c9e3ed7be4276",
+        "suite": {
+          "name": "com.hierynomus.smbj.share.SMB2WriterStreamingTest",
+          "tests": "3",
+          "skipped": "0",
+          "failures": "0",
+          "errors": "0",
+          "timestamp": "2026-11-14T02:59:38.830Z",
+          "hostname": "chribro-firefly",
+          "time": "1.648"
+        },
+        "selected_cases": []
+      }
+    ]
+  },
+  "clean_check": {
+    "result": "PASS",
+    "counts": {
+      "tests": 861,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "suites": 100,
+    "command": "./gradlew --offline --no-daemon --max-workers=1 -Dorg.gradle.jvmargs=\"-Xmx192m -XX:ActiveProcessorCount=2\" --init-script /tmp/smbj-full-gmac-test-limits.gradle clean check",
+    "elapsed": "1m 44s",
+    "above_two_GiB_seconds": 6.664,
+    "test_deadline_seconds": 30,
+    "report_manifest": "docs/full-gmac-multichannel/validation-ready-ack-reports.csv",
+    "report_manifest_sha256": "310ec1deb7d385c25ed4deed89fd0faa8a89c0018a510f2b83543638bf90c1d5",
+    "reports_directory": "/tmp/smbj-full-gmac-ready-ack-clean-check-reports",
+    "log_path": "/tmp/smbj-full-gmac-ready-ack-clean-check.log",
+    "log_sha256": "25ad79332d12275417716f70a533c5c1942b9466b5b21facced0a584fe73df57",
+    "tasks": "Java 8 release compilation, all unit tests, JaCoCo report and licenseMain/licenseTest/licenseIntegrationTest passed; integrationTest is separate"
+  },
+  "native_async": {
+    "suite": {
+      "name": "com.hierynomus.smbj.SMB2FileIntegrationTest",
+      "tests": "8",
+      "skipped": "0",
+      "failures": "0",
+      "errors": "0",
+      "timestamp": "2026-11-14T03:05:24.527Z",
+      "hostname": "chribro-firefly",
+      "time": "8.857"
+    },
+    "profiles": [
+      "ASYNC_WRITE provider=BCSecurityProvider backend=BC transport=DirectTcpTransportFactory encrypt=false dialect=SMB_3_1_1 signing=AES_CMAC cipher=null fixture=Version 4.7.6 bytes=8388618",
+      "ASYNC_WRITE provider=BCSecurityProvider backend=BC transport=DirectTcpTransportFactory encrypt=true dialect=SMB_3_1_1 signing=AES_CMAC cipher=AES_128_CCM fixture=Version 4.7.6 bytes=8388618",
+      "ASYNC_WRITE provider=BCSecurityProvider backend=BC transport=AsyncDirectTcpTransportFactory encrypt=false dialect=SMB_3_1_1 signing=AES_CMAC cipher=null fixture=Version 4.7.6 bytes=8388618",
+      "ASYNC_WRITE provider=BCSecurityProvider backend=BC transport=AsyncDirectTcpTransportFactory encrypt=true dialect=SMB_3_1_1 signing=AES_CMAC cipher=AES_128_CCM fixture=Version 4.7.6 bytes=8388618",
+      "ASYNC_WRITE provider=JceSecurityProvider backend=BC transport=DirectTcpTransportFactory encrypt=false dialect=SMB_3_1_1 signing=AES_CMAC cipher=null fixture=Version 4.7.6 bytes=8388618",
+      "ASYNC_WRITE provider=JceSecurityProvider backend=BC transport=DirectTcpTransportFactory encrypt=true dialect=SMB_3_1_1 signing=AES_CMAC cipher=AES_128_CCM fixture=Version 4.7.6 bytes=8388618",
+      "ASYNC_WRITE provider=JceSecurityProvider backend=BC transport=AsyncDirectTcpTransportFactory encrypt=false dialect=SMB_3_1_1 signing=AES_CMAC cipher=null fixture=Version 4.7.6 bytes=8388618",
+      "ASYNC_WRITE provider=JceSecurityProvider backend=BC transport=AsyncDirectTcpTransportFactory encrypt=true dialect=SMB_3_1_1 signing=AES_CMAC cipher=AES_128_CCM fixture=Version 4.7.6 bytes=8388618"
+    ],
+    "containers_removed": [
+      "4e7857ddc8e39bcab9c4daf588731c4b73951e007769ff88531b831c8c7f93dd",
+      "e5c101a49c85312e0fd14c0c864cca3ed6c349872b8bc757fcf9cd9d47ba3ddd"
+    ],
+    "report": {
+      "path": "/tmp/smbj-ready-ack-native-async.xml",
+      "sha256": "7f6bce7dc7b6ef8a995380ffdb9e6254efb4831cea8d414ecd8fbb1d934819a3",
+      "suite": {
+        "name": "com.hierynomus.smbj.SMB2FileIntegrationTest",
+        "tests": "8",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-14T03:05:24.527Z",
+        "hostname": "chribro-firefly",
+        "time": "8.857"
+      },
+      "selected_cases": []
+    },
+    "result": "PASS",
+    "command": "./gradlew --offline --no-daemon --max-workers=1 -Dorg.gradle.jvmargs=\"-Xmx192m -XX:ActiveProcessorCount=2\" --init-script /tmp/smbj-full-gmac-test-limits.gradle integrationTest -x buildSambaImage --tests *SMB2FileIntegrationTest.shouldWriteAsyncFile licenseIntegrationTest",
+    "log_path": "/tmp/smbj-ready-ack-native-async.log",
+    "log_sha256": "1a008384d35ba70b6b89170b9decfcf00f332a7145ebd0c6b18330647910c64c",
+    "image": "smbj/samba:latest",
+    "image_id": "sha256:efe7120df23f61cbfd7a0107cbf6a234c3b466b29d4e7698705e8f43c80677d5",
+    "samba_version": "4.7.6",
+    "docker_server": "29.3.1 API 1.54",
+    "signing": "AES_CMAC",
+    "encryption": "off or AES_128_CCM",
+    "payload_bytes_per_case": 8388618,
+    "full_readback": true,
+    "cleanup": "Testcontainers stopped and removed both task containers; exact-ID docker inspect confirmed absent; shared containers untouched"
+  },
+  "diagnostic_context": {
+    "unchanged_no_coverage": {
+      "path": "/tmp/smbj-writer-no-coverage.xml",
+      "sha256": "1a2354af6d6eb71fbef9f275e7d6bf37f31c8501896c83206ebb8869d39a7b05",
+      "suite": {
+        "name": "com.hierynomus.smbj.share.SMB2WriterAsyncTest",
+        "tests": "1",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-14T02:47:39.657Z",
+        "hostname": "chribro-firefly",
+        "time": "18.141"
+      },
+      "selected_cases": [
+        {
+          "name": "asyncStreamingTotalsBeyondTwoGiBUseBoundedChunksAndLongCounts()",
+          "classname": "com.hierynomus.smbj.share.SMB2WriterAsyncTest",
+          "time": "18.141"
+        }
+      ]
+    },
+    "unchanged_coverage_enabled": {
+      "path": "/tmp/smbj-writer-with-coverage.xml",
+      "sha256": "ea06a91b475eedb6cc95f1328441d0fc73575366ca4d7e79b30ef980101d9b29",
+      "suite": {
+        "name": "com.hierynomus.smbj.share.SMB2WriterAsyncTest",
+        "tests": "1",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-14T02:49:45.562Z",
+        "hostname": "chribro-firefly",
+        "time": "25.927"
+      },
+      "selected_cases": [
+        {
+          "name": "asyncStreamingTotalsBeyondTwoGiBUseBoundedChunksAndLongCounts()",
+          "classname": "com.hierynomus.smbj.share.SMB2WriterAsyncTest",
+          "time": "25.927"
+        }
+      ]
+    },
+    "unchanged_standard_profile": {
+      "path": "/tmp/smbj-writer-standard-repeat.xml",
+      "sha256": "818888c9b969289155394981dde36591bd57d84593af1a574d5b5a2321d5cf73",
+      "suite": {
+        "name": "com.hierynomus.smbj.share.SMB2WriterAsyncTest",
+        "tests": "1",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-14T02:51:22.892Z",
+        "hostname": "chribro-firefly",
+        "time": "29.006"
+      },
+      "selected_cases": [
+        {
+          "name": "asyncStreamingTotalsBeyondTwoGiBUseBoundedChunksAndLongCounts()",
+          "classname": "com.hierynomus.smbj.share.SMB2WriterAsyncTest",
+          "time": "29.006"
+        }
+      ]
+    },
+    "interpretation": "The unchanged standard case passed at 29.006 seconds before the fix, near its deadline. Diagnostic coverage-off/quiet/JFR and coverage-on/quiet/JFR runs passed at 18.141/25.927 seconds. These are not formal comparative benchmarks and do not establish the sole cause of historical timeouts. The latch regression independently proves the ready-response scheduling defect."
+  },
+  "resource_limits": "192 MiB Gradle heap; 384 MiB acceptance test heap; one test fork; two active processors; memory/process checks before every build; sequential builds",
+  "limits": [
+    "No general wake-up mechanism for a response that completes only after the worker has already blocked on empty input; this fix handles a response already complete at the scheduling decision",
+    "No native GMAC multichannel, binding nonce-lifetime proof, reauthentication or Windows/ONTAP qualification; G0 remains open",
+    "No sustained network/storage throughput, fairness or cancellation-churn memory qualification; G5 remains open",
+    "Java 8 bytecode checked; no Java 8 runtime execution",
+    "JDT.LS connector reports STOPPED; user authorized available checks; no semantic diagnostics",
+    "Secrets scans reported no findings with authentication warning; no authenticated SonarQube analysis claimed"
+  ]
+}
