@@ -96,6 +96,41 @@ boundaries, Kerberos, reauthentication and Windows/target ONTAP compatibility
 remain unresolved. Authentication-driven resource limits and sustained costs
 also need qualification before selecting this mechanism.
 
+## Recorded results
+
+The final seven-case run on 14 November 2026 (Sydney) passed with zero failures,
+errors or skips. Its XML timestamp is `2026-11-13T23:55:02.620Z`; test execution
+took 17.72 seconds. The separate `licenseIntegrationTest` task succeeded with
+state `UP-TO-DATE`. Exact source hashes, commands, fixture ownership and cleanup
+are recorded in [validation-auxiliary-concurrent.json](../../validation-auxiliary-concurrent.json).
+The [sanitized observation](observation.json) retains only protocol metadata and
+ephemeral keyed equality fingerprints.
+
+| Case | Reservations | Padding ECHOs | Verified signed inputs | Prepared only | Actual key domains | Operational signed messages |
+|---|---:|---:|---:|---:|---:|---:|
+| Concurrent, no loss | 4 | 96 | 809 | 0 | 9 | 592 |
+| Concurrent, complete request lost, fresh retry | 5 | 160 | 939 | 0 | 10 | 592 |
+| Concurrent, partial request lost, fresh retry | 5 | 160 | 939 | 1 | 10 | 592 |
+| Bootstrap abort after complete request | 1 | 0 | 4 | 0 | 2 | 0 |
+| Bootstrap abort after partial request | 1 | 0 | 3 | 1 | 2 | 0 |
+
+All five positive cases reported zero distinct-message actual-key/nonce reuses.
+Each concurrent application case finished with four operational channels and
+1,441,792 bytes of checked file readback, including 131,072 bytes while all three
+candidate writers were gated. The two remaining cases are negative controls:
+ordinary unsafe binding and native bootstrap LOGOFF after a partial binding
+both failed specifically on distinct-message actual-key/nonce reuse, as expected.
+Their exported traces stop at that finding and are not complete positive audits.
+
+The observer defers the original-connection application-traffic policy assertion
+until after its nonce checks. This preserves the nonce finding if a loopback
+LOGOFF response is recorded before its client write. The inherited report field
+`replacements=3` labels the three post-anchor bindings; it does not establish
+three operational channel-loss replacements in this experiment.
+
+The production source tree and GMAC binding guard are unchanged. These results
+do not qualify the remaining lifetime, API, authentication or performance gates.
+
 ## Reproduce
 
 Use base `9e11a7aaf9f1e8d3edeeaa19a5fcee2e8249c35b` in a disposable detached checkout.

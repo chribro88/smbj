@@ -13,6 +13,17 @@ research, not a selected production construction; see
 [validation-auxiliary.json](validation-auxiliary.json) and
 [its design limits](research/auxiliary-candidate.md).
 
+The separate concurrent extension passes seven research cases: three
+application/fault cases, two bootstrap-abort cases and two unsafe-flow controls.
+It uses one atomic high-water reservation value without holding a global lock
+across network I/O. Complete and partial first-binding losses retain their full
+reservations; an open file survives concurrent binding and a fresh retry. A
+negative control also demonstrates why an unpublished bootstrap abort must
+force-close without original-key LOGOFF. This remains an unselected bounded
+NTLM/direct-TCP/BC construction with quadratic padding cost; see
+[validation-auxiliary-concurrent.json](validation-auxiliary-concurrent.json) and
+[the concurrent record](research/concurrent/README.md).
+
 ## Inputs and history
 
 - Branch: `feature/full-gmac-multichannel`.
@@ -137,6 +148,7 @@ pool available; losing the last channel stops it.
 | Encrypted receive follow-up | PASS: 39 focused cases and 16 live single-session cases; full check 817/818 | All new receive cases pass; the existing above-2-GiB async writer test repeatedly exceeded its unchanged 30-second deadline; diagnostic logging/chunk experiments did not resolve it and were restored |
 | Shared encryption nonce ownership | PASS: 20 new cases; 63 connected cases | Five supported cipher/provider profiles; native Session.send with mocked Connections; concurrent sends, replacement, retained-key reinstallation, provider failure and atomic exhaustion; independent transform tag/plaintext checks |
 | Bounded auxiliary-session research | PASS: 5 tests, zero failures/skips | Detached checkout only; direct TCP, BC, NTLM, Samba 4.23.10; 0/3/7 replacements, lost-binding reservation, independent GMAC/MID verification and unsafe-flow negative control; G0 remains open |
+| Concurrent auxiliary-session research | PASS: 7 tests, zero failures/skips | Detached checkout only; direct TCP, BC, NTLM, Samba 4.23.10; four operational channels, concurrent held-open I/O, complete/partial binding loss and fresh retry, safe bootstrap abort and two nonce-reuse controls; G0 remains open |
 | Independent legitimate-binding observation | NONCE REUSE CONFIRMED | Pinned Go donor + Samba 4.23.10: two successful bindings; 17 independently verified signed messages across three actual key domains; two distinct-message original-key/nonce reuses |
 
 The modern native source is `0be7f6f`; its production and unit-test trees remain

@@ -103,6 +103,7 @@ final class GmacWireObserver extends SocketFactory {
         int verified = 0;
         int operational = 0;
         int preparedOnly = 0;
+        boolean originalApplicationTraffic = false;
         MessageDigest transcript = MessageDigest.getInstance("SHA-256");
         for (Event event : events) {
             Map<Long, byte[]> auxiliary = auxiliaryKeys.get(event.connection);
@@ -153,7 +154,7 @@ final class GmacWireObserver extends SocketFactory {
             String previous = authenticatedInputs.putIfAbsent(domain, fingerprint);
             assertTrue(previous == null || previous.equals(fingerprint), "Different authenticated bytes reused actual key/nonce");
             if (event.connection == originalSocket && event.sessionId == mainSessionId) {
-                assertEquals(1, event.command, "Original key connection must not carry application traffic");
+                originalApplicationTraffic |= event.command != 1;
             }
             actualKeys.add(keyId);
             verified++;
@@ -166,6 +167,7 @@ final class GmacWireObserver extends SocketFactory {
                         event.preparedOnly ? "write-attempt" : "complete-frame");
             }
         }
+        assertFalse(originalApplicationTraffic, "Original key connection must not carry application traffic");
         assertTrue(operational >= minimumOperational, "Expected application traffic must be included in the independent verification");
         for (ObservedSocket socket : sockets) {
             assertTrue(socket.isClosed());

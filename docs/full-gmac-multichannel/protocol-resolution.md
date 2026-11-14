@@ -76,6 +76,41 @@ positive primitive/authentication/I/O evidence, not successful GMAC multichannel
 qualification. Exact sources and profiles are in
 [validation-modern-gmac.json](validation-modern-gmac.json).
 
+### Concurrent reservation and bootstrap-abort observation
+
+The [concurrent auxiliary-session experiment](research/concurrent/README.md)
+adds a constant-size high-water reservation coordinator: one CAS reserves a
+16-MID interval, and the entire interval remains burned on success or failure.
+Real auxiliary-key ECHOs consume preceding native MIDs; no connection counter is
+assigned, skipped or rewound. This removes sequential tail-release coordination
+but increases padding to `8 * N * (N - 1)` ECHOs for the tested two-request NTLM
+exchanges. Four successful bindings need 96 padding ECHOs; one failure and fresh
+retry need five reservations and 160 ECHOs. No global lock covers network I/O.
+
+Seven native cases pass on the isolated Samba 4.23.10 fixture: three concurrent
+application/fault cases, two bootstrap-abort cases and two unsafe-flow controls.
+Five positive traces independently verify actual signing inputs and find no
+distinct-message actual-key/nonce reuse. An already open 128 KiB file remains
+usable while three candidate binding writers are held, and after a fresh retry.
+Partial-write cases distinguish complete signed write inputs from complete wire
+frames. See [exact validation](validation-auxiliary-concurrent.json).
+
+The bootstrap control identifies an additional original-key obligation. If the
+first operational binding signs at MID 3 and fails, the bootstrap connection's
+next native MID can also be 3. Its normal main-session LOGOFF then signs different
+bytes with the same original key/nonce. The negative control detects this even
+when only a prefix of the binding request was transmitted. Safe abort therefore
+invalidates the unpublished session and forcibly closes its transports without
+LOGOFF; it never releases the failed reservation. Ordinary published-session
+LOGOFF uses its operational channel key and is a separate path.
+
+These are conditional NTLM/direct-TCP/BC observations, not a production selection.
+The public `Session.getConnection()` still exposes the retired bootstrap
+connection. Kerberos/GSS key freshness, reauthentication, notifications, CANCEL,
+all failure boundaries, unsigned exhaustion, resource limits, sustained cost and
+independent Windows/target ONTAP behavior remain unqualified. G0 stays open and
+the production GMAC binding guard remains intact.
+
 ## 4. Alternatives and decisions
 
 | Approach | Decision |
@@ -89,7 +124,7 @@ qualification. Exact sources and profiles are in
 | Reauthenticate to rotate the original key | Rejected as an assumed mechanism; [§3.3.5.5.2](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/5ecc02fb-0e60-4cba-afeb-f13100a6e65e) retains the existing session key. |
 | Advance MIDs with unauthenticated ECHO | Not portable: [§3.3.5.17](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/fa23e613-2768-49e5-aa68-97c4bba72379) says the server should disconnect when no session exists. |
 | Reuse an identical first signed request | Rejected as a general solution: later authentication bytes and server challenges still vary. |
-| Authenticate auxiliary sessions and consume MIDs under unrelated keys | Partially validated research candidate: sequential pre-I/O bootstrap, NTLM replacements and one lost-binding boundary pass on Samba 4.23.10. Costs, retired-original-connection API impact and unproven lifetime paths are explicit in [auxiliary-candidate.md](research/auxiliary-candidate.md). Not selected; G0 remains open. |
+| Authenticate auxiliary sessions and consume MIDs under unrelated keys | Partially validated research candidate: sequential bootstrap/replacement and bounded concurrent NTLM binding/fault/abort cases pass on Samba 4.23.10. The [sequential](research/auxiliary-candidate.md) and [concurrent](research/concurrent/README.md) records expose costs, retired-original-connection API impact and unproven lifetime paths. Not selected; G0 remains open. |
 | Reject GMAC binding or force CMAC | Containment only; does not meet the agreed completion criterion. |
 
 ## 5. Related upstream evidence and wording issues
@@ -107,6 +142,39 @@ The recorded Samba 4.23.10 GMAC binding finals independently verify using the
 `SMBSigningKey` label and each binding's preauthentication transcript through its
 final request. This supports that interpretation for this peer; Windows/ONTAP
 and the authoritative wording resolution remain unverified.
+
+### Zero-length nonce paper
+
+Shen's [A Note on the Influence of a Zero Length Nonce on GCM and GMAC](https://arxiv.org/html/2608.06061v1)
+describes GHASH-key recovery when an implementation accepts an empty nonce.
+This is a different condition from repeating a fixed-length nonce. SMB GMAC
+requires exactly 12 nonce bytes under §3.1.4.1; a 12-byte all-zero value is not an
+empty nonce. GMAC's intentionally empty plaintext is also distinct from an empty
+nonce. The paper supplies useful input-domain context but neither establishes
+this attack against SMBJ nor resolves the observed binding key/nonce reuse.
+No cryptographic primitive or nonce format change follows from this reference.
+
+### General concurrent nonce patterns
+
+NIST SP 800-38D §8.2 permits deterministic fixed-field/counter constructions and
+random-generator constructions for applications that control IV generation.
+SMB signing instead prescribes the 12-byte MID/direction/CANCEL layout. Worker IDs
+cannot replace its reserved zero bits, and random values cannot replace its MID.
+Per-message HKDF keys likewise cannot replace the peer's required session or
+channel signing key. The [DNDK paper](https://eprint.iacr.org/2025/785) describes a
+derived-nonce/derived-key AEAD transform, not an SMB GMAC binding mechanism.
+Using it here would require a protocol extension understood by both endpoints.
+
+The NIST §8.3 limit of at most 2^32 invocations for its random construction is
+aggregate across every instance using the same key, not a per-thread allowance.
+It is not a universal 2^32-message cap on deterministic 96-bit IV construction.
+Uniqueness does not require unpredictability, and nonce generation alone does
+not replace protocol replay handling. A longer IV cannot replace SMB's fixed
+12-byte signing nonce either.
+Random salts or IVs give probabilistic collision bounds, not unconditional
+uniqueness. Selecting CMAC or HMAC changes the signing algorithm and cannot
+complete the requested GMAC feature. No new nonce format, KDF or algorithm is
+selected from these general patterns.
 
 ## 6. Questions requiring a concrete answer
 
