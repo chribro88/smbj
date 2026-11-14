@@ -28,6 +28,9 @@ import org.testcontainers.containers.wait.strategy.Wait;
 
 import java.io.IOException;
 import java.net.URI;
+import java.net.InetAddress;
+import java.net.Socket;
+import javax.net.SocketFactory;
 
 import static java.nio.charset.Charset.defaultCharset;
 
@@ -38,7 +41,6 @@ public class SambaContainer extends GenericContainer<SambaContainer> {
     public SambaContainer() {
         super("smbj/samba");
         withExposedPorts(445);
-        addFixedExposedPort(445, 445);
         setWaitStrategy(Wait.forListeningPort());
         withLogConsumer(outputFrame -> {
             switch (outputFrame.getType()) {
@@ -56,6 +58,10 @@ public class SambaContainer extends GenericContainer<SambaContainer> {
 
 
     public void withConnectedClient(SmbConfig config, ConsumerWithError<Connection> f) throws Exception {
+        if (config.isDfsEnabled()) {
+            config = SmbConfig.builder(config).withMultiProtocolNegotiate(config.isUseMultiProtocolNegotiate())
+                    .withSocketFactory(referralSocketFactory(config.getSocketFactory())).build();
+        }
         try (SMBClient client = new SMBClient(config)) {
             try (Connection connection = client.connect(getHost(), getFirstMappedPort())) {
                 f.accept(connection);
@@ -63,6 +69,31 @@ public class SambaContainer extends GenericContainer<SambaContainer> {
         }
     }
 
+
+    // The fixture's DFS referrals name 127.0.0.1:445; keep those scenarios on its dynamic host port.
+    private SocketFactory referralSocketFactory(SocketFactory delegate) {
+        return new SocketFactory() {
+            private int mappedPort(String host, int port) {
+                return port == 445 && "127.0.0.1".equals(host) ? getFirstMappedPort() : port;
+            }
+
+            public Socket createSocket(String host, int port) throws IOException {
+                return delegate.createSocket(host, mappedPort(host, port));
+            }
+
+            public Socket createSocket(String host, int port, InetAddress local, int localPort) throws IOException {
+                return delegate.createSocket(host, mappedPort(host, port), local, localPort);
+            }
+
+            public Socket createSocket(InetAddress host, int port) throws IOException {
+                return delegate.createSocket(host, mappedPort(host.getHostAddress(), port));
+            }
+
+            public Socket createSocket(InetAddress host, int port, InetAddress local, int localPort) throws IOException {
+                return delegate.createSocket(host, mappedPort(host.getHostAddress(), port), local, localPort);
+            }
+        };
+    }
 
     public void withAuthenticatedClient(SmbConfig config, AuthenticationContext ctx,
             ConsumerWithError<Session> f) throws Exception {
@@ -82,7 +113,9 @@ public class SambaContainer extends GenericContainer<SambaContainer> {
     }
 
     public URI shareUri(String share) {
-        return URI.create("smb://" + TestingUtils.USER + ":" + TestingUtils.PASSWORD + "@" + getHost() + ":" + getFirstMappedPort() + "/")
+        // Filesystem-provider clients keep the mapped port when the literal DFS referral host matches.
+        String host = "localhost".equals(getHost()) ? "127.0.0.1" : getHost();
+        return URI.create("smb://" + TestingUtils.USER + ":" + TestingUtils.PASSWORD + "@" + host + ":" + getFirstMappedPort() + "/")
             .resolve(share + "/");
     }
 

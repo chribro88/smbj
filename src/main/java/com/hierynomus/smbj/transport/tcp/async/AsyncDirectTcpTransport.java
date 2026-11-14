@@ -20,6 +20,7 @@ import com.hierynomus.protocol.PacketData;
 import com.hierynomus.protocol.commons.buffer.Buffer;
 import com.hierynomus.protocol.commons.buffer.Buffer.BufferException;
 import com.hierynomus.protocol.transport.PacketHandlers;
+import com.hierynomus.protocol.transport.PacketReceiver;
 import com.hierynomus.protocol.transport.TransportException;
 import com.hierynomus.protocol.transport.TransportLayer;
 import com.hierynomus.smbj.common.SMBRuntimeException;
@@ -32,7 +33,6 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.channels.AsynchronousChannelGroup;
 import java.nio.channels.AsynchronousSocketChannel;
-import java.nio.channels.ClosedChannelException;
 import java.nio.channels.CompletionHandler;
 import java.util.Queue;
 import java.util.concurrent.*;
@@ -50,6 +50,7 @@ public class AsyncDirectTcpTransport<D extends PacketData<?>, P extends Packet<?
     private final AsynchronousSocketChannel socketChannel;
     private final AsyncPacketReader<D> packetReader;
     private final AtomicBoolean connected;
+    private final AtomicBoolean closed = new AtomicBoolean();
     private int soTimeout = 0;
 
     // AsynchronousSocketChannel doesn't support concurrent writes, so queue pending writes for later
@@ -61,8 +62,17 @@ public class AsyncDirectTcpTransport<D extends PacketData<?>, P extends Packet<?
         this.soTimeout = soTimeout;
         this.handlers = handlers;
         this.socketChannel = AsynchronousSocketChannel.open(group);
-        this.packetReader = new AsyncPacketReader<>(this.socketChannel, handlers.getPacketFactory(),
-            handlers.getReceiver());
+        this.packetReader = new AsyncPacketReader<>(this.socketChannel, handlers.getPacketFactory(), new PacketReceiver<D>() {
+            @Override
+            public void handle(D packet) throws TransportException {
+                handlers.getReceiver().handle(packet);
+            }
+
+            @Override
+            public void handleError(Throwable failure) {
+                fail(failure);
+            }
+        });
         this.writeQueue = new LinkedBlockingQueue<>();
         this.connected = new AtomicBoolean(false);
         this.writingNow = new AtomicBoolean(false);
@@ -70,13 +80,24 @@ public class AsyncDirectTcpTransport<D extends PacketData<?>, P extends Packet<?
 
     @Override
     public void write(P packet) throws TransportException {
+        if (!isConnected()) {
+            throw new TransportException("Transport is not connected");
+        }
         ByteBuffer bufferToSend = prepareBufferToSend(packet); // Serialize first, as it might throw
         logger.trace("Sending packet << {} >>", packet);
-        writeOrEnqueue(bufferToSend);
+        try {
+            writeOrEnqueue(bufferToSend);
+        } catch (RuntimeException failure) {
+            fail(failure);
+            throw TransportException.Wrapper.wrap(failure);
+        }
     }
 
-    private void writeOrEnqueue(ByteBuffer buffer) {
+    private void writeOrEnqueue(ByteBuffer buffer) throws TransportException {
         synchronized (this) {
+            if (!isConnected()) {
+                throw new TransportException("Transport disconnected before write admission");
+            }
             writeQueue.add(buffer);
             if (!writingNow.getAndSet(true)) {
                 startAsyncWrite();
@@ -86,11 +107,18 @@ public class AsyncDirectTcpTransport<D extends PacketData<?>, P extends Packet<?
 
     @Override
     public void connect(InetSocketAddress remoteAddress) throws IOException {
+        if (closed.get()) {
+            throw new TransportException("Transport is closed");
+        }
         String remoteHostname = remoteAddress.getHostString();
         try {
             Future<Void> connectFuture = socketChannel.connect(remoteAddress);
             connectFuture.get(DEFAULT_CONNECT_TIMEOUT, TimeUnit.MILLISECONDS);
             connected.set(true);
+            if (closed.get()) {
+                connected.set(false);
+                throw new TransportException("Transport disconnected while connecting");
+            }
         } catch (ExecutionException | TimeoutException e) {
             throw TransportException.Wrapper.wrap(e);
         } catch (InterruptedException e) {
@@ -103,13 +131,37 @@ public class AsyncDirectTcpTransport<D extends PacketData<?>, P extends Packet<?
     @Override
     public void disconnect() throws IOException {
         // Mark disconnected first
+        closed.set(true);
         connected.set(false);
-        socketChannel.close();
+        packetReader.stop();
+        try {
+            socketChannel.close();
+        } finally {
+            synchronized (this) {
+                writeQueue.clear();
+                writingNow.set(false);
+            }
+        }
     }
 
     @Override
     public boolean isConnected() {
-        return connected.get();
+        return connected.get() && !closed.get() && socketChannel.isOpen();
+    }
+
+    private void fail(Throwable failure) {
+        if (!closed.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            disconnect();
+        } catch (IOException closeFailure) {
+            if (failure != closeFailure) {
+                failure.addSuppressed(closeFailure);
+            }
+        } finally {
+            handlers.getReceiver().handleError(failure);
+        }
     }
 
     public void setSoTimeout(int soTimeout) {
@@ -126,24 +178,23 @@ public class AsyncDirectTcpTransport<D extends PacketData<?>, P extends Packet<?
             @Override
             public void completed(Integer result, Object attachment) {
                 logger.trace("Written {} bytes to async transport", result);
-                startNextWriteIfWaiting();
+                try {
+                    startNextWriteIfWaiting();
+                } catch (RuntimeException failure) {
+                    fail(failure);
+                }
             }
 
             @Override
             public void failed(Throwable exc, Object attachment) {
-                try {
-                    if (exc instanceof ClosedChannelException) {
-                        connected.set(false);
-                    } else {
-                        startNextWriteIfWaiting();
-                    }
-                } finally {
-                    handlers.getReceiver().handleError(exc);
-                }
+                fail(exc);
             }
 
             private void startNextWriteIfWaiting() {
                 synchronized (AsyncDirectTcpTransport.this) {
+                    if (!isConnected()) {
+                        return;
+                    }
                     ByteBuffer head = writeQueue.peek();
                     if (head != null && head.hasRemaining()) {
                         startAsyncWrite();
