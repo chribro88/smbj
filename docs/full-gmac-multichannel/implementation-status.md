@@ -150,6 +150,7 @@ pool available; losing the last channel stops it.
 | SPNEGO binding key ownership | PASS: 22 new cases; 112 connected cases | Actual SPNEGO adapter with controlled GSS contexts; BC and JCE/BC; fresh final-token key export, 7/16/32-byte normalization, rejection of retained session/previous-binding KDF inputs and missing/failed key export; established keys preserved; native SMB Kerberos and GMAC binding remain unqualified |
 | Real Kerberos SPNEGO | PASS: 6 integration cases, zero failures/skips | Isolated MIT KDC and actual JDK GSS; AES-128/AES-256 keys; implicit Subject/explicit GSS credentials; CIFS target and client identity; mutual authentication; fresh context exports; missing-SPN rejection; no SMB-server binding or GMAC qualification |
 | Ready WRITE response scheduling | PASS: 28 connected tests; clean check 861/861; 8 native async cases | Latch regression fails before the five-line fix and passes after it; completed responses drain before an empty-input wait; unfinished-response pipelining and memory bounds retained; above-2-GiB case passes its unchanged deadline; live CMAC/CCM full readback on both transports/providers |
+| Late WRITE response wakeup | PASS: 15 new cases; 51 connected; clean check 876/876; 8 legacy async + 16 GMAC async single-session cases | Request completion wakes the input monitor after publication; late success/error/cancel handled without native polling; opaque Future fallback retained; real GMAC/GCM async overwrite and changed-byte readback on both transports/providers; full multichannel remains unqualified |
 | Bounded auxiliary-session research | PASS: 5 tests, zero failures/skips | Detached checkout only; direct TCP, BC, NTLM, Samba 4.23.10; 0/3/7 replacements, lost-binding reservation, independent GMAC/MID verification and unsafe-flow negative control; G0 remains open |
 | Concurrent auxiliary-session research | PASS: 7 tests, zero failures/skips | Detached checkout only; direct TCP, BC, NTLM, Samba 4.23.10; four operational channels, concurrent held-open I/O, complete/partial binding loss and fresh retry, safe bootstrap abort and two nonce-reuse controls; G0 remains open |
 | Independent legitimate-binding observation | NONCE REUSE CONFIRMED | Pinned Go donor + Samba 4.23.10: two successful bindings; 17 independently verified signed messages across three actual key domains; two distinct-message original-key/nonce reuses |
@@ -316,10 +317,56 @@ The unchanged pre-fix standard case also passed at 29.006 seconds in this
 investigation. The scheduling regression establishes its specific defect; the
 recorded diagnostic timings do not prove the sole cause of every earlier
 deadline failure or qualify sustained throughput. A response completing only
-after the worker has already entered its empty-input wait still has no general
-wake-up mechanism here. Native GMAC multichannel, Java 8 runtime execution and
+after the worker has already entered its empty-input wait was outside that
+five-line change; the later wakeup follow-up below handles it. Native GMAC
+multichannel, Java 8 runtime execution and
 the full G0/G5 requirements remain open. No API, dependency, build configuration,
 chunk/window limit, logging setting or test deadline changed.
+
+The [late-response follow-up](validation-late-response.json) supplies a private
+completion signal owned by each Request. Its Promise publishes the value/error
+before signalling outside its delivery lock. Cancellation signals its claimed
+local outcome before invoking the potentially blocked send callback. The future
+helper only registers monitor notification. The writer checks both its input
+queue and the oldest response's terminal state under that monitor, so completion
+between checking and waiting cannot be lost. An end-of-input decision also checks
+that the producer finished and the queue is still empty.
+
+Native request futures and CompletableFuture use completion notifications with
+no polling or new threads. Opaque custom Future implementations use a 10 ms
+bounded wait fallback. Legacy Promise/CancellableFuture constructors remain
+available; their value/error and cancellation behavior is retained. The optional
+one-shot Promise signal requires publication without an externally held Promise
+lock, as in the Request path. Source I/O remains owned by the calling thread.
+
+Two synchronized late-response cases fail on the preceding production source.
+The final nine writer cases cover success, failure and cancellation with native,
+CompletableFuture and opaque futures; four Request cases cover publication and
+failed cancellation; two Promise cases check publication-before-signal and lock
+release. A blocked-cancellation-send test also verifies that the completion
+monitor wakes before that callback is released. All 51 connected cases and a
+clean 876-test full check pass without failures or skips. Coverage reporting and
+all three license checks pass.
+
+Eight legacy native async cases retain complete 8 MiB + 10 byte readback with
+CMAC and optional CCM. The existing forced-GMAC matrix now asynchronously
+overwrites each open file with different bytes before its complete readback:
+all 16 single-session profiles pass with both transports, BC/default JCE,
+GCM encryption off/on and write-through off/on. Its rejected binding candidate
+still leaves the existing session/file usable. Task-owned Samba/reaper containers
+were removed and their exact IDs checked. This is single-session GMAC coverage,
+not a safe binding construction or a full multichannel pass.
+
+The [reusable GMAC fixture runner](research/run-gmac-single-fixture.py) copies the
+existing profile into the pinned container before startup, avoiding daemon/client
+filesystem assumptions. It generates private test credentials, forces actual
+test execution, retains sanitized evidence and removes only its verified owner
+container. With the existing JDK 21 selected, run it from this worktree using
+`python3 docs/full-gmac-multichannel/research/run-gmac-single-fixture.py --output <new-private-directory>`.
+G0, the full peer/authentication matrix, Java 8 runtime execution and sustained
+operational/performance qualification remain open. This follow-up does not
+interrupt a caller-owned blocking source read or qualify a response that never
+completes while that source is blocked.
 
 ## Remaining contract and release gates
 

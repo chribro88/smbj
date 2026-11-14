@@ -30,10 +30,12 @@ import com.hierynomus.smbj.common.SMBRuntimeException;
 import java.util.Date;
 import java.util.UUID;
 import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
 
 public class Request {
 
     private final Promise<SMB2Packet, SMBRuntimeException> promise;
+    private final CompletableFuture<Void> completion = new CompletableFuture<>();
     private SMBPacket<?, ?> packet;
     private final long messageId;
     private final UUID cancelId;
@@ -66,7 +68,7 @@ public class Request {
             this.sessionId = 0;
         }
         timestamp = new Date();
-        this.promise = new Promise<>(String.valueOf(messageId), SMBRuntimeException.Wrapper);
+        this.promise = new Promise<>(String.valueOf(messageId), SMBRuntimeException.Wrapper, null, completion);
     }
 
     public synchronized long getAsyncId() {
@@ -139,7 +141,7 @@ public class Request {
             } finally {
                 promise.deliverError(new CancellationException("Request cancelled"));
             }
-        });
+        }, completion);
 
     }
 

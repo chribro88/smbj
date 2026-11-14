@@ -19,6 +19,7 @@ import com.hierynomus.smbj.common.SMBRuntimeException;
 
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -26,12 +27,23 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class CancellableFuture<V> extends AFuture<V> {
     private final AFuture<V> wrappedFuture;
     private final CancelCallback callback;
+    private final CompletableFuture<Void> completion;
 
     private final AtomicBoolean cancelled = new AtomicBoolean(false);
 
     public CancellableFuture(AFuture<V> wrappedFuture, CancelCallback cc) {
+        this(wrappedFuture, cc, null);
+    }
+
+    /** The request completes the supplied signal after publishing a value or failure. */
+    public CancellableFuture(AFuture<V> wrappedFuture, CancelCallback cc, CompletableFuture<Void> completion) {
         this.wrappedFuture = wrappedFuture;
         this.callback = cc;
+        this.completion = completion;
+    }
+
+    CompletableFuture<Void> completion() {
+        return completion;
     }
 
     @Override
@@ -39,6 +51,7 @@ public class CancellableFuture<V> extends AFuture<V> {
         if (wrappedFuture.isDone() || !cancelled.compareAndSet(false, true)) {
             return false;
         }
+        if (completion != null) completion.complete(null);
         try {
             callback.cancel();
             return true;

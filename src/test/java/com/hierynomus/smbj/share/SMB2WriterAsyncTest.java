@@ -27,11 +27,14 @@ import com.hierynomus.smbj.common.SmbPath;
 import com.hierynomus.smbj.connection.NegotiatedProtocol;
 import com.hierynomus.smbj.io.ArrayByteChunkProvider;
 import com.hierynomus.smbj.io.ByteChunkProvider;
+import com.hierynomus.protocol.commons.concurrent.CancellableFuture;
+import com.hierynomus.protocol.commons.concurrent.Promise;
 import com.hierynomus.smbj.session.Session;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.CsvSource;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -303,12 +306,16 @@ class SMB2WriterAsyncTest {
     }
 
     private void awaitWaiting(java.util.concurrent.atomic.AtomicReference<Thread> thread) {
+        awaitWaiting(thread, Thread.State.WAITING);
+    }
+
+    private void awaitWaiting(java.util.concurrent.atomic.AtomicReference<Thread> thread, Thread.State state) {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
         while (System.nanoTime() < deadline) {
-            if (thread.get() != null && thread.get().getState() == Thread.State.WAITING) return;
+            if (thread.get() != null && thread.get().getState() == state) return;
             Thread.yield();
         }
-        fail("closer did not reach the pending write wait");
+        fail("thread did not reach its pending wait");
     }
 
     @Test
@@ -341,6 +348,86 @@ class SMB2WriterAsyncTest {
             assertEquals(131072L, f.writer.writeAsync(source).get(3, TimeUnit.SECONDS));
             assertEquals(2, f.requests.size());
             assertEquals(131072L, source.getOffset());
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource({"stage,success", "stage,error", "stage,cancel", "native,success", "native,error", "native,cancel",
+            "opaque,success", "opaque,error", "opaque,cancel"})
+    void consumesResponsesThatCompleteWhileWaitingForSourceInput(String kind, String outcome) throws Exception {
+        try (Fixture f = new Fixture(65536)) {
+            CountDownLatch sourceBlocked = new CountDownLatch(1), releaseSource = new CountDownLatch(1);
+            CountDownLatch sent = new CountDownLatch(1), acknowledged = new CountDownLatch(1);
+            java.util.concurrent.atomic.AtomicReference<Thread> consumer = new java.util.concurrent.atomic.AtomicReference<>();
+            f.beforeSerialize = () -> consumer.set(Thread.currentThread());
+            SMB2WriteResponse response = new SMB2WriteResponse() {
+                @Override public int getBytesWritten() { acknowledged.countDown(); return 65536; }
+            };
+            CompletableFuture<SMB2WriteResponse> stage = new CompletableFuture<>();
+            IOException lost = new IOException("response lost");
+            FutureTask<SMB2WriteResponse> opaque = new FutureTask<>(() -> {
+                if ("error".equals(outcome)) throw lost;
+                return response;
+            });
+            Promise<SMB2WriteResponse, SMBRuntimeException> promise = new Promise<>("write", SMBRuntimeException.Wrapper);
+            CompletableFuture<Void> completion = new CompletableFuture<>();
+            Future<SMB2WriteResponse> reply = "stage".equals(kind) ? stage : "opaque".equals(kind) ? opaque
+                    : new CancellableFuture<>(promise.future(), () -> promise.deliverError(new CancellationException()), completion);
+            f.respond = request -> { sent.countDown(); return reply; };
+            ByteChunkProvider source = new ByteChunkProvider() {
+                int chunks;
+                @Override public boolean isAvailable() { return chunks < 2; }
+                @Override public int bytesLeft() { return 65536; }
+                @Override public void prepareWrite(int limit) {
+                    if (chunks == 1) {
+                        sourceBlocked.countDown();
+                        try { assertTrue(releaseSource.await(5, TimeUnit.SECONDS)); }
+                        catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new AssertionError(e); }
+                    }
+                }
+                @Override protected int getChunk(byte[] bytes) { chunks++; return bytes.length; }
+            };
+            ExecutorService producer = Executors.newSingleThreadExecutor();
+            try {
+                Future<Future<Long>> submitted = producer.submit(() -> f.writer.writeAsync(source));
+                assertTrue(sourceBlocked.await(3, TimeUnit.SECONDS));
+                assertTrue(sent.await(3, TimeUnit.SECONDS));
+                awaitWaiting(consumer, "opaque".equals(kind) ? Thread.State.TIMED_WAITING : Thread.State.WAITING);
+                if ("cancel".equals(outcome)) assertTrue(reply.cancel(false));
+                else if ("opaque".equals(kind)) opaque.run();
+                else if ("stage".equals(kind)) {
+                    if ("error".equals(outcome)) stage.completeExceptionally(lost);
+                    else stage.complete(response);
+                } else {
+                    if ("error".equals(outcome)) promise.deliverError(lost);
+                    else promise.deliver(response);
+                    completion.complete(null);
+                }
+                if ("success".equals(outcome)) {
+                    assertTrue(acknowledged.await(3, TimeUnit.SECONDS),
+                            "A response completing during the empty-input wait must wake its consumer");
+                } else {
+                    assertTrue(f.finished.await(3, TimeUnit.SECONDS), "Failure must finish the worker before source input resumes");
+                    assertEquals(1, acknowledged.getCount());
+                }
+                releaseSource.countDown();
+                Future<Long> result = submitted.get(3, TimeUnit.SECONDS);
+                if ("success".equals(outcome)) {
+                    assertEquals(131072L, result.get(3, TimeUnit.SECONDS));
+                    assertEquals(2, f.requests.size());
+                } else {
+                    ExecutionException failure = assertThrows(ExecutionException.class, () -> result.get(3, TimeUnit.SECONDS));
+                    Throwable cause = failure.getCause();
+                    while (cause.getCause() != null) cause = cause.getCause();
+                    if ("cancel".equals(outcome)) assertInstanceOf(CancellationException.class, cause);
+                    else assertSame(lost, cause);
+                    assertEquals(1, f.requests.size());
+                }
+            } finally {
+                releaseSource.countDown();
+                producer.shutdownNow();
+                assertTrue(producer.awaitTermination(5, TimeUnit.SECONDS));
+            }
         }
     }
 

@@ -21,12 +21,37 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReentrantLock;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import com.hierynomus.protocol.transport.TransportException;
 
 public class PromiseBackedFutureTest {
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void completionSignalFollowsPublicationAndReleasesThePromiseLock(boolean error) throws Exception {
+        ReentrantLock lock = new ReentrantLock();
+        CompletableFuture<Void> completion = new CompletableFuture<>();
+        Promise<String, TransportException> promise = new Promise<>("test", TransportException.Wrapper, lock, completion);
+        AtomicInteger signals = new AtomicInteger();
+        CompletableFuture<Void> observed = completion.thenRun(() -> {
+            assertFalse(lock.isHeldByCurrentThread());
+            assertTrue(promise.future().isDone());
+            signals.incrementAndGet();
+        });
+        if (error) promise.deliverError(new TransportException("failed"));
+        else promise.deliver("value");
+        observed.get(3, TimeUnit.SECONDS);
+        promise.deliverError(new TransportException("late failure"));
+        assertEquals(1, signals.get(), "The completion signal is one-shot");
+    }
 
     @Test
     public void shouldNotBeDoneBeforeDelivery() {

@@ -20,8 +20,11 @@ import com.hierynomus.mssmb2.SMB2MessageFlag;
 import com.hierynomus.mssmb2.messages.SMB2Cancel;
 import com.hierynomus.mssmb2.messages.SMB2Echo;
 import com.hierynomus.protocol.commons.concurrent.AFuture;
+import com.hierynomus.protocol.commons.concurrent.Futures;
 import com.hierynomus.smbj.common.SMBRuntimeException;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -88,6 +91,39 @@ class RequestCancellationTest {
         assertNull(failed.newCancel(SMB2Dialect.SMB_3_1_1, 47));
     }
 
+    @ParameterizedTest
+    @CsvSource({"response", "error", "cancel", "cancel-failure"})
+    void completionNotificationsCoverResponseErrorAndFailedCancellation(String outcome) throws Exception {
+        Request request = request();
+        AFuture<?> future = request.getFuture(() -> {
+            if ("cancel-failure".equals(outcome)) throw new SMBRuntimeException("cancel send failed");
+        });
+        Object monitor = new Object();
+        CountDownLatch waiting = new CountDownLatch(1);
+        ExecutorService worker = Executors.newSingleThreadExecutor();
+        try {
+            Future<?> awakened = worker.submit(() -> {
+                synchronized (monitor) {
+                    assertTrue(Futures.notifyOnCompletion(future, monitor));
+                    waiting.countDown();
+                    while (!future.isDone()) monitor.wait();
+                }
+                return null;
+            });
+            assertTrue(waiting.await(3, TimeUnit.SECONDS));
+            if ("response".equals(outcome)) request.getPromise().deliver(new SMB2Echo(SMB2Dialect.SMB_3_1_1));
+            else if ("error".equals(outcome)) request.getPromise().deliverError(new SMBRuntimeException("lost"));
+            else if ("cancel-failure".equals(outcome)) assertThrows(SMBRuntimeException.class, () -> future.cancel(false));
+            else assertTrue(future.cancel(false));
+            awakened.get(3, TimeUnit.SECONDS);
+            assertTrue(future.isDone());
+            assertTrue(Futures.notifyOnCompletion(future, new Object()), "Late registration must also be supported");
+        } finally {
+            worker.shutdownNow();
+            assertTrue(worker.awaitTermination(5, TimeUnit.SECONDS));
+        }
+    }
+
     @Test
     void callbackDoesNotHoldFutureLockAndConcurrentCancelEmitsOnce() throws Exception {
         Request request = request();
@@ -105,8 +141,20 @@ class RequestCancellationTest {
         });
         ExecutorService workers = Executors.newFixedThreadPool(2);
         try {
+            Object monitor = new Object();
+            CountDownLatch waiting = new CountDownLatch(1);
+            Future<?> awakened = workers.submit(() -> {
+                synchronized (monitor) {
+                    assertTrue(Futures.notifyOnCompletion(future, monitor));
+                    waiting.countDown();
+                    while (!future.isDone()) monitor.wait();
+                }
+                return null;
+            });
+            assertTrue(waiting.await(3, TimeUnit.SECONDS));
             Future<Boolean> first = workers.submit(() -> future.cancel(true));
             assertTrue(entered.await(5, TimeUnit.SECONDS));
+            awakened.get(1, TimeUnit.SECONDS);
             Future<Boolean> second = workers.submit(() -> {
                 assertTrue(future.isDone());
                 assertTrue(future.isCancelled());

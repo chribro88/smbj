@@ -19,6 +19,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
@@ -38,6 +39,7 @@ public class Promise<V, T extends Throwable> {
     private final ExceptionWrapper<T> wrapper;
     private final ReentrantLock lock;
     private final Condition cond;
+    private final CompletableFuture<Void> completion;
 
     private V val;
     private T pendingEx;
@@ -61,10 +63,19 @@ public class Promise<V, T extends Throwable> {
      * @param lock    lock to use
      */
     public Promise(String name, ExceptionWrapper<T> wrapper, ReentrantLock lock) {
+        this(name, wrapper, lock, null);
+    }
+
+    /**
+     * The optional one-shot signal completes after delivery publishes a value or error and releases its lock.
+     * Do not externally hold the promise lock when delivering to a signalled promise.
+     */
+    public Promise(String name, ExceptionWrapper<T> wrapper, ReentrantLock lock, CompletableFuture<Void> completion) {
         this.name = name;
         this.wrapper = wrapper;
         this.lock = lock == null ? new ReentrantLock() : lock;
         this.cond = this.lock.newCondition();
+        this.completion = completion;
     }
 
     /**
@@ -81,6 +92,7 @@ public class Promise<V, T extends Throwable> {
         } finally {
             lock.unlock();
         }
+        if (val != null && completion != null) completion.complete(null);
     }
 
     /**
@@ -90,13 +102,16 @@ public class Promise<V, T extends Throwable> {
      * @param e the error
      */
     public void deliverError(Throwable e) {
+        boolean fulfilled;
         lock.lock();
         try {
             pendingEx = wrapper.wrap(e);
+            fulfilled = pendingEx != null;
             cond.signalAll();
         } finally {
             lock.unlock();
         }
+        if (fulfilled && completion != null) completion.complete(null);
     }
 
     /**

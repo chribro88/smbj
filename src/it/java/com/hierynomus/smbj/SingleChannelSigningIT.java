@@ -36,6 +36,7 @@ import org.junit.jupiter.params.provider.Arguments;
 
 import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 import static com.hierynomus.smbj.testing.MultichannelTestSupport.*;
@@ -85,6 +86,8 @@ class SingleChannelSigningIT {
                 byte[] bytes = new byte[131072];
                 new Random(47).nextBytes(bytes);
                 assertEquals(bytes.length, file.write(bytes, 0));
+                new Random(48).nextBytes(bytes);
+                assertEquals((long) bytes.length, file.writeAsync(bytes, 0, 0, bytes.length).get(10, TimeUnit.SECONDS));
                 SMB3SigningAlgorithm algorithm = primary.getConnectionContext().getSigningAlgorithm();
                 if (settings.getSigningAlgorithms().equals(Collections.singletonList(SMB3SigningAlgorithm.AES_GMAC))) {
                     assertEquals(SMB3SigningAlgorithm.AES_GMAC, algorithm);

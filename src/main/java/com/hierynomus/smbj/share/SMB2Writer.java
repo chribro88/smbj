@@ -17,6 +17,7 @@ package com.hierynomus.smbj.share;
 
 import com.hierynomus.mssmb2.SMB2FileId;
 import com.hierynomus.mssmb2.messages.SMB2WriteResponse;
+import com.hierynomus.protocol.commons.concurrent.Futures;
 import com.hierynomus.smbj.ProgressListener;
 import com.hierynomus.smbj.common.SMBRuntimeException;
 import com.hierynomus.smbj.io.ArrayByteChunkProvider;
@@ -222,6 +223,7 @@ public class SMB2Writer {
         private int acknowledged;
         private int submitted;
         private Future<SMB2WriteResponse> response;
+        private boolean completionSignals;
 
         WriteChunk(ByteChunkProvider provider, int limit) {
             if (limit <= 0) throw new SMBRuntimeException("Invalid WRITE buffer limit");
@@ -294,13 +296,14 @@ public class SMB2Writer {
             }
         }
 
-        // A null result means the producer has finished and its input queue is empty.
-        private WriteChunk takeInput() {
+        // No input means production finished or the oldest response is ready to consume.
+        private WriteChunk takeInput(WriteChunk head) {
             synchronized (input) {
                 try {
-                    while (input.isEmpty() && !produced) {
+                    while (input.isEmpty() && !produced && (head == null || !head.response.isDone())) {
                         checkCancelled();
-                        input.wait();
+                        // Opaque custom Futures cannot signal completion; native requests never poll.
+                        input.wait(head == null || head.completionSignals ? 0 : 10);
                     }
                     checkCancelled();
                     return input.pollFirst();
@@ -321,13 +324,11 @@ public class SMB2Writer {
                 while (!end || !pending.isEmpty()) {
                     checkCancelled();
                     while (!end && pending.size() < window) {
-                        if (!pending.isEmpty() && pending.peekFirst().response.isDone()) {
-                            synchronized (input) {
-                                if (input.isEmpty()) break;
-                            }
+                        WriteChunk chunk = takeInput(pending.peekFirst());
+                        if (chunk == null) {
+                            synchronized (input) { end = produced && input.isEmpty(); }
+                            break;
                         }
-                        WriteChunk chunk = takeInput();
-                        if (chunk == null) end = true;
                         else {
                             submit(chunk);
                             pending.addLast(chunk);
@@ -369,6 +370,7 @@ public class SMB2Writer {
             chunk.response = share.writeAsync(fileId, tail);
             active.add(chunk.response);
             chunk.submitted = tail.getLastWriteSize();
+            chunk.completionSignals = Futures.notifyOnCompletion(chunk.response, input);
             if (cancelled.get()) chunk.response.cancel(false);
             checkCancelled();
         }

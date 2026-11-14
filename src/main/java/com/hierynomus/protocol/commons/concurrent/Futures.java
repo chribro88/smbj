@@ -16,6 +16,8 @@
 package com.hierynomus.protocol.commons.concurrent;
 
 import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
@@ -24,6 +26,21 @@ import java.util.concurrent.TimeoutException;
 import com.hierynomus.protocol.commons.concurrent.AFuture.Function;
 
 public class Futures {
+
+    /**
+     * Notify the monitor when a supported future completes. The caller must check
+     * its wait predicate under that monitor. Returns false if no signal is available.
+     */
+    public static boolean notifyOnCompletion(Future<?> future, Object monitor) {
+        Objects.requireNonNull(monitor, "monitor");
+        CompletableFuture<?> completion = future instanceof CompletableFuture ? (CompletableFuture<?>) future
+                : future instanceof CancellableFuture ? ((CancellableFuture<?>) future).completion() : null;
+        if (completion == null) return false;
+        completion.whenComplete((value, failure) -> {
+            synchronized (monitor) { monitor.notifyAll(); }
+        });
+        return true;
+    }
 
     public static <T, E extends Throwable> T get(Future<T> future, ExceptionWrapper<E> wrapper) throws E {
         try {
