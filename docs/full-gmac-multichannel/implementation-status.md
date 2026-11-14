@@ -147,7 +147,8 @@ pool available; losing the last channel stops it.
 | Receive-policy `check` milestone | PASS: 798 tests, zero failures/skips | Full unit suite, license checks and JaCoCo; 19 request-session response regressions; includes the concurrent local bound-channel SESSION_SETUP key-selection patch and its one test |
 | Encrypted receive follow-up | PASS: 39 focused cases and 16 live single-session cases; full check 817/818 | All new receive cases pass; the existing above-2-GiB async writer test repeatedly exceeded its unchanged 30-second deadline; diagnostic logging/chunk experiments did not resolve it and were restored |
 | Shared encryption nonce ownership | PASS: 20 new cases; 63 connected cases | Five supported cipher/provider profiles; native Session.send with mocked Connections; concurrent sends, replacement, retained-key reinstallation, provider failure and atomic exhaustion; independent transform tag/plaintext checks |
-| SPNEGO binding key ownership | PASS: 22 new cases; 112 connected cases | Actual SPNEGO adapter with controlled GSS contexts; BC and JCE/BC; fresh final-token key export, 7/16/32-byte normalization, rejection of retained session/previous-binding KDF inputs and missing/failed key export; established keys preserved; live Kerberos and GMAC binding remain unqualified |
+| SPNEGO binding key ownership | PASS: 22 new cases; 112 connected cases | Actual SPNEGO adapter with controlled GSS contexts; BC and JCE/BC; fresh final-token key export, 7/16/32-byte normalization, rejection of retained session/previous-binding KDF inputs and missing/failed key export; established keys preserved; native SMB Kerberos and GMAC binding remain unqualified |
+| Real Kerberos SPNEGO | PASS: 6 integration cases, zero failures/skips | Isolated MIT KDC and actual JDK GSS; AES-128/AES-256 keys; implicit Subject/explicit GSS credentials; CIFS target and client identity; mutual authentication; fresh context exports; missing-SPN rejection; no SMB-server binding or GMAC qualification |
 | Bounded auxiliary-session research | PASS: 5 tests, zero failures/skips | Detached checkout only; direct TCP, BC, NTLM, Samba 4.23.10; 0/3/7 replacements, lost-binding reservation, independent GMAC/MID verification and unsafe-flow negative control; G0 remains open |
 | Concurrent auxiliary-session research | PASS: 7 tests, zero failures/skips | Detached checkout only; direct TCP, BC, NTLM, Samba 4.23.10; four operational channels, concurrent held-open I/O, complete/partial binding loss and fresh retry, safe bootstrap abort and two nonce-reuse controls; G0 remains open |
 | Independent legitimate-binding observation | NONCE REUSE CONFIRMED | Pinned Go donor + Samba 4.23.10: two successful bindings; 17 independently verified signed messages across three actual key domains; two distinct-message original-key/nonce reuses |
@@ -279,9 +280,13 @@ and initial preauthentication transcript remain unchanged.
 
 These 22 new cases pass with both configured provider adapters; all 112 connected
 binding, initial-authentication, channel-key-selection and response-authentication
-cases also pass. The GSS contexts, Session and Connection boundaries are mocked;
-SPN creation, real Kerberos tickets/KDC, concurrent/native GMAC binding and
-reauthentication remain unqualified. Production sources and the GMAC guard are
+cases also pass. That check mocks the GSS contexts, Session and Connection
+boundaries. The separate [real-KDC follow-up](research/kerberos-kdc-reference.md)
+now verifies actual ticket processing, CIFS SPN creation, final-token processing
+and fresh key export through the unmodified SPNEGO adapter: six passing cases
+across AES-128/AES-256 Kerberos keys and both credential modes. It does not send
+SMB packets. Native SMB binding, alternate-IP selection, concurrent GMAC binding
+and reauthentication remain unqualified. Production sources and the GMAC guard are
 unchanged. The full suite was not repeated for this test-only follow-up; its
 earlier large-write deadline failure remains unresolved.
 

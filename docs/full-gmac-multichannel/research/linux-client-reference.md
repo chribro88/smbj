@@ -59,6 +59,11 @@ KDF/tag checks. Both the original session's raw KDF input and a previous binding
 export produce rejected finals. This validates the local adapter/builder
 connection, not real Kerberos ticket processing or GMAC binding safety.
 
+The separate [real-KDC follow-up](kerberos-kdc-reference.md) now adds six passing
+cases through the actual JDK GSS exchange and MIT KDC, including CIFS target
+selection, fresh 16/32-byte context keys and final-token key export. It does not
+exercise SMB-server binding or establish GMAC nonce safety.
+
 ## Useful guides and patch history
 
 - [Linux kernel CIFS/SMB usage guide](https://docs.kernel.org/admin-guide/cifs/usage.html):
