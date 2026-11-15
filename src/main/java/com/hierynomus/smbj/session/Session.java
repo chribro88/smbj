@@ -306,7 +306,7 @@ public class Session implements AutoCloseable {
         }
     }
 
-    /** Reauthenticate this SMB 3.x session with its existing credentials, retaining keys and open handles. */
+    /** Reauthenticate with existing credentials; a verified peer denial retires the session and its opens. */
     public void reauthenticate() throws IOException {
         synchronized (reauthenticationLock) {
             Connection selected;
@@ -333,22 +333,7 @@ public class Session implements AutoCloseable {
                 }
             }
 
-            nestedSessionsRwLock.writeLock().lock();
-            try {
-                for (Session nestedSession : nestedSessionsByHost.values()) {
-                    logger.info("Logging off nested session {} for session {}", nestedSession.getSessionId(), sessionId);
-                    try {
-                        nestedSession.logoff();
-                    } catch (TransportException te) {
-                        logger.error("Caught exception while logging off nested session {}", nestedSession.getSessionId());
-                    } finally {
-                        releaseNestedConnection(nestedSession);
-                    }
-                }
-                nestedSessionsByHost.clear();
-            } finally {
-                nestedSessionsRwLock.writeLock().unlock();
-            }
+            logoffNestedSessions();
             SMB2Logoff logoff = new SMB2Logoff(connection.getNegotiatedProtocol().getDialect(), sessionId);
             Connection owner = selectChannel();
             Future<SMB2Logoff> pending = this.<SMB2Logoff>send(logoff, owner);
@@ -367,6 +352,24 @@ public class Session implements AutoCloseable {
         }
     }
 
+    private void logoffNestedSessions() {
+        nestedSessionsRwLock.writeLock().lock();
+        try {
+            for (Session nestedSession : nestedSessionsByHost.values()) {
+                logger.info("Logging off nested session {} for session {}", nestedSession.getSessionId(), sessionId);
+                try {
+                    nestedSession.logoff();
+                } catch (TransportException te) {
+                    logger.error("Caught exception while logging off nested session {}", nestedSession.getSessionId());
+                } finally {
+                    releaseNestedConnection(nestedSession);
+                }
+            }
+        } finally {
+            nestedSessionsRwLock.writeLock().unlock();
+        }
+    }
+
     public boolean isSigningRequired() {
         return sessionContext.isSigningRequired();
     }
@@ -381,6 +384,16 @@ public class Session implements AutoCloseable {
 
     @Override
     public void close() throws IOException {
+        close(true);
+    }
+
+    /** Dispose local ownership after a verified peer authentication failure deleted the remote session. */
+    public void discardAuthenticatedSession() throws IOException {
+        channelsFailed.set(true);
+        close(false);
+    }
+
+    private void close(boolean sendLogoff) throws IOException {
         java.util.List<Connection> pending;
         java.util.List<Connection> established;
         java.util.Set<Connection> owned;
@@ -406,7 +419,16 @@ public class Session implements AutoCloseable {
             }
         }
         try {
-            logoff();
+            if (sendLogoff) {
+                logoff();
+            } else {
+                stopAsyncWrites();
+                try {
+                    logoffNestedSessions();
+                } finally {
+                    bus.publish(new SessionLoggedOff(this));
+                }
+            }
         } finally {
             for (Connection channel : channels) {
                 if (channel != connection && owned.contains(channel)) {

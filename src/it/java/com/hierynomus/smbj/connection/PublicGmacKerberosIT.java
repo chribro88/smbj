@@ -339,6 +339,7 @@ class PublicGmacKerberosIT {
                     observer.original(main, caller); observer.bound(main, caller); target.set(main.getSessionId());
                     try (DiskShare share = (DiskShare) main.connectShare("share")) {
                         String name = "public-kerberos-" + UUID.randomUUID() + ".bin";
+                        boolean peerRetired = false;
                         try (com.hierynomus.smbj.share.File file = share.openFile(name,
                                 EnumSet.of(AccessMask.GENERIC_READ, AccessMask.GENERIC_WRITE), null,
                                 SMB2ShareAccess.ALL, SMB2CreateDisposition.FILE_CREATE, null)) {
@@ -435,6 +436,14 @@ class PublicGmacKerberosIT {
                             assertSnapshot(retained, main);
                             System.out.printf("KERBEROS_CACHE_EXPIRY rawKeyBytes=%d borrowed=%s encrypt=%s noCredential=true setupRequests=0 existingOpen=true freshRetry=true%n",
                                     keyBytes, borrowed, encryption);
+                            data[1] ^= 1; verifyContents(file, data);
+                            first.close(true);
+                            Connection replacement = open(client, main, port, observer);
+                            assertEquals(3, main.getChannelCount());
+                            for (int channel = 0; channel < 3; channel++) main.reauthenticate();
+                            assertSnapshot(retained, main);
+                            data[2] ^= 1; verifyContents(file, data);
+                            echo(main, caller); echo(main, second); echo(main, replacement);
                             int beforeRejection = setupRequests.get();
                             rejectedSetup.set(null);
                             damageNextToken.set(true);
@@ -448,25 +457,39 @@ class PublicGmacKerberosIT {
                             assertEquals(rejected.getStatusCode(), rejection.getHeader().getStatusCode());
                             assertTrue(rejection.getHeader().isFlagSet(SMB2MessageFlag.SMB2_FLAGS_SIGNED));
                             assertSnapshot(retained, main);
-                            assertEquals(3, main.getChannelCount());
-                            data[2] ^= 1; verifyContents(file, data);
-                            main.reauthenticate();
-                            assertSnapshot(retained, main);
-                            System.out.printf("KERBEROS_PEER_REJECTION rawKeyBytes=%d borrowed=%s encrypt=%s status=STATUS_LOGON_FAILURE setupRequests=1 signed=true damagedNativeToken=true existingOpen=true freshRetry=true%n",
-                                    keyBytes, borrowed, encryption);
-                            data[1] ^= 1; verifyContents(file, data);
-                            first.close(true);
-                            Connection replacement = open(client, main, port, observer);
-                            assertEquals(3, main.getChannelCount());
-                            for (int channel = 0; channel < 3; channel++) main.reauthenticate();
-                            assertSnapshot(retained, main);
-                            data[2] ^= 1; verifyContents(file, data);
-                            echo(main, caller); echo(main, second); echo(main, replacement);
+                            assertEquals(0, main.getChannelCount());
+                            assertFalse(second.isConnected()); assertFalse(replacement.isConnected());
+                            assertNull(caller.getSessionTable().find(main.getSessionId()));
+                            assertTimeoutPreemptively(Duration.ofSeconds(2), () ->
+                                    assertThrows(com.hierynomus.smbj.common.SMBRuntimeException.class, () -> file.write(data, 0)));
+                            assertThrows(IOException.class, main::reauthenticate);
+                            assertEquals(beforeRejection + 1, setupRequests.get(), "A retired session must not authenticate again");
+                            assertTrue(caller.isConnected());
+                            peerRetired = true;
+                        } catch (com.hierynomus.smbj.common.SMBRuntimeException closeFailure) {
+                            if (!peerRetired) throw closeFailure;
+                            assertEquals(0, main.getChannelCount(), "CLOSE on the retired open must fail locally");
                         }
-                        share.rm(name);
+                        assertTrue(peerRetired);
+                        assertThrows(com.hierynomus.smbj.common.SMBRuntimeException.class, share::close);
                     }
                     main.close(); assertTrue(caller.isConnected());
                     if (older != null) echo(older, caller);
+                    try (Session fresh = caller.authenticate(identity)) {
+                        assertNotEquals(main.getSessionId(), fresh.getSessionId());
+                        observer.auxiliary(fresh, caller);
+                        try (DiskShare share = (DiskShare) fresh.connectShare("share")) {
+                            String name = "fresh-after-denial-" + UUID.randomUUID() + ".bin";
+                            try (com.hierynomus.smbj.share.File file = share.openFile(name,
+                                    EnumSet.of(AccessMask.GENERIC_READ, AccessMask.GENERIC_WRITE), null,
+                                    SMB2ShareAccess.ALL, SMB2CreateDisposition.FILE_CREATE, null)) {
+                                verifyContents(file, new byte[65539]);
+                            }
+                            share.rm(name);
+                        }
+                    }
+                    System.out.printf("KERBEROS_PEER_REJECTION rawKeyBytes=%d borrowed=%s encrypt=%s status=STATUS_LOGON_FAILURE setupRequests=1 signed=true damagedNativeToken=true oldOpenRejected=true sessionRetired=true borrowedHealthy=true freshSession=true freshRetry=true%n",
+                            keyBytes, borrowed, encryption);
                 }
             }
         }

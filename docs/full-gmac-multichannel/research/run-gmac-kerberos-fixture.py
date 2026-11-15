@@ -63,8 +63,10 @@ try:
     rejected = [dict(word.split('=', 1) for word in line.split()[1:]) for line in metadata['peer_rejection']]
     assert {(entry['rawKeyBytes'], entry['borrowed'], entry['encrypt']) for entry in rejected} == expected
     assert all(entry['status'] == 'STATUS_LOGON_FAILURE' and entry['setupRequests'] == '1'
-               and entry['signed'] == 'true' and entry['existingOpen'] == 'true'
-               and entry['damagedNativeToken'] == 'true' and entry['freshRetry'] == 'true' for entry in rejected)
+               and entry['signed'] == 'true' and entry['oldOpenRejected'] == 'true'
+               and entry['sessionRetired'] == 'true' and entry['borrowedHealthy'] == 'true'
+               and entry['damagedNativeToken'] == 'true' and entry['freshSession'] == 'true'
+               and entry['freshRetry'] == 'true' for entry in rejected)
     gcm = [dict(word.split('=', 1) for word in line.split()[1:]) for line in metadata['gcm_audits']]
     assert {entry['run'] for entry in gcm} == {
         'public-kerberos-' + size + '-' + borrowed + '-true'

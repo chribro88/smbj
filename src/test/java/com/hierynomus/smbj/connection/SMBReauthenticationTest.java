@@ -86,6 +86,7 @@ class SMBReauthenticationTest {
         @Override public AuthenticateResponse authenticate(AuthenticationContext auth, byte[] token, ConnectionContext context) throws IOException {
             if (cachedFailure instanceof IOException) throw (IOException) cachedFailure;
             if (cachedFailure instanceof Error) throw (Error) cachedFailure;
+            if (cachedFailure instanceof RuntimeException) throw (RuntimeException) cachedFailure;
             tokens.incrementAndGet();
             AuthenticateResponse response = super.authenticate(auth, token, context);
             if (!exportKey) response.setSessionKey(null);
@@ -95,6 +96,7 @@ class SMBReauthenticationTest {
             closes.incrementAndGet();
             if (cachedFailure instanceof IOException) throw (IOException) cachedFailure;
             if (cachedFailure instanceof Error) throw (Error) cachedFailure;
+            if (cachedFailure instanceof RuntimeException) throw (RuntimeException) cachedFailure;
             if (failClose) throw new IOException("Injected authentication cleanup failure");
         }
     }
@@ -149,13 +151,67 @@ class SMBReauthenticationTest {
     }
 
     @Test
-    void authenticatedFailurePreservesTheSessionAndAllowsFreshRetry() throws Exception {
+    void authenticatedFailureDiscardsTheSessionWithoutReplacingKeys() throws Exception {
         SMBSessionBuilder builder = builder();
         when(connection.sendAndReceive(eq(session), any(SMB2Packet.class))).thenAnswer(call ->
-                response(rounds.incrementAndGet() == 1 ? NtStatus.STATUS_ACCESS_DENIED.getValue() : 0, "valid"));
-        assertThrows(SMBApiException.class, () -> reauthenticate(builder)); retained();
-        reauthenticate(builder); retained();
-        verify(connection, times(2)).sessionSetupAccepted(any());
+                response(NtStatus.STATUS_ACCESS_DENIED.getValue(), "valid"));
+        assertThrows(SMBApiException.class, () -> reauthenticate(builder));
+        assertSame(original, keys.getSigningKey());
+        assertEquals(1, closes.get());
+        verify(session).discardAuthenticatedSession();
+        verify(connection).sessionSetupAccepted(any());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"valid", "unsigned-error", "bad-final", "local", "local-api"})
+    void onlyVerifiedPeerDenialRetiresThePublicSession(String fault) throws Exception {
+        builder();
+        NegotiatedProtocol protocol = context.getNegotiatedProtocol();
+        when(connection.getNegotiatedProtocol()).thenReturn(protocol);
+        com.hierynomus.smbj.event.SMBEventBus bus = spy(new com.hierynomus.smbj.event.SMBEventBus());
+        Session live = new Session(connection, config, new AuthenticationContext("user", new char[0], "domain"),
+                bus, null, new PacketSignatory(new BCSecurityProvider()), null);
+        live.setSessionId(47); live.getSessionContext().setSigningKey(original);
+        SMB2SessionSetup established = mock(SMB2SessionSetup.class);
+        when(established.getSessionFlags()).thenReturn(EnumSet.noneOf(SMB2SessionSetup.SMB2SessionFlags.class));
+        live.getSessionContext().established(established);
+        live.addBorrowedChannel(connection, channel);
+        when(connection.isSessionEstablished(live)).thenReturn(true);
+        when(connection.sendAndReceive(same(live), any(SMB2Packet.class))).thenAnswer(call -> {
+            rounds.incrementAndGet(); return response(NtStatus.STATUS_LOGON_FAILURE.getValue(), fault);
+        });
+        if (fault.equals("local")) cachedFailure = new IOException("Local credentials unavailable");
+        if (fault.equals("local-api")) cachedFailure = new SMBApiException(NtStatus.STATUS_LOGON_FAILURE.getValue(),
+                SMB2MessageCommandCode.SMB2_SESSION_SETUP, "Local authenticator failure", null);
+        Connection pending = mock(Connection.class);
+        assertTrue(live.beginBinding(pending));
+
+        if (fault.equals("valid")) {
+            SMBApiException failure = assertThrows(SMBApiException.class, live::reauthenticate);
+            assertEquals(NtStatus.STATUS_LOGON_FAILURE, failure.getStatus());
+            assertEquals(0, live.getChannelCount());
+            assertThrows(IOException.class, live::reauthenticate);
+            assertThrows(IOException.class, () -> live.beginBinding(mock(Connection.class)));
+            assertThrows(com.hierynomus.protocol.transport.TransportException.class,
+                    () -> live.send(new com.hierynomus.mssmb2.messages.SMB2Echo(SMB2Dialect.SMB_3_1_1)));
+            verify(pending).close(true);
+            verify(bus).publish(any(com.hierynomus.smbj.event.SessionLoggedOff.class));
+            verify(connection).releaseSessionLeases(live);
+        } else {
+            Exception failure = assertThrows(Exception.class, live::reauthenticate);
+            if (fault.equals("local-api")) assertSame(cachedFailure, failure);
+            else assertInstanceOf(IOException.class, failure);
+            assertEquals(1, live.getChannelCount());
+            verify(pending, never()).close(anyBoolean());
+            verify(bus, never()).publish(any(com.hierynomus.smbj.event.SessionLoggedOff.class));
+            live.endBinding(pending);
+            when(connection.isSessionEstablished(live)).thenReturn(false);
+            live.discardUnpublishedAuthentication();
+        }
+        assertSame(original, live.getSessionContext().getSigningKey());
+        assertEquals(1, closes.get());
+        verify(connection, never()).send(any(SMB2Packet.class));
+        verify(connection, never()).close(anyBoolean());
     }
 
     @Test

@@ -308,7 +308,13 @@ public class SMBSessionBuilder {
                         connection.sessionSetupAccepted(response);
                     } else {
                         connection.sessionSetupAccepted(response);
-                        throw new SMBApiException(response.getHeader(), "SMB reauthentication failed");
+                        SMBApiException rejected = new SMBApiException(response.getHeader(), "SMB reauthentication failed");
+                        try {
+                            session.discardAuthenticatedSession();
+                        } catch (IOException | RuntimeException | Error cleanup) {
+                            if (cleanup != rejected) rejected.addSuppressed(cleanup);
+                        }
+                        throw rejected;
                     }
                 }
                 throw new IOException("SMB reauthentication exceeded authentication exchange limit");
