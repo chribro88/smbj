@@ -255,6 +255,9 @@ class PublicGmacKerberosIT {
                                                 && response.getHeader().getStatusCode() != NtStatus.STATUS_SUCCESS.getValue()
                                                 && response.getHeader().getStatusCode() != NtStatus.STATUS_MORE_PROCESSING_REQUIRED.getValue()) {
                                             rejectedSetup.set(response);
+                                            System.out.printf("KERBEROS_SETUP_ERROR status=%08x signed=%s mid=%d%n",
+                                                    response.getHeader().getStatusCode(), response.getHeader().isFlagSet(SMB2MessageFlag.SMB2_FLAGS_SIGNED),
+                                                    response.getHeader().getMessageId());
                                         }
                                     }
                                     Request pending = delayedRequest.get();
