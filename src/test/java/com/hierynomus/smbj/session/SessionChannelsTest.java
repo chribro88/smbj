@@ -28,6 +28,8 @@ import com.hierynomus.smbj.connection.NegotiatedProtocol;
 import com.hierynomus.smbj.connection.Signatory;
 import com.hierynomus.smbj.io.ArrayByteChunkProvider;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -100,6 +102,55 @@ class SessionChannelsTest {
         verify(secondary).send(packet);
         verify(secondary, never()).sendOriginalKey(any(), any());
         assertTrue(session.reserveOriginalKeyMessageId(connection(), 4, false));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void unpublishedBootstrapCanBindACleanupChannelAfterRootLoss(boolean bindingCompleted) throws Exception {
+        com.hierynomus.smbj.event.SMBEventBus bus = new com.hierynomus.smbj.event.SMBEventBus();
+        Session session = new Session(primary, SmbConfig.createDefaultConfig(), null, bus, null, signatory, null);
+        session.prepareBootstrapChannel(secondary);
+        try {
+            if (bindingCompleted) {
+                session.addBorrowedChannel(secondary, secondaryKey);
+                when(secondary.isClosed()).thenReturn(true);
+                bus.publish(new com.hierynomus.smbj.event.ConnectionClosed("server", 445, secondary));
+            }
+            when(primary.isClosed()).thenReturn(true);
+            bus.publish(new com.hierynomus.smbj.event.ConnectionClosed("server", 445, primary));
+            assertEquals(0, session.getChannelCount());
+
+            Connection cleanup = connection();
+            assertTrue(session.beginBinding(cleanup));
+            session.addChannel(cleanup, secondaryKey);
+            session.endBinding(cleanup);
+            assertEquals(1, session.getChannelCount());
+            FutureTask<Void> task = new FutureTask<>(() -> null);
+            session.executeAsyncWrite(task);
+            task.get(2, TimeUnit.SECONDS);
+        } finally {
+            session.discardUnpublishedAuthentication();
+        }
+    }
+
+    @Test
+    void publishedBootstrapRejectsLateBindingAfterItsLastChannelCloses() throws Exception {
+        com.hierynomus.smbj.event.SMBEventBus bus = new com.hierynomus.smbj.event.SMBEventBus();
+        Session session = new Session(primary, SmbConfig.createDefaultConfig(), null, bus, null, signatory, null);
+        session.prepareBootstrapChannel(secondary);
+        session.addBorrowedChannel(secondary, secondaryKey);
+        session.adoptBootstrapChannel(primary, secondary);
+        when(primary.isClosed()).thenReturn(true);
+        bus.publish(new com.hierynomus.smbj.event.ConnectionClosed("server", 445, primary));
+        assertEquals(1, session.getChannelCount());
+        when(secondary.isClosed()).thenReturn(true);
+        bus.publish(new com.hierynomus.smbj.event.ConnectionClosed("server", 445, secondary));
+
+        Connection late = connection();
+        assertThrows(java.io.IOException.class, () -> session.beginBinding(late));
+        assertThrows(IllegalStateException.class, () -> session.addChannel(late, secondaryKey));
+        verify(secondary).releaseSessionLeases(session);
+        session.discardUnpublishedAuthentication();
     }
 
     @Test

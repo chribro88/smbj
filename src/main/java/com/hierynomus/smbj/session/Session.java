@@ -661,7 +661,7 @@ public class Session implements AutoCloseable {
             throw new IllegalStateException("SMB channel disconnected before binding completed");
         }
         synchronized (channels) {
-            if (closing || channelsFailed.get() || (multichannel && getChannelCount() == 0) || channel.isClosed()) {
+            if (closing || channelsFailed.get() || (multichannel && bootstrapAnchor == null && getChannelCount() == 0) || channel.isClosed()) {
                 throw new IllegalStateException("SMB session or candidate channel is closing or closed");
             }
             channelKeys.put(channel, key);
@@ -677,7 +677,7 @@ public class Session implements AutoCloseable {
 
     public boolean beginBinding(Connection channel, boolean owned) throws IOException {
         synchronized (channels) {
-            if (closing || channelsFailed.get() || (multichannel && getChannelCount() == 0)) {
+            if (closing || channelsFailed.get() || (multichannel && bootstrapAnchor == null && getChannelCount() == 0)) {
                 throw new IOException("SMB session is closing or has no surviving channels");
             }
             return pendingChannels.putIfAbsent(channel, owned) == null;
@@ -707,7 +707,7 @@ public class Session implements AutoCloseable {
                 channelSequence.incrementAndGet();
             }
         }
-        if (channels.isEmpty()) {
+        if (channels.isEmpty() && bootstrapAnchor == null) {
             channelsFailed.set(true);
         }
     }
@@ -721,7 +721,8 @@ public class Session implements AutoCloseable {
                 ownedChannels.remove(event.getConnection());
                 if (multichannel) channelSequence.incrementAndGet();
             }
-            lastChannel = channels.isEmpty();
+            // An unpublished bootstrap may still need a fresh binding to log off its remote session.
+            lastChannel = channels.isEmpty() && bootstrapAnchor == null;
             if (lastChannel) {
                 channelsFailed.set(true);
             }
