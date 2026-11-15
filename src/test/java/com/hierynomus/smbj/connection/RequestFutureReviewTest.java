@@ -25,7 +25,8 @@ import static org.junit.jupiter.api.Assertions.*;
 class RequestFutureReviewTest {
     @Test
     void failedRequestIsDonePreservesCauseAndCannotSendCancel() {
-        Request request = new Request(null, 1, UUID.randomUUID());
+        Request request = new Request(new com.hierynomus.mssmb2.messages.SMB2Echo(
+                com.hierynomus.mssmb2.SMB2Dialect.SMB_3_1_1), 1, UUID.randomUUID());
         AtomicInteger cancels = new AtomicInteger();
         Future<?> future = request.getFuture(cancels::incrementAndGet);
         TransportException original = new TransportException("synthetic failure");

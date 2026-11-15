@@ -46,6 +46,58 @@ import static org.mockito.Mockito.*;
 
 class ChannelRequestsTest {
     @Test
+    void forcedEncryptionUsesSurvivingChannelAndRejectsPlainFinalResponse() throws Exception {
+        try (Fixture fixture = new Fixture()) {
+            fixture.session.getSessionContext().setEncryptionKey(new SecretKeySpec(new byte[16], "AES"));
+            fixture.primary.close(true);
+            SMB2Echo request = fixture.echo();
+            Future<SMB2Packet> response = fixture.session.send(request, true);
+            assertTrue(fixture.secondary.outstandingRequests.getRequestByMessageId(request.getSequenceNumber()).isEncrypted());
+            ArgumentCaptor<SMBPacket> packets = ArgumentCaptor.forClass(SMBPacket.class);
+            verify(fixture.secondaryTransport).write(packets.capture());
+            SMBBuffer wire = new SMBBuffer();
+            packets.getValue().write(wire);
+            assertArrayEquals(SMB2TransformHeader.ENCRYPTED_PROTOCOL_ID, Arrays.copyOf(wire.array(), 4));
+            verify(fixture.primaryTransport, never()).write(any());
+            TransportException failure = assertThrows(TransportException.class, () -> fixture.reply(fixture.secondary, request));
+            assertTrue(failure.getMessage().contains("Unencrypted final response"));
+            assertSame(failure, AbortTestConnection.transportFailure(response));
+            assertTrue(fixture.secondary.isClosed());
+        }
+    }
+
+    @Test
+    void forcedEncryptionCannotBypassSessionInvalidation() throws Exception {
+        try (Fixture fixture = new Fixture()) {
+            fixture.session.getSessionContext().setEncryptionKey(new SecretKeySpec(new byte[16], "AES"));
+            fixture.session.failChannels(new TransportException("uncertain write"));
+            assertThrows(TransportException.class, () -> fixture.session.send(fixture.echo(), true));
+            verify(fixture.primaryTransport, never()).write(any());
+            verify(fixture.secondaryTransport, never()).write(any());
+        }
+    }
+
+    @Test
+    void secondaryResponseUsesItsChannelSigningKey() throws Exception {
+        try (Fixture fixture = new Fixture()) {
+            byte[] keyBytes = new byte[16];
+            Arrays.fill(keyBytes, (byte) 7);
+            SecretKeySpec key = new SecretKeySpec(keyBytes, "AesCmac");
+            fixture.session.addChannel(fixture.secondary, key);
+            fixture.session.getSessionContext().setSigningRequired(true);
+            SMB2Echo request = fixture.echo();
+            Future<SMB2Packet> response = fixture.session.send(request, fixture.secondary);
+            SMB2Echo reply = fixture.echo();
+            reply.getHeader().setMessageId(request.getSequenceNumber());
+            reply.getHeader().setFlag(SMB2MessageFlag.SMB2_FLAGS_SERVER_TO_REDIR);
+            SMBBuffer wire = new SMBBuffer();
+            new PacketSignatory(SmbConfig.createDefaultConfig().getSecurityProvider()).sign(reply, key).write(wire);
+            fixture.secondary.handle(new SMB2PacketData(wire.getCompactData()));
+            assertEquals(request.getSequenceNumber(), response.get(1, TimeUnit.SECONDS).getSequenceNumber());
+        }
+    }
+
+    @Test
     void creditStarvationAndAbortOfOneSharedSessionChannelLeaveTheOtherUsable() throws Exception {
         try (Fixture fixture = new Fixture()) {
             fixture.primary.sequenceWindow.get(fixture.primary.sequenceWindow.available());
@@ -189,7 +241,10 @@ class ChannelRequestsTest {
             }
             when(primaryTransport.isConnected()).thenReturn(true);
             when(secondaryTransport.isConnected()).thenReturn(true);
-            session = new Session(primary, config, null, bus, null, new NoSignatory(), null);
+            PacketEncryptor encryptor = new PacketEncryptor(config.getSecurityProvider());
+            when(primary.getConnectionContext().getCipherId()).thenReturn(SMB3EncryptionCipher.AES_128_GCM);
+            encryptor.init(primary.getConnectionContext());
+            session = new Session(primary, config, null, bus, null, new NoSignatory(), encryptor);
             session.setSessionId(47);
             session.getSessionContext().setSigningKey(new SecretKeySpec(new byte[16], "AesCmac"));
             session.addChannel(secondary, new SecretKeySpec(new byte[16], "AesCmac"));

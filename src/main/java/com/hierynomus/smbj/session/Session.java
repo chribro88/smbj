@@ -381,6 +381,10 @@ public class Session implements AutoCloseable {
 
     // CUSTOM ADDED: CANCEL must use the connection that allocated its MessageId.
     public <T extends SMB2Packet> Future<T> send(SMB2Packet packet, Connection selected) throws TransportException {
+        return send(packet, selected, false);
+    }
+
+    private <T extends SMB2Packet> Future<T> send(SMB2Packet packet, Connection selected, boolean encrypt) throws TransportException {
         if (closed || channelsFailed.get()) {
             throw new TransportException("SMB session was invalidated after an uncertain write");
         }
@@ -396,7 +400,7 @@ public class Session implements AutoCloseable {
             throw new TransportException("Message signing is required, but no signing key is negotiated");
         }
 
-        if (shouldEncryptData()) {
+        if (encrypt || shouldEncryptData()) {
             return selected.send(encryptor.encrypt(packet, sessionContext.getEncryptionKey()));
         }
 
@@ -426,7 +430,7 @@ public class Session implements AutoCloseable {
             throw new TransportException("Message encryption is required, but no encryption key is negotiated");
         }
 
-        return connection.send(encryptor.encrypt(packet, encryptionKey));
+        return send(packet, selectChannel(), true);
     }
 
     public <T extends SMB2Packet> T processSendResponse(SMB2CreateRequest packet) throws TransportException {
