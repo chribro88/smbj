@@ -40,6 +40,18 @@ its own unsolicited or asynchronous messages.
    starts from its own native sequence and consumes collisions rather than
    reusing a burned original-key input.
 
+Collision probes are pipelined in batches of at most 32 per send call, bounded
+also by real available credits. When probes are pending and only one credit
+remains, the call flushes its batch before another allocation. A one-credit
+connection can still send one probe and wait for its response. Neither writes
+nor response waits hold the connection allocation lock. An accepted original-key MID/range is
+allocated atomically with its reservation before waiting; the target is registered
+and written only after every earlier probe has completed. Failure burns an
+allocated but unpublished target MID as well. Timeout, interruption and callback
+failure retire only that call's retained probes without granting synthetic
+credits or aborting unrelated requests. Transport failure/exhaustion retains the
+existing connection-wide failure behavior.
+
 Thus the initial prefix, R, A and later monotonic reservations are disjoint for
 K. A server binding continuation uses the request's unique MID and the prescribed
 server-direction bit; the final binding response uses the verified new channel
@@ -111,9 +123,12 @@ cost for an unbounded number of replacements. File traffic no longer drives that
 cost. The current 64-cycle operational probe checks 512 replacements and 64
 prepared failures per runtime across eight profiles, stable live ownership and
 collectability of all 73 retired connections per profile. Catch-up grows from
-five to 139 ECHOs per successful candidate. Longer-history limits and comparative
-performance remain unqualified; see
-[validation-churn-cleanup.json](validation-churn-cleanup.json).
+five to 139 ECHOs per successful candidate. Bounded pipelining improves measured
+64-cycle binding latency on Java 21 and Java 8 while preserving those counts;
+it does not bound total catch-up packets for a longer history. Longer-history
+limits, allocation/buffering profiles and comparative transfer throughput remain
+unqualified; see [validation-churn-cleanup.json](validation-churn-cleanup.json)
+and [validation-batched-probes.json](validation-batched-probes.json).
 
 The current native evidence uses Samba 4.23.10, NTLM and Kerberos with real
 16/32-byte GSS keys. Existing JCE wire checks independently verify tags and
@@ -142,3 +157,4 @@ profiles. Binding remains signed and unencrypted.
 - [Public multichannel CANCEL and CHANGE_NOTIFY](validation-public-cancellation.json)
 - [Pending-owner loss and encrypted cancellation](validation-encrypted-owner-loss.json)
 - [Churn resources and cached-error cleanup](validation-churn-cleanup.json)
+- [Bounded collision-probe pipelining](validation-batched-probes.json)

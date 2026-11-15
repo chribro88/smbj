@@ -21,6 +21,8 @@ import static java.lang.String.format;
 import java.io.Closeable;
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
@@ -74,6 +76,7 @@ import net.engio.mbassy.listener.Handler;
  * A connection to a server.
  */
 public class Connection extends Pooled<Connection> implements Closeable, PacketReceiver<SMBPacketData<?>> {
+    private static final int MAX_COLLISION_PROBES = 32;
     private static final Logger logger = LoggerFactory.getLogger(Connection.class);
     private static final DelegatingSMBMessageConverter converter = new DelegatingSMBMessageConverter(new SMB3EncryptedPacketFactory(), new SMB3CompressedPacketFactory(), new SMB2PacketFactory(), new SMB1PacketFactory());
     private IncomingPacketHandler packetHandlerChain;
@@ -426,78 +429,104 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
     }
 
     private <T extends SMB2Packet> Future<T> send(SMB2Packet packet, LongPredicate messageIdReservation) throws TransportException {
-        while (true) {
-            checkConnected();
-            Future<T> future = null;
-            Future<SMB2Echo> collisionResponse = null;
-            SMB2Packet wirePacket = packet;
-            if (!(packet.getPacket() instanceof SMB2Cancel)) {
-                // Need to lock around the sequence window calls to ensure no credits get stolen by another thread
-                try {
-                    lock.lock();
-                    try {
-                        checkConnected();
-                        int availableCredits = sequenceWindow.available();
-                        int grantCredits = calculateGrantedCredits(packet, availableCredits);
-                        if (availableCredits == 0) {
-                            logger.warn(
-                                "There are no credits left to send {}, will block until there are more credits available.",
-                                packet.getHeader().getMessage());
-                        }
-                        boolean collision = messageIdReservation != null && !messageIdReservation.test(sequenceWindow.nextMessageId());
-                        int allocatedCredits = collision ? 1 : grantCredits;
-                        long[] messageIds = sequenceWindow.get(allocatedCredits);
-                        packet.getHeader().setMessageId(messageIds[0]);
-                        packet.getHeader().setCreditRequest(Math.max(SequenceWindow.PREFERRED_MINIMUM_CREDITS - availableCredits - allocatedCredits,
-                                allocatedCredits));
-                        logger.debug("Granted {} (out of {}) credits to {}", allocatedCredits, availableCredits, packet);
-                        if (collision) {
-                            SMB2Echo echo = new SMB2Echo(connectionContext.getNegotiatedProtocol().getDialect());
-                            echo.getHeader().setMessageId(messageIds[0]);
-                            echo.getHeader().setCreditRequest(packet.getHeader().getCreditRequest());
-                            echo.setCreditsAssigned(1);
-                            wirePacket = echo;
-                        }
-                    } finally {
-                        lock.unlock();
-                    }
-                } catch (TransportException failure) {
-                    handleError(failure);
-                    throw failure;
-                }
-
-                Session requestSession = sessionTable.find(wirePacket.getHeader().getSessionId());
-                Request request = new Request(wirePacket, wirePacket.getHeader().getMessageId(), UUID.randomUUID(),
-                        requestSession != null && requestSession.isSigningRequired());
-                outstandingRequests.registerOutstanding(request);
-                if (wirePacket == packet) {
-                    future = request.getFuture(new CancelRequest(request, packet.getHeader().getSessionId()));
-                } else {
-                    collisionResponse = request.getFuture(new CancelRequest(request, 0));
-                }
-            }
-            try {
+        List<Request> collisionRequests = null;
+        try {
+            while (true) {
                 checkConnected();
-                transport.write(wirePacket);
-            } catch (TransportException | RuntimeException e) {
-                handleError(e);
-                throw e;
-            }
-            if (collisionResponse != null) {
-                try {
-                    Futures.get(collisionResponse, config.getTransactTimeout(), TimeUnit.MILLISECONDS, TransportException.Wrapper);
-                } catch (TransportException failure) {
-                    Request abandoned = outstandingRequests.remove(wirePacket.getHeader().getMessageId());
-                    if (abandoned != null) abandoned.getPromise().deliverError(failure);
-                    throw failure;
+                Future<T> future = null;
+                SMB2Packet wirePacket = packet;
+                boolean flushCollisions = false;
+                if (!(packet.getPacket() instanceof SMB2Cancel)) {
+                    // Need to lock around the sequence window calls to ensure no credits get stolen by another thread
+                    try {
+                        lock.lock();
+                        try {
+                            checkConnected();
+                            int availableCredits = sequenceWindow.available();
+                            if (collisionRequests != null && !collisionRequests.isEmpty() && availableCredits <= 1) {
+                                // Leave a credit for unrelated traffic when a borrowed connection has several probes in flight.
+                                flushCollisions = true;
+                            } else {
+                                int grantCredits = calculateGrantedCredits(packet, availableCredits);
+                                if (availableCredits == 0) {
+                                    logger.warn(
+                                        "There are no credits left to send {}, will block until there are more credits available.",
+                                        packet.getHeader().getMessage());
+                                }
+                                boolean collision = messageIdReservation != null && !messageIdReservation.test(sequenceWindow.nextMessageId());
+                                int allocatedCredits = collision ? 1 : grantCredits;
+                                long[] messageIds = sequenceWindow.get(allocatedCredits);
+                                packet.getHeader().setMessageId(messageIds[0]);
+                                packet.getHeader().setCreditRequest(Math.max(SequenceWindow.PREFERRED_MINIMUM_CREDITS - availableCredits - allocatedCredits,
+                                        allocatedCredits));
+                                logger.debug("Granted {} (out of {}) credits to {}", allocatedCredits, availableCredits, packet);
+                                if (collision) {
+                                    SMB2Echo echo = new SMB2Echo(connectionContext.getNegotiatedProtocol().getDialect());
+                                    echo.getHeader().setMessageId(messageIds[0]);
+                                    echo.getHeader().setCreditRequest(packet.getHeader().getCreditRequest());
+                                    echo.setCreditsAssigned(1);
+                                    wirePacket = echo;
+                                }
+                            }
+                        } finally {
+                            lock.unlock();
+                        }
+                    } catch (TransportException failure) {
+                        handleError(failure);
+                        throw failure;
+                    }
+
+                    if (flushCollisions) {
+                        awaitCollisionRequests(collisionRequests);
+                        continue;
+                    }
+                    if (wirePacket == packet && collisionRequests != null && !collisionRequests.isEmpty()) {
+                        // The accepted MID/range is already allocated; another sender cannot consume its reservation while we wait.
+                        awaitCollisionRequests(collisionRequests);
+                    }
+                    Session requestSession = sessionTable.find(wirePacket.getHeader().getSessionId());
+                    Request request = new Request(wirePacket, wirePacket.getHeader().getMessageId(), UUID.randomUUID(),
+                            requestSession != null && requestSession.isSigningRequired());
+                    outstandingRequests.registerOutstanding(request);
+                    if (wirePacket == packet) {
+                        future = request.getFuture(new CancelRequest(request, packet.getHeader().getSessionId()));
+                    } else {
+                        if (collisionRequests == null) collisionRequests = new ArrayList<>(MAX_COLLISION_PROBES);
+                        collisionRequests.add(request);
+                    }
                 }
-                continue;
+                try {
+                    checkConnected();
+                    transport.write(wirePacket);
+                } catch (TransportException | RuntimeException e) {
+                    handleError(e);
+                    throw e;
+                }
+                if (wirePacket != packet) {
+                    if (collisionRequests.size() >= MAX_COLLISION_PROBES) awaitCollisionRequests(collisionRequests);
+                    continue;
+                }
+                if (wirePacket.getHeader().getMessage() == SMB2MessageCommandCode.SMB2_WRITE) {
+                    writeRequests.incrementAndGet();
+                }
+                return future;
             }
-            if (wirePacket.getHeader().getMessage() == SMB2MessageCommandCode.SMB2_WRITE) {
-                writeRequests.incrementAndGet();
+        } catch (TransportException | RuntimeException | Error failure) {
+            if (collisionRequests != null) {
+                for (Request request : collisionRequests) {
+                    outstandingRequests.remove(request.getMessageId());
+                    request.getPromise().deliverError(failure);
+                }
             }
-            return future;
+            throw failure;
         }
+    }
+
+    private void awaitCollisionRequests(List<Request> requests) throws TransportException {
+        for (Request request : requests) {
+            Futures.get(request.getPromise().future(), config.getTransactTimeout(), TimeUnit.MILLISECONDS, TransportException.Wrapper);
+        }
+        requests.clear();
     }
 
     private void checkConnected() throws TransportException {

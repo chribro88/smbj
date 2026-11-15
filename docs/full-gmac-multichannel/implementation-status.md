@@ -411,6 +411,44 @@ Remaining work includes longer-history cost/resource qualification, sustained
 cancellation/stall variants, complete allocation/buffering measurements and the
 remaining authentication/notification policy cases. Windows remains deferred.
 
+### Bounded collision-probe pipelining
+
+Binding catch-up now sends up to 32 native unsigned ECHOs before waiting for
+their replies, subject to available credits. With probes pending and only one
+credit remaining, it waits before allocating another MID. Native allocation,
+one-credit probes and original-key reservations are unchanged. An accepted target
+MID/range is allocated with its reservation before waiting, then published only
+after every probe completes. Timeout, interruption or a reservation failure
+retires the call's pending probes and leaves unrelated requests intact. A target
+allocated before a failed wait remains burned. No network wait holds the
+allocation lock.
+
+Seven added regression cases cover bounded/out-of-order replies with another
+sender, low credits, an unpublished accepted reservation, interruption, callback
+RuntimeException/Error and exhaustion with a pending probe. The full `check`
+passes **941 tests in 105 suites**, zero failures/errors/skips, plus license and
+JaCoCo. The same 64-cycle native churn matrix passes on Java 21 and actual Java 8:
+**1,024 replacements and 128 injected prepared failures** in total, with every
+retired connection collected and descriptors returning to baseline. Java 8 also
+passes the existing 24 selected local runtime cases; the Mockito reservation
+tests run on Java 21.
+
+The changed JAR also passes 11 public NTLM binding cases, four public Kerberos
+cases and eight cancellation/owner-loss cases, making **31 native Java 21 cases**
+including churn. Separate wire audits independently verify **4,703 GMAC tags and
+844 GCM transforms** without observed distinct-message actual-key/nonce reuse
+in those inputs. All task-owned Samba/AD fixtures are removed after validation.
+All 511 production classes retain Java 8 bytecode compatibility.
+
+Compared with the preceding committed workload, median binding latency across
+the eight Java 21 profiles falls from **62–101 ms to 21–37 ms**; Java 8 falls from
+**60–102 ms to 23–34 ms**. The key/MID, payload, prepared-failure and collection
+counters match the baseline. These are sequential bounded runs on this host,
+not a general throughput benchmark. Packet count still grows from five to 139
+ECHOs per candidate, with 5,216 total per profile. Longer histories, transport
+buffer allocations and the remaining G0 lifetime variants stay open. See
+[validation-batched-probes.json](validation-batched-probes.json).
+
 ## Inputs and history
 
 - Branch: `feature/full-gmac-multichannel`.

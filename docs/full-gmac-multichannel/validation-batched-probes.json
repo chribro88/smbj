@@ -1,0 +1,655 @@
+{
+  "result": "PASS",
+  "scope": "Bounded native collision-probe pipelining; complete G0 and feature qualification remain open",
+  "recorded_at": "2026-11-15T06:51:14.775036+00:00",
+  "base_revision": "4c65a11ae8360078366cb11523bdadaeedf2725b",
+  "implemented": [
+    "At most 32 retained native one-credit probes per send call; flush before another allocation when pending probes leave only one credit.",
+    "Allocate accepted original-key MID/range atomically with reservation before awaiting probes; publish the target only after all probe responses complete.",
+    "Retire this call's probes on timeout/interruption/callback failure, preserve unrelated requests and burn an allocated but unpublished target. Existing transport/exhaustion abort behavior remains."
+  ],
+  "source_sha256": {
+    "src/main/java/com/hierynomus/smbj/connection/Connection.java": "ac5e23ff84a2f12ce73ac1ee5057da13d6aad54798e959fd3321afa80713d493",
+    "src/test/java/com/hierynomus/smbj/connection/ConnectionMessageIdReservationTest.java": "aec6c95672d98bd97da52ad8f34118aea7d0a72e0bf9960aa841a0c97b10f58e",
+    "src/it/java/com/hierynomus/smbj/MultichannelPerformanceIT.java": "52f4e453ffc6dcd1b733e4a21758e7b11994e39a80668ef187458d272b68cc0b"
+  },
+  "jar": {
+    "name": "smbj-0.15.1-feature-full-gmac-multichannel-SNAPSHOT.jar",
+    "sha256": "465614a58c93c58226588725802b708610b90773e45fb312a4a26e463e7a48a3",
+    "class_count": 511,
+    "class_major_version": 52
+  },
+  "local_check": {
+    "suites": 105,
+    "tests": 941,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "new_reservation_cases": 7,
+  "reservation_suite_cases": 15,
+  "native_java21_cases": 31,
+  "actual_java8_cases": {
+    "native_churn": 8,
+    "selected_local": 24,
+    "total": 32
+  },
+  "profiles": {
+    "churn21": {
+      "image": "dockurr/samba@sha256:2a0452a12b7a244a22f18d0f233101bb8d4952b5500ae263905e3b9dad3bf2ae",
+      "owner": "smbj-late-response-f05313b3-cd8d-46d5-b455-f5d4865f9fa7",
+      "config": "/workspace/smbj-worktrees/full-gmac-multichannel/docs/full-gmac-multichannel/research/smb-gmac-gcm.conf",
+      "config_sha256": "a92cdd46897f6bf16c0dba5e0e676dc0a58bf0082f20a6792e01d805c650595f",
+      "container_id": "8cbd0c14452721004aa7ace18f67ab364b99b50752f9d02607f9f7c7d9a20f83",
+      "port": 33192,
+      "version": "Version 4.23.10",
+      "image_id": "sha256:2a0452a12b7a244a22f18d0f233101bb8d4952b5500ae263905e3b9dad3bf2ae",
+      "suite": {
+        "name": "com.hierynomus.smbj.MultichannelPerformanceIT",
+        "tests": "8",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-15T06:42:06.876Z",
+        "hostname": "chribro-firefly",
+        "time": "36.333"
+      },
+      "profiles": [
+        "GMAC_CHURN_COMPLETE java=21.0.12.1 provider=BC transport=direct signing=AES_GMAC encrypt=false cipher=null cycles=64 preparedFailures=8 bindP50Nanos=31030421 bindP99Nanos=76715865 firstCollisionEchoes=5 lastCollisionEchoes=139 totalCollisionEchoes=5216 originalKeyInputs=138 freshChannelKeys=66 retiredCollected=73 descriptorsBefore=88 descriptorsAfter=88 heapBefore=20064944 heapAfter=20152376 threadsBefore=12 threadsAfter=13 elapsedNanos=5046257937 cpuNanos=9150000000 gcCollections=7 payloadBytes=16777216 processors=2 maxHeap=402653184",
+        "GMAC_CHURN_COMPLETE java=21.0.12.1 provider=default-JCE transport=direct signing=AES_GMAC encrypt=false cipher=null cycles=64 preparedFailures=8 bindP50Nanos=34113523 bindP99Nanos=77808320 firstCollisionEchoes=5 lastCollisionEchoes=139 totalCollisionEchoes=5216 originalKeyInputs=138 freshChannelKeys=66 retiredCollected=73 descriptorsBefore=88 descriptorsAfter=88 heapBefore=20570616 heapAfter=20611312 threadsBefore=12 threadsAfter=13 elapsedNanos=5049854311 cpuNanos=7850000000 gcCollections=9 payloadBytes=16777216 processors=2 maxHeap=402653184",
+        "GMAC_CHURN_COMPLETE java=21.0.12.1 provider=BC transport=async signing=AES_GMAC encrypt=false cipher=null cycles=64 preparedFailures=8 bindP50Nanos=36753205 bindP99Nanos=80941671 firstCollisionEchoes=5 lastCollisionEchoes=139 totalCollisionEchoes=5216 originalKeyInputs=138 freshChannelKeys=66 retiredCollected=73 descriptorsBefore=91 descriptorsAfter=91 heapBefore=20645656 heapAfter=20682824 threadsBefore=15 threadsAfter=17 elapsedNanos=4987158234 cpuNanos=7870000000 gcCollections=7 payloadBytes=16777216 processors=2 maxHeap=402653184",
+        "GMAC_CHURN_COMPLETE java=21.0.12.1 provider=default-JCE transport=async signing=AES_GMAC encrypt=false cipher=null cycles=64 preparedFailures=8 bindP50Nanos=22640145 bindP99Nanos=27183163 firstCollisionEchoes=5 lastCollisionEchoes=139 totalCollisionEchoes=5216 originalKeyInputs=138 freshChannelKeys=66 retiredCollected=73 descriptorsBefore=91 descriptorsAfter=91 heapBefore=20661208 heapAfter=20691440 threadsBefore=16 threadsAfter=17 elapsedNanos=2843879544 cpuNanos=3770000000 gcCollections=9 payloadBytes=16777216 processors=2 maxHeap=402653184",
+        "GMAC_CHURN_COMPLETE java=21.0.12.1 provider=BC transport=direct signing=AES_GMAC encrypt=true cipher=AES_128_GCM cycles=64 preparedFailures=8 bindP50Nanos=26200214 bindP99Nanos=83083796 firstCollisionEchoes=5 lastCollisionEchoes=139 totalCollisionEchoes=5216 originalKeyInputs=138 freshChannelKeys=66 retiredCollected=73 descriptorsBefore=91 descriptorsAfter=91 heapBefore=20702496 heapAfter=20729040 threadsBefore=18 threadsAfter=19 elapsedNanos=5238424455 cpuNanos=6770000000 gcCollections=11 payloadBytes=16777216 processors=2 maxHeap=402653184",
+        "GMAC_CHURN_COMPLETE java=21.0.12.1 provider=default-JCE transport=direct signing=AES_GMAC encrypt=true cipher=AES_128_GCM cycles=64 preparedFailures=8 bindP50Nanos=29706347 bindP99Nanos=69803228 firstCollisionEchoes=5 lastCollisionEchoes=139 totalCollisionEchoes=5216 originalKeyInputs=138 freshChannelKeys=66 retiredCollected=73 descriptorsBefore=91 descriptorsAfter=91 heapBefore=20706616 heapAfter=20733784 threadsBefore=18 threadsAfter=19 elapsedNanos=4155020099 cpuNanos=4130000000 gcCollections=10 payloadBytes=16777216 processors=2 maxHeap=402653184",
+        "GMAC_CHURN_COMPLETE java=21.0.12.1 provider=BC transport=async signing=AES_GMAC encrypt=true cipher=AES_128_GCM cycles=64 preparedFailures=8 bindP50Nanos=20787250 bindP99Nanos=28109903 firstCollisionEchoes=5 lastCollisionEchoes=139 totalCollisionEchoes=5216 originalKeyInputs=138 freshChannelKeys=66 retiredCollected=73 descriptorsBefore=91 descriptorsAfter=91 heapBefore=20684416 heapAfter=20709728 threadsBefore=16 threadsAfter=17 elapsedNanos=4573181880 cpuNanos=8620000000 gcCollections=12 payloadBytes=16777216 processors=2 maxHeap=402653184",
+        "GMAC_CHURN_COMPLETE java=21.0.12.1 provider=default-JCE transport=async signing=AES_GMAC encrypt=true cipher=AES_128_GCM cycles=64 preparedFailures=8 bindP50Nanos=26567105 bindP99Nanos=56855093 firstCollisionEchoes=5 lastCollisionEchoes=139 totalCollisionEchoes=5216 originalKeyInputs=138 freshChannelKeys=66 retiredCollected=73 descriptorsBefore=91 descriptorsAfter=91 heapBefore=20686688 heapAfter=20712136 threadsBefore=16 threadsAfter=17 elapsedNanos=3728286656 cpuNanos=3830000000 gcCollections=10 payloadBytes=16777216 processors=2 maxHeap=402653184"
+      ],
+      "removed": true,
+      "sample_count": 512,
+      "artifact_directory": "/tmp/smbj-gmac-batched-probes-4c65a11/churn21",
+      "resource_summary": {
+        "successful_replacements": 512,
+        "prepared_failures": 64,
+        "retired_connections_collected": 584,
+        "max_descriptor_delta": 0,
+        "max_thread_growth": 2
+      }
+    },
+    "churn8": {
+      "image": "dockurr/samba@sha256:2a0452a12b7a244a22f18d0f233101bb8d4952b5500ae263905e3b9dad3bf2ae",
+      "owner": "smbj-late-response-32b3d62e-13be-4923-a80d-b4d1a693ce80",
+      "config": "/workspace/smbj-worktrees/full-gmac-multichannel/docs/full-gmac-multichannel/research/smb-gmac-gcm.conf",
+      "config_sha256": "a92cdd46897f6bf16c0dba5e0e676dc0a58bf0082f20a6792e01d805c650595f",
+      "container_id": "eb93cddb63ce5796f41b92ed8c26177ca24041d83710f3586e1873156aa459aa",
+      "port": 33193,
+      "version": "Version 4.23.10",
+      "image_id": "sha256:2a0452a12b7a244a22f18d0f233101bb8d4952b5500ae263905e3b9dad3bf2ae",
+      "suite": {
+        "name": "com.hierynomus.smbj.MultichannelPerformanceIT",
+        "tests": "8",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-15T06:43:32.053Z",
+        "hostname": "chribro-firefly",
+        "time": "32.12"
+      },
+      "profiles": [
+        "GMAC_CHURN_COMPLETE java=1.8.0_512 provider=BC transport=direct signing=AES_GMAC encrypt=false cipher=null cycles=64 preparedFailures=8 bindP50Nanos=34152048 bindP99Nanos=67622589 firstCollisionEchoes=5 lastCollisionEchoes=139 totalCollisionEchoes=5216 originalKeyInputs=138 freshChannelKeys=66 retiredCollected=73 descriptorsBefore=72 descriptorsAfter=72 heapBefore=14086568 heapAfter=12079560 threadsBefore=10 threadsAfter=11 elapsedNanos=5394378987 cpuNanos=8140000000 gcCollections=11 payloadBytes=16777216 processors=2 maxHeap=358088704",
+        "GMAC_CHURN_COMPLETE java=1.8.0_512 provider=default-JCE transport=direct signing=AES_GMAC encrypt=false cipher=null cycles=64 preparedFailures=8 bindP50Nanos=32874947 bindP99Nanos=67495709 firstCollisionEchoes=5 lastCollisionEchoes=139 totalCollisionEchoes=5216 originalKeyInputs=138 freshChannelKeys=66 retiredCollected=73 descriptorsBefore=74 descriptorsAfter=74 heapBefore=12040576 heapAfter=12354448 threadsBefore=10 threadsAfter=11 elapsedNanos=5145619635 cpuNanos=7290000000 gcCollections=7 payloadBytes=16777216 processors=2 maxHeap=358088704",
+        "GMAC_CHURN_COMPLETE java=1.8.0_512 provider=BC transport=async signing=AES_GMAC encrypt=false cipher=null cycles=64 preparedFailures=8 bindP50Nanos=23468155 bindP99Nanos=33594513 firstCollisionEchoes=5 lastCollisionEchoes=139 totalCollisionEchoes=5216 originalKeyInputs=138 freshChannelKeys=66 retiredCollected=73 descriptorsBefore=77 descriptorsAfter=77 heapBefore=12099280 heapAfter=12175536 threadsBefore=13 threadsAfter=15 elapsedNanos=3027606059 cpuNanos=4490000000 gcCollections=6 payloadBytes=16777216 processors=2 maxHeap=358088704",
+        "GMAC_CHURN_COMPLETE java=1.8.0_512 provider=default-JCE transport=async signing=AES_GMAC encrypt=false cipher=null cycles=64 preparedFailures=8 bindP50Nanos=27575615 bindP99Nanos=54574072 firstCollisionEchoes=5 lastCollisionEchoes=139 totalCollisionEchoes=5216 originalKeyInputs=138 freshChannelKeys=66 retiredCollected=73 descriptorsBefore=77 descriptorsAfter=77 heapBefore=11921040 heapAfter=12041016 threadsBefore=14 threadsAfter=15 elapsedNanos=3952081952 cpuNanos=4420000000 gcCollections=6 payloadBytes=16777216 processors=2 maxHeap=358088704",
+        "GMAC_CHURN_COMPLETE java=1.8.0_512 provider=BC transport=direct signing=AES_GMAC encrypt=true cipher=AES_128_GCM cycles=64 preparedFailures=8 bindP50Nanos=28021716 bindP99Nanos=69314335 firstCollisionEchoes=5 lastCollisionEchoes=139 totalCollisionEchoes=5216 originalKeyInputs=138 freshChannelKeys=66 retiredCollected=73 descriptorsBefore=77 descriptorsAfter=77 heapBefore=11844040 heapAfter=11996792 threadsBefore=16 threadsAfter=17 elapsedNanos=4259526839 cpuNanos=4200000000 gcCollections=7 payloadBytes=16777216 processors=2 maxHeap=358088704",
+        "GMAC_CHURN_COMPLETE java=1.8.0_512 provider=default-JCE transport=direct signing=AES_GMAC encrypt=true cipher=AES_128_GCM cycles=64 preparedFailures=8 bindP50Nanos=25748980 bindP99Nanos=38993847 firstCollisionEchoes=5 lastCollisionEchoes=139 totalCollisionEchoes=5216 originalKeyInputs=138 freshChannelKeys=66 retiredCollected=73 descriptorsBefore=77 descriptorsAfter=77 heapBefore=11843824 heapAfter=11977248 threadsBefore=16 threadsAfter=17 elapsedNanos=3342706956 cpuNanos=3810000000 gcCollections=7 payloadBytes=16777216 processors=2 maxHeap=358088704",
+        "GMAC_CHURN_COMPLETE java=1.8.0_512 provider=BC transport=async signing=AES_GMAC encrypt=true cipher=AES_128_GCM cycles=64 preparedFailures=8 bindP50Nanos=22981647 bindP99Nanos=38190845 firstCollisionEchoes=5 lastCollisionEchoes=139 totalCollisionEchoes=5216 originalKeyInputs=138 freshChannelKeys=66 retiredCollected=73 descriptorsBefore=77 descriptorsAfter=77 heapBefore=11828056 heapAfter=11968104 threadsBefore=14 threadsAfter=15 elapsedNanos=3191179344 cpuNanos=3970000000 gcCollections=7 payloadBytes=16777216 processors=2 maxHeap=358088704",
+        "GMAC_CHURN_COMPLETE java=1.8.0_512 provider=default-JCE transport=async signing=AES_GMAC encrypt=true cipher=AES_128_GCM cycles=64 preparedFailures=8 bindP50Nanos=27054445 bindP99Nanos=56367885 firstCollisionEchoes=5 lastCollisionEchoes=139 totalCollisionEchoes=5216 originalKeyInputs=138 freshChannelKeys=66 retiredCollected=73 descriptorsBefore=77 descriptorsAfter=77 heapBefore=11827560 heapAfter=11964992 threadsBefore=14 threadsAfter=15 elapsedNanos=3583530406 cpuNanos=3830000000 gcCollections=7 payloadBytes=16777216 processors=2 maxHeap=358088704"
+      ],
+      "java8_local_suites": [
+        {
+          "name": "com.hierynomus.protocol.commons.concurrent.PromiseBackedFutureTest",
+          "tests": "5",
+          "skipped": "0",
+          "failures": "0",
+          "errors": "0",
+          "timestamp": "2026-11-15T06:43:31.788Z",
+          "hostname": "chribro-firefly",
+          "time": "0.167"
+        },
+        {
+          "name": "com.hierynomus.smbj.connection.RequestCancellationTest",
+          "tests": "9",
+          "skipped": "0",
+          "failures": "0",
+          "errors": "0",
+          "timestamp": "2026-11-15T06:44:04.189Z",
+          "hostname": "chribro-firefly",
+          "time": "0.057"
+        },
+        {
+          "name": "com.hierynomus.smbj.connection.PacketSignatoryTest",
+          "tests": "2",
+          "skipped": "0",
+          "failures": "0",
+          "errors": "0",
+          "timestamp": "2026-11-15T06:44:04.180Z",
+          "hostname": "chribro-firefly",
+          "time": "0.006"
+        },
+        {
+          "name": "com.hierynomus.smbj.connection.SequenceWindowExhaustionTest",
+          "tests": "8",
+          "skipped": "0",
+          "failures": "0",
+          "errors": "0",
+          "timestamp": "2026-11-15T06:44:04.253Z",
+          "hostname": "chribro-firefly",
+          "time": "0.034"
+        }
+      ],
+      "java8_home": "/tmp/smbj-java8-runtime/openjdk",
+      "removed": true,
+      "sample_count": 512,
+      "artifact_directory": "/tmp/smbj-gmac-batched-probes-4c65a11/churn8",
+      "resource_summary": {
+        "successful_replacements": 512,
+        "prepared_failures": 64,
+        "retired_connections_collected": 584,
+        "max_descriptor_delta": 0,
+        "max_thread_growth": 2
+      }
+    },
+    "public_ntlm": {
+      "image": "dockurr/samba@sha256:2a0452a12b7a244a22f18d0f233101bb8d4952b5500ae263905e3b9dad3bf2ae",
+      "owner": "smbj-late-response-231504cd-7d9f-4d6b-9911-f0160dc1666a",
+      "config": "/workspace/smbj-worktrees/full-gmac-multichannel/docs/full-gmac-multichannel/research/smb-gmac-gcm.conf",
+      "config_sha256": "a92cdd46897f6bf16c0dba5e0e676dc0a58bf0082f20a6792e01d805c650595f",
+      "container_id": "d1c451f2e8038e61e940cfe2520d599f8fb29d6943aba3b4ecc01473c1ea62e7",
+      "port": 33194,
+      "version": "Version 4.23.10",
+      "image_id": "sha256:2a0452a12b7a244a22f18d0f233101bb8d4952b5500ae263905e3b9dad3bf2ae",
+      "suite": {
+        "name": "com.hierynomus.smbj.connection.PublicGmacBindingIT",
+        "tests": "11",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-15T06:44:55.472Z",
+        "hostname": "chribro-firefly",
+        "time": "61.511"
+      },
+      "profiles": [
+        "PUBLIC_GMAC_COMPLETE run=bootstrap-final-signature-failure signing=AES_GMAC cleanupLogoff=true privateRootClosed=true callerPreserved=true retry=true java=21.0.12.1",
+        "PUBLIC_GMAC_COMPLETE run=bootstrap-final-lost-failure signing=AES_GMAC cleanupLogoff=true privateRootClosed=true callerPreserved=true retry=true java=21.0.12.1",
+        "PUBLIC_GMAC_COMPLETE run=bootstrap-final-lost-root-failure signing=AES_GMAC cleanupLogoff=true privateRootClosed=true callerPreserved=true retry=true java=21.0.12.1",
+        "PUBLIC_GMAC_COMPLETE run=bootstrap-final-lost-root-cleanup-failure-failure signing=AES_GMAC cleanupLogoff=false privateRootClosed=true callerPreserved=true retry=true java=21.0.12.1",
+        "PUBLIC_GMAC_COMPLETE run=bootstrap-final-lost-root-auth-failure-failure signing=AES_GMAC cleanupLogoff=false privateRootClosed=true callerPreserved=true retry=true java=21.0.12.1",
+        "PUBLIC_GMAC_COMPLETE run=bootstrap-final-lost-root-bind-failure-failure signing=AES_GMAC cleanupLogoff=false privateRootClosed=true callerPreserved=true retry=true java=21.0.12.1",
+        "PUBLIC_GMAC_COMPLETE run=client-close-before-publication signing=AES_GMAC latePublication=false borrowedPreserved=true candidateTablesEmpty=true java=21.0.12.1",
+        "PUBLIC_GMAC_COMPLETE run=client-close-before-final signing=AES_GMAC latePublication=false borrowedPreserved=true candidateTablesEmpty=true java=21.0.12.1",
+        "PUBLIC_GMAC_COMPLETE run=owned signing=AES_GMAC replacement=true concurrentBindings=2 borrowedPreserved=false priorTraffic=0 applicationTraffic=0 collisionEchoes=16 java=21.0.12.1",
+        "PUBLIC_GMAC_COMPLETE run=borrowed signing=AES_GMAC replacement=true concurrentBindings=2 borrowedPreserved=true priorTraffic=1024 applicationTraffic=1024 collisionEchoes=14 java=21.0.12.1",
+        "PUBLIC_GMAC_COMPLETE run=auxiliary-auth-failure signing=AES_GMAC failedCandidatePublished=false borrowedPreserved=true retry=true java=21.0.12.1"
+      ],
+      "removed": true,
+      "sample_count": 0,
+      "artifact_directory": "/tmp/smbj-gmac-batched-probes-4c65a11/public_ntlm",
+      "wire_audits": [
+        "AUXWIRE_COMPLETE run=public-owned replacements=1 observedEvents=140 independentlyVerified=81 preparedOnly=0 operationalSignedMessages=56 actualKeyDomains=9 distinctMessageNonceReuses=0 transcriptFingerprint=1e14bbb48ee35b7a3f1208b8fcc1c603f61514fc633dd452325411ffb4028358",
+        "AUXWIRE_COMPLETE run=public-borrowed replacements=1 observedEvents=4294 independentlyVerified=4218 preparedOnly=0 operationalSignedMessages=2117 actualKeyDomains=17 distinctMessageNonceReuses=0 transcriptFingerprint=2501d4508046b35af11a547ca85ea372dc127e68df94e630ec2ec8d222483803"
+      ],
+      "independently_verified_gmac_tags": 4299
+    },
+    "public_kerberos": {
+      "image": "smbj/kerberos-dc:e097023",
+      "image_id": "sha256:9501aa40203bf661632ee44df2bf2a2b1642dd62c6a77f062e9780dc8a23ade9",
+      "command": [
+        "./gradlew",
+        "--offline",
+        "--no-daemon",
+        "--max-workers=1",
+        "-Dorg.gradle.jvmargs=-Xmx192m -XX:ActiveProcessorCount=2",
+        "--init-script",
+        "/workspace/smbj-worktrees/full-gmac-multichannel/docs/full-gmac-multichannel/research/kerberos-native/test-limits.gradle",
+        "integrationTest",
+        "--tests",
+        "*PublicGmacKerberosIT",
+        "-x",
+        "buildSambaImage",
+        "licenseIntegrationTest"
+      ],
+      "result": "PASS",
+      "returncode": 0,
+      "suite": {
+        "name": "com.hierynomus.smbj.connection.PublicGmacKerberosIT",
+        "tests": "4",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-15T06:47:05.243Z",
+        "hostname": "chribro-firefly",
+        "time": "79.546"
+      },
+      "profiles": [
+        "PUBLIC_KRB_COMPLETE mode=public-16-false rawKeyBytes=16 borrowed=false id=5a13fd85eef76b5c5de164acc489afc232fff4ab59567fb0b25c2975b5d6f60e image=sha256:9501aa40203bf661632ee44df2bf2a2b1642dd62c6a77f062e9780dc8a23ade9 removed=true java=21.0.12.1",
+        "PUBLIC_KRB_COMPLETE mode=public-16-true rawKeyBytes=16 borrowed=true id=22a601201f767e81b103f77f44d51570fc45818ed152db594e20ee2a79a7534a image=sha256:9501aa40203bf661632ee44df2bf2a2b1642dd62c6a77f062e9780dc8a23ade9 removed=true java=21.0.12.1",
+        "PUBLIC_KRB_COMPLETE mode=public-32-false rawKeyBytes=32 borrowed=false id=8e85f4babc3407557cb1845cc8d41ec118997dada3aca52ef94a366f30072f5b image=sha256:9501aa40203bf661632ee44df2bf2a2b1642dd62c6a77f062e9780dc8a23ade9 removed=true java=21.0.12.1",
+        "PUBLIC_KRB_COMPLETE mode=public-32-true rawKeyBytes=32 borrowed=true id=1556f0cd1cc4324fc57221b30607509bd8b5bf4d25c075421c2b60ae5ce095a5 image=sha256:9501aa40203bf661632ee44df2bf2a2b1642dd62c6a77f062e9780dc8a23ade9 removed=true java=21.0.12.1"
+      ],
+      "contexts": [
+        "KERBEROS_CONTEXTS mode=public-16-false established=9 rawKeyBytes=16 kerberos=true disposed=6",
+        "KERBEROS_CONTEXTS mode=public-16-true established=12 rawKeyBytes=16 kerberos=true disposed=6",
+        "KERBEROS_CONTEXTS mode=public-32-false established=9 rawKeyBytes=32 kerberos=true disposed=6",
+        "KERBEROS_CONTEXTS mode=public-32-true established=12 rawKeyBytes=32 kerberos=true disposed=6"
+      ],
+      "audits": [
+        "AUXWIRE_COMPLETE run=public-kerberos-16-false replacements=1 observedEvents=106 independentlyVerified=71 preparedOnly=0 operationalSignedMessages=54 actualKeyDomains=9 distinctMessageNonceReuses=0 transcriptFingerprint=ea0a7f9c9c42b0da0963b045b399600fe22993df2803b363155a20c454599dbc",
+        "AUXWIRE_COMPLETE run=public-kerberos-16-true replacements=1 observedEvents=114 independentlyVerified=81 preparedOnly=0 operationalSignedMessages=54 actualKeyDomains=12 distinctMessageNonceReuses=0 transcriptFingerprint=c1dd5495daf642d5e79a8bb03eb376c7bd003835363717f7051b2570c08676da",
+        "AUXWIRE_COMPLETE run=public-kerberos-32-false replacements=1 observedEvents=106 independentlyVerified=71 preparedOnly=0 operationalSignedMessages=54 actualKeyDomains=9 distinctMessageNonceReuses=0 transcriptFingerprint=d9a82eb8e89aff010c6c5b0f9bb032af24f514abab4041729857da7df3ba8924",
+        "AUXWIRE_COMPLETE run=public-kerberos-32-true replacements=1 observedEvents=114 independentlyVerified=81 preparedOnly=0 operationalSignedMessages=54 actualKeyDomains=12 distinctMessageNonceReuses=0 transcriptFingerprint=b3747682783ced20c328cf0c815f548e97d6da7d0f0db1da107909863201f890"
+      ],
+      "containers": [
+        {
+          "id": "5a13fd85eef76b5c5de164acc489afc232fff4ab59567fb0b25c2975b5d6f60e",
+          "removed": true
+        },
+        {
+          "id": "22a601201f767e81b103f77f44d51570fc45818ed152db594e20ee2a79a7534a",
+          "removed": true
+        },
+        {
+          "id": "8e85f4babc3407557cb1845cc8d41ec118997dada3aca52ef94a366f30072f5b",
+          "removed": true
+        },
+        {
+          "id": "1556f0cd1cc4324fc57221b30607509bd8b5bf4d25c075421c2b60ae5ce095a5",
+          "removed": true
+        }
+      ],
+      "sample_count": 0,
+      "artifact_directory": "/tmp/smbj-gmac-batched-probes-4c65a11/public_kerberos",
+      "wire_audits": [
+        "AUXWIRE_COMPLETE run=public-kerberos-16-false replacements=1 observedEvents=106 independentlyVerified=71 preparedOnly=0 operationalSignedMessages=54 actualKeyDomains=9 distinctMessageNonceReuses=0 transcriptFingerprint=ea0a7f9c9c42b0da0963b045b399600fe22993df2803b363155a20c454599dbc",
+        "AUXWIRE_COMPLETE run=public-kerberos-16-true replacements=1 observedEvents=114 independentlyVerified=81 preparedOnly=0 operationalSignedMessages=54 actualKeyDomains=12 distinctMessageNonceReuses=0 transcriptFingerprint=c1dd5495daf642d5e79a8bb03eb376c7bd003835363717f7051b2570c08676da",
+        "AUXWIRE_COMPLETE run=public-kerberos-32-false replacements=1 observedEvents=106 independentlyVerified=71 preparedOnly=0 operationalSignedMessages=54 actualKeyDomains=9 distinctMessageNonceReuses=0 transcriptFingerprint=d9a82eb8e89aff010c6c5b0f9bb032af24f514abab4041729857da7df3ba8924",
+        "AUXWIRE_COMPLETE run=public-kerberos-32-true replacements=1 observedEvents=114 independentlyVerified=81 preparedOnly=0 operationalSignedMessages=54 actualKeyDomains=12 distinctMessageNonceReuses=0 transcriptFingerprint=b3747682783ced20c328cf0c815f548e97d6da7d0f0db1da107909863201f890"
+      ],
+      "independently_verified_gmac_tags": 304
+    },
+    "cancellation": {
+      "image": "dockurr/samba@sha256:2a0452a12b7a244a22f18d0f233101bb8d4952b5500ae263905e3b9dad3bf2ae",
+      "owner": "smbj-late-response-915c38a0-705b-43d2-af78-109ea205613e",
+      "config": "/workspace/smbj-worktrees/full-gmac-multichannel/docs/full-gmac-multichannel/research/smb-gmac-gcm.conf",
+      "config_sha256": "a92cdd46897f6bf16c0dba5e0e676dc0a58bf0082f20a6792e01d805c650595f",
+      "container_id": "29e151018bcfe30f065d4efc072533d35195ee850f3b89bbf6afca0d095eb37a",
+      "port": 33204,
+      "version": "Version 4.23.10",
+      "image_id": "sha256:2a0452a12b7a244a22f18d0f233101bb8d4952b5500ae263905e3b9dad3bf2ae",
+      "suite": {
+        "name": "com.hierynomus.smbj.connection.GmacAsyncCancellationIT",
+        "tests": "8",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-15T06:49:08.137Z",
+        "hostname": "chribro-firefly",
+        "time": "7.012"
+      },
+      "profiles": [
+        "GMAC_ASYNC java=21.0.12.1 provider=BC transport=direct signing=AES_GMAC encrypt=false cipher=null channels=2 replacements=2 ownerLosses=1 pending=10 cancels=6 syncCancels=2 asyncCancels=4 cancelledFinals=6 successFinals=3 verifiedTags=25 verifiedGcmTransforms=0 encryptedOperationFrames=0 nonceReuses=0",
+        "GMAC_ASYNC java=21.0.12.1 provider=default-JCE transport=direct signing=AES_GMAC encrypt=false cipher=null channels=2 replacements=2 ownerLosses=1 pending=10 cancels=6 syncCancels=2 asyncCancels=4 cancelledFinals=6 successFinals=3 verifiedTags=25 verifiedGcmTransforms=0 encryptedOperationFrames=0 nonceReuses=0",
+        "GMAC_ASYNC java=21.0.12.1 provider=BC transport=async signing=AES_GMAC encrypt=false cipher=null channels=2 replacements=2 ownerLosses=1 pending=10 cancels=6 syncCancels=2 asyncCancels=4 cancelledFinals=6 successFinals=3 verifiedTags=25 verifiedGcmTransforms=0 encryptedOperationFrames=0 nonceReuses=0",
+        "GMAC_ASYNC java=21.0.12.1 provider=default-JCE transport=async signing=AES_GMAC encrypt=false cipher=null channels=2 replacements=2 ownerLosses=1 pending=10 cancels=6 syncCancels=2 asyncCancels=4 cancelledFinals=6 successFinals=3 verifiedTags=25 verifiedGcmTransforms=0 encryptedOperationFrames=0 nonceReuses=0",
+        "GMAC_ASYNC java=21.0.12.1 provider=BC transport=direct signing=AES_GMAC encrypt=true cipher=AES_128_GCM channels=2 replacements=2 ownerLosses=1 pending=10 cancels=6 syncCancels=2 asyncCancels=4 cancelledFinals=6 successFinals=3 verifiedTags=0 verifiedGcmTransforms=211 encryptedOperationFrames=35 nonceReuses=0",
+        "GMAC_ASYNC java=21.0.12.1 provider=default-JCE transport=direct signing=AES_GMAC encrypt=true cipher=AES_128_GCM channels=2 replacements=2 ownerLosses=1 pending=10 cancels=6 syncCancels=2 asyncCancels=4 cancelledFinals=6 successFinals=3 verifiedTags=0 verifiedGcmTransforms=211 encryptedOperationFrames=35 nonceReuses=0",
+        "GMAC_ASYNC java=21.0.12.1 provider=BC transport=async signing=AES_GMAC encrypt=true cipher=AES_128_GCM channels=2 replacements=2 ownerLosses=1 pending=10 cancels=6 syncCancels=2 asyncCancels=4 cancelledFinals=6 successFinals=3 verifiedTags=0 verifiedGcmTransforms=211 encryptedOperationFrames=35 nonceReuses=0",
+        "GMAC_ASYNC java=21.0.12.1 provider=default-JCE transport=async signing=AES_GMAC encrypt=true cipher=AES_128_GCM channels=2 replacements=2 ownerLosses=1 pending=10 cancels=6 syncCancels=2 asyncCancels=4 cancelledFinals=6 successFinals=3 verifiedTags=0 verifiedGcmTransforms=211 encryptedOperationFrames=35 nonceReuses=0"
+      ],
+      "removed": true,
+      "sample_count": 0,
+      "artifact_directory": "/tmp/smbj-gmac-batched-probes-4c65a11/cancellation",
+      "independently_verified_gmac_tags": 100,
+      "independently_verified_gcm_transforms": 844
+    }
+  },
+  "comparison": {
+    "baseline_record": "validation-churn-cleanup.json",
+    "baseline_revision": "4c65a11",
+    "conditions": "Sequential bounded runs on the same host with identical fixtures/workload; not a statistical/general throughput claim.",
+    "matched_workload_counters": [
+      "provider",
+      "transport",
+      "encrypt",
+      "cycles",
+      "preparedFailures",
+      "totalCollisionEchoes",
+      "originalKeyInputs",
+      "freshChannelKeys",
+      "retiredCollected",
+      "payloadBytes"
+    ],
+    "profiles": {
+      "churn21": [
+        {
+          "provider": "BC",
+          "transport": "direct",
+          "encrypt": false,
+          "before": {
+            "bindP50Nanos": 101474469,
+            "bindP99Nanos": 261422462,
+            "elapsedNanos": 10299115690,
+            "cpuNanos": 11600000000,
+            "gcCollections": 7
+          },
+          "after": {
+            "bindP50Nanos": 31030421,
+            "bindP99Nanos": 76715865,
+            "elapsedNanos": 5046257937,
+            "cpuNanos": 9150000000,
+            "gcCollections": 7
+          }
+        },
+        {
+          "provider": "default-JCE",
+          "transport": "direct",
+          "encrypt": false,
+          "before": {
+            "bindP50Nanos": 62034929,
+            "bindP99Nanos": 141655721,
+            "elapsedNanos": 6691669516,
+            "cpuNanos": 6440000000,
+            "gcCollections": 8
+          },
+          "after": {
+            "bindP50Nanos": 34113523,
+            "bindP99Nanos": 77808320,
+            "elapsedNanos": 5049854311,
+            "cpuNanos": 7850000000,
+            "gcCollections": 9
+          }
+        },
+        {
+          "provider": "BC",
+          "transport": "async",
+          "encrypt": false,
+          "before": {
+            "bindP50Nanos": 101387421,
+            "bindP99Nanos": 180639940,
+            "elapsedNanos": 8740876826,
+            "cpuNanos": 11500000000,
+            "gcCollections": 7
+          },
+          "after": {
+            "bindP50Nanos": 36753205,
+            "bindP99Nanos": 80941671,
+            "elapsedNanos": 4987158234,
+            "cpuNanos": 7870000000,
+            "gcCollections": 7
+          }
+        },
+        {
+          "provider": "default-JCE",
+          "transport": "async",
+          "encrypt": false,
+          "before": {
+            "bindP50Nanos": 76626232,
+            "bindP99Nanos": 215754454,
+            "elapsedNanos": 7107155158,
+            "cpuNanos": 5690000000,
+            "gcCollections": 9
+          },
+          "after": {
+            "bindP50Nanos": 22640145,
+            "bindP99Nanos": 27183163,
+            "elapsedNanos": 2843879544,
+            "cpuNanos": 3770000000,
+            "gcCollections": 9
+          }
+        },
+        {
+          "provider": "BC",
+          "transport": "direct",
+          "encrypt": true,
+          "before": {
+            "bindP50Nanos": 62254804,
+            "bindP99Nanos": 101935087,
+            "elapsedNanos": 7575025253,
+            "cpuNanos": 6690000000,
+            "gcCollections": 11
+          },
+          "after": {
+            "bindP50Nanos": 26200214,
+            "bindP99Nanos": 83083796,
+            "elapsedNanos": 5238424455,
+            "cpuNanos": 6770000000,
+            "gcCollections": 11
+          }
+        },
+        {
+          "provider": "default-JCE",
+          "transport": "direct",
+          "encrypt": true,
+          "before": {
+            "bindP50Nanos": 74870241,
+            "bindP99Nanos": 123907790,
+            "elapsedNanos": 6472227483,
+            "cpuNanos": 4370000000,
+            "gcCollections": 10
+          },
+          "after": {
+            "bindP50Nanos": 29706347,
+            "bindP99Nanos": 69803228,
+            "elapsedNanos": 4155020099,
+            "cpuNanos": 4130000000,
+            "gcCollections": 10
+          }
+        },
+        {
+          "provider": "BC",
+          "transport": "async",
+          "encrypt": true,
+          "before": {
+            "bindP50Nanos": 72729203,
+            "bindP99Nanos": 118989073,
+            "elapsedNanos": 8040245011,
+            "cpuNanos": 9510000000,
+            "gcCollections": 12
+          },
+          "after": {
+            "bindP50Nanos": 20787250,
+            "bindP99Nanos": 28109903,
+            "elapsedNanos": 4573181880,
+            "cpuNanos": 8620000000,
+            "gcCollections": 12
+          }
+        },
+        {
+          "provider": "default-JCE",
+          "transport": "async",
+          "encrypt": true,
+          "before": {
+            "bindP50Nanos": 83446631,
+            "bindP99Nanos": 229562817,
+            "elapsedNanos": 7260469578,
+            "cpuNanos": 5070000000,
+            "gcCollections": 10
+          },
+          "after": {
+            "bindP50Nanos": 26567105,
+            "bindP99Nanos": 56855093,
+            "elapsedNanos": 3728286656,
+            "cpuNanos": 3830000000,
+            "gcCollections": 10
+          }
+        }
+      ],
+      "churn8": [
+        {
+          "provider": "BC",
+          "transport": "direct",
+          "encrypt": false,
+          "before": {
+            "bindP50Nanos": 99447854,
+            "bindP99Nanos": 172195755,
+            "elapsedNanos": 9359365803,
+            "cpuNanos": 9540000000,
+            "gcCollections": 9
+          },
+          "after": {
+            "bindP50Nanos": 34152048,
+            "bindP99Nanos": 67622589,
+            "elapsedNanos": 5394378987,
+            "cpuNanos": 8140000000,
+            "gcCollections": 11
+          }
+        },
+        {
+          "provider": "default-JCE",
+          "transport": "direct",
+          "encrypt": false,
+          "before": {
+            "bindP50Nanos": 61812326,
+            "bindP99Nanos": 122580647,
+            "elapsedNanos": 6791121454,
+            "cpuNanos": 6370000000,
+            "gcCollections": 6
+          },
+          "after": {
+            "bindP50Nanos": 32874947,
+            "bindP99Nanos": 67495709,
+            "elapsedNanos": 5145619635,
+            "cpuNanos": 7290000000,
+            "gcCollections": 7
+          }
+        },
+        {
+          "provider": "BC",
+          "transport": "async",
+          "encrypt": false,
+          "before": {
+            "bindP50Nanos": 101715245,
+            "bindP99Nanos": 187925135,
+            "elapsedNanos": 8297202792,
+            "cpuNanos": 8800000000,
+            "gcCollections": 6
+          },
+          "after": {
+            "bindP50Nanos": 23468155,
+            "bindP99Nanos": 33594513,
+            "elapsedNanos": 3027606059,
+            "cpuNanos": 4490000000,
+            "gcCollections": 6
+          }
+        },
+        {
+          "provider": "default-JCE",
+          "transport": "async",
+          "encrypt": false,
+          "before": {
+            "bindP50Nanos": 62439665,
+            "bindP99Nanos": 189110256,
+            "elapsedNanos": 6694100189,
+            "cpuNanos": 4920000000,
+            "gcCollections": 6
+          },
+          "after": {
+            "bindP50Nanos": 27575615,
+            "bindP99Nanos": 54574072,
+            "elapsedNanos": 3952081952,
+            "cpuNanos": 4420000000,
+            "gcCollections": 6
+          }
+        },
+        {
+          "provider": "BC",
+          "transport": "direct",
+          "encrypt": true,
+          "before": {
+            "bindP50Nanos": 75001747,
+            "bindP99Nanos": 167178712,
+            "elapsedNanos": 7403016557,
+            "cpuNanos": 5450000000,
+            "gcCollections": 7
+          },
+          "after": {
+            "bindP50Nanos": 28021716,
+            "bindP99Nanos": 69314335,
+            "elapsedNanos": 4259526839,
+            "cpuNanos": 4200000000,
+            "gcCollections": 7
+          }
+        },
+        {
+          "provider": "default-JCE",
+          "transport": "direct",
+          "encrypt": true,
+          "before": {
+            "bindP50Nanos": 59965948,
+            "bindP99Nanos": 172126309,
+            "elapsedNanos": 6501377930,
+            "cpuNanos": 4050000000,
+            "gcCollections": 7
+          },
+          "after": {
+            "bindP50Nanos": 25748980,
+            "bindP99Nanos": 38993847,
+            "elapsedNanos": 3342706956,
+            "cpuNanos": 3810000000,
+            "gcCollections": 7
+          }
+        },
+        {
+          "provider": "BC",
+          "transport": "async",
+          "encrypt": true,
+          "before": {
+            "bindP50Nanos": 82580727,
+            "bindP99Nanos": 140985335,
+            "elapsedNanos": 7453117008,
+            "cpuNanos": 6110000000,
+            "gcCollections": 7
+          },
+          "after": {
+            "bindP50Nanos": 22981647,
+            "bindP99Nanos": 38190845,
+            "elapsedNanos": 3191179344,
+            "cpuNanos": 3970000000,
+            "gcCollections": 7
+          }
+        },
+        {
+          "provider": "default-JCE",
+          "transport": "async",
+          "encrypt": true,
+          "before": {
+            "bindP50Nanos": 81949393,
+            "bindP99Nanos": 223537055,
+            "elapsedNanos": 7473986311,
+            "cpuNanos": 5420000000,
+            "gcCollections": 7
+          },
+          "after": {
+            "bindP50Nanos": 27054445,
+            "bindP99Nanos": 56367885,
+            "elapsedNanos": 3583530406,
+            "cpuNanos": 3830000000,
+            "gcCollections": 7
+          }
+        }
+      ]
+    }
+  },
+  "artifact_directory": "/tmp/smbj-gmac-batched-probes-4c65a11",
+  "artifact_files": 163,
+  "artifact_manifest_sha256": "8768930efd94eb198aed7e2c886febb40a77a8b8190cf6d3ddc8fd763a2eb1e5",
+  "checks_unavailable": {
+    "jdtls": "STOPPED; user authorized continuing available checks; no shared instance restart attempted.",
+    "authenticated_sonarqube": "Secrets wrapper returned no findings with an authentication warning; no authenticated SonarQube analysis claimed."
+  },
+  "limits": [
+    "Collision packet count still grows with history: five to 139 per successful candidate and 5216 total/profile at 64 cycles. No 1000-cycle-per-session soak or complete transport-buffer/allocation/transfer-throughput qualification.",
+    "Churn checks actual key identities and original-key reservations plus mandatory peer/client crypto verification; independent tag recomputation is supplied separately by the public and cancellation traces.",
+    "New Mockito reservation tests run on Java21; actual Java8 runs the eight native churn cases and existing 24 runtime-local cases, not the complete authentication/failure matrix.",
+    "Same-handle watch resubscription after owner loss, mandatory-global-encryption binding, remaining auth expiry/failure and notification variants stay unqualified as previously recorded.",
+    "Windows deferred; ONTAP-specific behavior untested; no additional server or research access required to continue Linux work."
+  ]
+}

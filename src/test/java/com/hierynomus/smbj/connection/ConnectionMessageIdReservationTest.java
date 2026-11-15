@@ -29,12 +29,16 @@ import com.hierynomus.smbj.server.Server;
 import com.hierynomus.smbj.server.ServerList;
 import com.hierynomus.smbj.session.Session;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -42,6 +46,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -165,23 +171,162 @@ class ConnectionMessageIdReservationTest {
         Connection connection = connectionWithTransport(transport);
         try {
             connection.sequenceWindow.creditsGranted(8);
+            Request unrelated = new Request(new SMB2Echo(SMB2Dialect.SMB_3_1_1), 99, UUID.randomUUID());
+            connection.outstandingRequests.registerOutstanding(unrelated);
 
             assertThrows(TransportException.class,
                     () -> connection.sendAndReceive(new SMB2Echo(SMB2Dialect.SMB_3_1_1), messageId -> false));
-            assertNoOutstandingRequests(connection);
+            assertSame(unrelated, connection.outstandingRequests.getRequestByMessageId(99L));
+            assertFalse(unrelated.getPromise().isFulfilled());
+            assertEquals(1, connection.sequenceWindow.available(), "A failed batch leaves a credit for unrelated traffic");
+            assertEquals(8, connection.nextMessageId(), "Every unacknowledged probe MID remains burned");
 
             respondToEcho(connection, 0);
-            assertNoOutstandingRequests(connection);
+            assertEquals(1, connection.sequenceWindow.available(), "A late retired reply cannot grant credits");
             doAnswer(invocation -> {
                 SMB2Packet sent = invocation.getArgument(0);
                 respondToEcho(connection, sent.getHeader().getMessageId());
                 return null;
             }).when(transport).write(any());
             SMB2Echo response = connection.sendAndReceive(new SMB2Echo(SMB2Dialect.SMB_3_1_1), messageId -> true);
-            assertEquals(1, response.getHeader().getMessageId());
+            assertEquals(8, response.getHeader().getMessageId());
+            assertSame(unrelated, connection.outstandingRequests.getRequestByMessageId(99L));
+            connection.outstandingRequests.remove(99L);
+            assertNoOutstandingRequests(connection);
         } finally {
             connection.close(true);
         }
+    }
+
+    @Test
+    void pipelinesAtMost32ProbesAndWaitsForEveryReplyBeforePublishingTheRequest() throws Exception {
+        TransportLayer<SMBPacket<?, ?>> transport = mock(TransportLayer.class);
+        when(transport.isConnected()).thenReturn(true);
+        Connection connection = connectionWithTransport(transport, 5000);
+        ExecutorService worker = Executors.newSingleThreadExecutor();
+        List<SMB2Packet> writes = new CopyOnWriteArrayList<>();
+        CountDownLatch firstBatch = new CountDownLatch(32);
+        AtomicBoolean released = new AtomicBoolean();
+        SMB2Echo request = new SMB2Echo(SMB2Dialect.SMB_3_1_1), unrelated = new SMB2Echo(SMB2Dialect.SMB_3_1_1);
+        try {
+            connection.sequenceWindow.creditsGranted(64);
+            doAnswer(invocation -> {
+                SMB2Packet packet = invocation.getArgument(0); writes.add(packet);
+                if (packet == request || packet == unrelated || released.get()) respondToEcho(connection, packet.getHeader().getMessageId());
+                else firstBatch.countDown();
+                return null;
+            }).when(transport).write(any());
+            Future<SMB2Echo> response = worker.submit(() -> connection.sendAndReceive(request, mid -> mid >= 40));
+            assertTrue(firstBatch.await(5, TimeUnit.SECONDS), "Several probes must be sent before the first reply");
+            assertEquals(32, writes.size(), "Bounded unanswered batch");
+            assertEquals(32, connection.sendAndReceive(unrelated).getHeader().getMessageId(), "Another sender can allocate while probes wait");
+            for (long mid = 31; mid > 0; mid--) respondToEcho(connection, mid);
+            assertFalse(response.isDone()); assertFalse(writes.contains(request), "One missing probe still prevents publication");
+            released.set(true); respondToEcho(connection, 0);
+            assertEquals(40, response.get(5, TimeUnit.SECONDS).getHeader().getMessageId());
+            assertEquals(41, writes.size());
+            for (int index = 0; index < writes.size(); index++) assertEquals(index, writes.get(index).getHeader().getMessageId());
+            assertNoOutstandingRequests(connection);
+        } finally { worker.shutdownNow(); connection.close(true); }
+    }
+
+    @Test
+    void oneCreditConnectionWaitsForEachProbeAndResumesWhenCreditsReturn() throws Exception {
+        TransportLayer<SMBPacket<?, ?>> transport = mock(TransportLayer.class);
+        when(transport.isConnected()).thenReturn(true);
+        Connection connection = connectionWithTransport(transport, 5000);
+        ExecutorService worker = Executors.newSingleThreadExecutor();
+        List<SMB2Packet> writes = new CopyOnWriteArrayList<>();
+        CountDownLatch firstProbe = new CountDownLatch(1);
+        AtomicBoolean released = new AtomicBoolean();
+        try {
+            doAnswer(invocation -> {
+                SMB2Packet packet = invocation.getArgument(0);
+                writes.add(packet);
+                if (released.get()) respondToEcho(connection, packet.getHeader().getMessageId());
+                else firstProbe.countDown();
+                return null;
+            }).when(transport).write(any());
+            Future<SMB2Echo> response = worker.submit(() -> connection.sendAndReceive(new SMB2Echo(SMB2Dialect.SMB_3_1_1), mid -> mid >= 3));
+            assertTrue(firstProbe.await(5, TimeUnit.SECONDS));
+            assertEquals(1, writes.size());
+            assertEquals(1, connection.nextMessageId());
+            assertEquals(0, connection.sequenceWindow.available());
+            released.set(true);
+            respondToEcho(connection, 0);
+            assertEquals(3, response.get(5, TimeUnit.SECONDS).getHeader().getMessageId());
+            assertEquals(4, writes.size());
+            assertEquals(1, connection.sequenceWindow.available());
+            assertNoOutstandingRequests(connection);
+        } finally {
+            worker.shutdownNow();
+            connection.close(true);
+        }
+    }
+
+    @Test
+    void acceptedButUnpublishedReservationStaysBurnedWhenItsProbeBatchTimesOut() throws Exception {
+        TransportLayer<SMBPacket<?, ?>> transport = mock(TransportLayer.class);
+        when(transport.isConnected()).thenReturn(true);
+        Connection connection = connectionWithTransport(transport);
+        Session signingState = new Session(null, null, null, null, null, null, null);
+        signingState.initializeOriginalKeyMessageIdReservation(2);
+        List<SMB2Packet> writes = new ArrayList<>();
+        doAnswer(invocation -> { writes.add(invocation.getArgument(0)); return null; }).when(transport).write(any());
+        SMB2Echo request = new SMB2Echo(SMB2Dialect.SMB_3_1_1);
+        try {
+            connection.sequenceWindow.creditsGranted(8);
+            assertThrows(TransportException.class, () -> connection.sendAndReceive(request, signingState::reserveOriginalKeyMessageId));
+            assertEquals(2, writes.size()); assertFalse(writes.contains(request));
+            assertEquals(3, connection.nextMessageId());
+            assertFalse(signingState.reserveOriginalKeyMessageId(2), "An allocated request is burned even if probe failure prevents signing/writing");
+            assertNoOutstandingRequests(connection);
+        } finally { connection.close(true); }
+    }
+
+    @Test
+    void interruptRetiresTheWholeBatchAndPreservesTheInterruptFlag() throws Exception {
+        TransportLayer<SMBPacket<?, ?>> transport = mock(TransportLayer.class);
+        when(transport.isConnected()).thenReturn(true);
+        Connection connection = connectionWithTransport(transport, 5000);
+        ExecutorService worker = Executors.newSingleThreadExecutor();
+        CountDownLatch written = new CountDownLatch(8);
+        AtomicReference<Thread> sender = new AtomicReference<>();
+        AtomicBoolean interrupted = new AtomicBoolean();
+        try {
+            connection.sequenceWindow.creditsGranted(8);
+            doAnswer(invocation -> { written.countDown(); return null; }).when(transport).write(any());
+            Future<?> response = worker.submit(() -> {
+                sender.set(Thread.currentThread());
+                try { return connection.sendAndReceive(new SMB2Echo(SMB2Dialect.SMB_3_1_1), mid -> false); }
+                finally { interrupted.set(Thread.currentThread().isInterrupted()); }
+            });
+            assertTrue(written.await(5, TimeUnit.SECONDS)); sender.get().interrupt();
+            ExecutionException failure = assertThrows(ExecutionException.class, () -> response.get(5, TimeUnit.SECONDS));
+            assertTrue(failure.getCause() instanceof TransportException); assertTrue(interrupted.get());
+            assertEquals(1, connection.sequenceWindow.available()); assertNoOutstandingRequests(connection);
+        } finally { worker.shutdownNow(); connection.close(true); }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void reservationFailureRetiresOnlyItsPendingBatch(boolean error) throws Exception {
+        TransportLayer<SMBPacket<?, ?>> transport = mock(TransportLayer.class);
+        when(transport.isConnected()).thenReturn(true);
+        Connection connection = connectionWithTransport(transport);
+        Throwable failure = error ? new AssertionError("Reservation failed") : new IllegalStateException("Reservation failed");
+        try {
+            connection.sequenceWindow.creditsGranted(8);
+            assertSame(failure, assertThrows(failure.getClass(), () -> connection.sendAndReceive(new SMB2Echo(SMB2Dialect.SMB_3_1_1), mid -> {
+                if (mid == 5) {
+                    if (error) throw (AssertionError) failure;
+                    throw (IllegalStateException) failure;
+                }
+                return false;
+            })));
+            assertEquals(5, connection.nextMessageId()); assertEquals(4, connection.sequenceWindow.available());
+            assertNoOutstandingRequests(connection); verify(transport, never()).disconnect();
+        } finally { connection.close(true); }
     }
 
     @Test
@@ -233,6 +378,29 @@ class ConnectionMessageIdReservationTest {
     }
 
     @Test
+    void terminalMessageIdRetiresAnEarlierProbeInTheBatchWithoutWrapping() throws Exception {
+        TransportLayer<SMBPacket<?, ?>> transport = mock(TransportLayer.class);
+        when(transport.isConnected()).thenReturn(true);
+        Connection connection = connectionWithTransport(transport);
+        List<SMB2Packet> writes = new ArrayList<>();
+        doAnswer(invocation -> { writes.add(invocation.getArgument(0)); return null; }).when(transport).write(any());
+        try {
+            Field lowestAvailableField = SequenceWindow.class.getDeclaredField("lowestAvailable");
+            lowestAvailableField.setAccessible(true);
+            ((AtomicLong) lowestAvailableField.get(connection.sequenceWindow)).set(-2);
+            connection.sequenceWindow.creditsGranted(8);
+            assertThrows(TransportException.class,
+                    () -> connection.sendAndReceive(new SMB2Echo(SMB2Dialect.SMB_3_1_1), mid -> false));
+            assertEquals(1, writes.size());
+            assertEquals(-2, writes.get(0).getHeader().getMessageId());
+            assertEquals(-1, connection.nextMessageId());
+            assertNoOutstandingRequests(connection);
+        } finally {
+            connection.close(true);
+        }
+    }
+
+    @Test
     void collisionEchoConsumesOneCreditBeforeAMultiCreditRequest() throws Exception {
         try (AbortTestConnection test = new AbortTestConnection()) {
             List<SMB2Packet> writes = new ArrayList<>();
@@ -273,7 +441,11 @@ class ConnectionMessageIdReservationTest {
     }
 
     private static Connection connectionWithTransport(TransportLayer<SMBPacket<?, ?>> transport) throws Exception {
-        SmbConfig config = SmbConfig.builder().withTransactTimeout(20, TimeUnit.MILLISECONDS)
+        return connectionWithTransport(transport, 20);
+    }
+
+    private static Connection connectionWithTransport(TransportLayer<SMBPacket<?, ?>> transport, long timeoutMillis) throws Exception {
+        SmbConfig config = SmbConfig.builder().withTransactTimeout(timeoutMillis, TimeUnit.MILLISECONDS)
                 .withTransportLayerFactory((handlers, settings) -> transport).build();
         Connection connection = new Connection(config, null, new SMBEventBus(), new ServerList());
         ConnectionContext context = mock(ConnectionContext.class);
