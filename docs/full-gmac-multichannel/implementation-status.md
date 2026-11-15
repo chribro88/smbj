@@ -52,6 +52,19 @@ compressed evidence are in
 [the native rebase validation](validation-native-development-rebase.json).
 This renews these Linux profiles; the remaining contract below stays open.
 
+The Kerberos cache-expiry follow-up at `e5b98c0`/`3c7f65d` passes all eight existing
+BC/Direct/Java 21 profiles with a new expired client-Subject credential case.
+GSS rejects it before any SESSION_SETUP is sent; established keys, preauthentication
+state and same-open I/O survive. Restoring credentials permits a fresh retry and
+later channel replacement. All 204 created authentication contexts are disposed,
+including eight failures before key export with no suppressed disposal error.
+Per-profile audits verify 716 GMAC inputs and 414 GCM transforms with no observed
+nonce reuse. The production JAR
+is unchanged. This covers expired client cache metadata, not a server rejecting
+an expired ticket on the wire. See
+[the cache-expiry validation](validation-kerberos-cache-expiry.json) for the
+fixture, boundary, source hashes and compact evidence. Full G0 remains open.
+
 Directory lease keys, parent-key lookups and cached listings now use the exact
 TreeConnect identity and normalized path. Two sessions, two shares or a reused
 numeric TreeId cannot borrow another tree's cache. Scoped entries keep an
