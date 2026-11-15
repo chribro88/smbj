@@ -751,7 +751,12 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
                 return;
             }
             try {
-                sessionTable.find(sessionId).send(cancel, Connection.this);
+                Session session = sessionTable.find(sessionId);
+                if (request.isEncrypted()) {
+                    session.send(cancel, Connection.this, true);
+                } else {
+                    session.send(cancel, Connection.this);
+                }
             } catch (TransportException e) {
                 logger.error("Failed to send {}", cancel);
             }

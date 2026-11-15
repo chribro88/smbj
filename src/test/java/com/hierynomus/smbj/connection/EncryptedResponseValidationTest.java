@@ -51,8 +51,10 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
@@ -126,16 +128,61 @@ public class EncryptedResponseValidationTest {
             assertEquals(encrypted, cancel instanceof PacketEncryptor.EncryptedPacketWrapper);
             assertEquals(credits, test.connection.sequenceWindow.available());
             assertSame(request, test.request(packet));
-            assertFalse(request.getPromise().isFulfilled());
+            assertTrue(request.getPromise().isFulfilled());
+            assertTrue(future.isCancelled());
+            assertThrows(CancellationException.class, () -> future.get(1, TimeUnit.SECONDS));
 
             SMB2Packet cancelled = reply(packet, NtStatus.STATUS_CANCELLED, EMPTY_ERROR);
             cancelled.getHeader().setFlag(SMB2_FLAGS_ASYNC_COMMAND);
             cancelled.getHeader().setAsyncId(1234);
             test.receiveProtected(cancelled);
 
-            assertEquals(NtStatus.STATUS_CANCELLED.getValue(), future.get(1, TimeUnit.SECONDS).getHeader().getStatusCode());
+            assertThrows(CancellationException.class, () -> future.get(1, TimeUnit.SECONDS));
             assertNull(test.request(packet));
+            assertEquals(credits + cancelled.getHeader().getCreditResponse(), test.connection.sequenceWindow.available());
             assertTrue(test.connection.isConnected());
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void cancelPreservesForcedShareEncryptionOnAPlainSession(boolean asynchronous) throws Exception {
+        try (TestConnection test = new TestConnection(false)) {
+            test.session.getSessionContext().setEncryptionKey(ENCRYPTION_KEY);
+            assertFalse(test.session.shouldEncryptData());
+            SMB2Packet packet = notifyRequest();
+            Future<SMB2Packet> future = test.session.send(packet, true);
+            Request request = test.request(packet);
+            assertTrue(request.isEncrypted());
+            if (asynchronous) test.receivePlain(pending(packet, EMPTY_ERROR));
+            int credits = test.connection.sequenceWindow.available();
+
+            assertTrue(future.cancel(true));
+
+            assertEquals(2, test.transport.wire.size());
+            assertTrue(test.transport.sent.get(1) instanceof PacketEncryptor.EncryptedPacketWrapper);
+            SMB3EncryptedPacketData original = new SMB3EncryptedPacketData(test.transport.wire.get(0));
+            SMB3EncryptedPacketData cancel = new SMB3EncryptedPacketData(test.transport.wire.get(1));
+            assertFalse(Arrays.equals(original.getHeader().getNonce(), cancel.getHeader().getNonce()));
+            SMB2PacketData decoded = new SMB2PacketData(test.encryptor.decrypt(cancel, ENCRYPTION_KEY));
+            assertEquals(SMB2_CANCEL, decoded.getHeader().getMessage());
+            assertEquals(packet.getHeader().getMessageId(), decoded.getSequenceNumber());
+            assertEquals(SESSION_ID, decoded.getHeader().getSessionId());
+            assertEquals(asynchronous, decoded.getHeader().isFlagSet(SMB2_FLAGS_ASYNC_COMMAND));
+            if (asynchronous) assertEquals(1234, decoded.getHeader().getAsyncId());
+            assertEquals(credits, test.connection.sequenceWindow.available());
+            assertFalse(future.cancel(true));
+            assertEquals(2, test.transport.wire.size());
+        }
+    }
+
+    @Test
+    public void forcedEncryptionCannotWrapSessionSetup() throws Exception {
+        try (TestConnection test = new TestConnection(true)) {
+            SMB2Packet setup = new com.hierynomus.mssmb2.messages.SMB2SessionSetup(
+                    SMB2Dialect.SMB_3_0, Collections.emptySet(), Collections.emptySet());
+            assertThrows(TransportException.class, () -> test.session.send(setup, true));
+            assertTrue(test.transport.sent.isEmpty());
         }
     }
 
@@ -466,6 +513,7 @@ public class EncryptedResponseValidationTest {
 
         private class RecordingTransport implements TransportLayer<SMBPacket<?, ?>> {
             private final List<SMB2Packet> sent = new ArrayList<>();
+            private final List<byte[]> wire = new ArrayList<>();
             private int disconnects;
             private boolean answerLogoff;
 
@@ -473,7 +521,9 @@ public class EncryptedResponseValidationTest {
             public void write(SMBPacket<?, ?> packet) throws TransportException {
                 SMB2Packet request = (SMB2Packet) packet;
                 sent.add(request);
-                packet.write(new SMBBuffer());
+                SMBBuffer buffer = new SMBBuffer();
+                packet.write(buffer);
+                wire.add(buffer.getCompactData());
                 if (answerLogoff && request.getHeader().getMessage() == SMB2_LOGOFF) {
                     assertSame(session, connection.getSessionTable().find(SESSION_ID));
                     assertEquals(encrypted, request(request).isEncrypted());

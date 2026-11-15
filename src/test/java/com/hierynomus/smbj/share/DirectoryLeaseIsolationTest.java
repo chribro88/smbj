@@ -223,6 +223,7 @@ class DirectoryLeaseIsolationTest {
         Session session(long id) {
             Session result = mock(Session.class);
             when(result.getConnection()).thenReturn(connection);
+            when(result.getLeaseManager()).thenReturn(manager);
             when(result.getSessionId()).thenReturn(id);
             when(result.getChannelCount()).thenReturn(1);
             return result;

@@ -163,7 +163,7 @@ public class SMB3DecryptingPacketHandler extends AbstractIncomingPacketHandler {
                         next.handle(new DeadLetterPacketData(member.getHeader()));
                         return;
                     }
-                    throw new TransportException("Mismatched sessionId in encrypted SMB2 message");
+                    throw new TransportException("Session ID of decrypted compound member differs from transform session ID: " + member);
                 }
             }
             nextPacket.getDataBuffer().rpos(bodyStart);

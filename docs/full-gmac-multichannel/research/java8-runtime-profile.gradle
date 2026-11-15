@@ -35,6 +35,7 @@ allprojects { project ->
                     'src/test/java/com/hierynomus/protocol/commons/concurrent/PromiseBackedFutureTest.java',
                     'src/test/java/com/hierynomus/smbj/connection/RequestCancellationTest.java',
                     'src/test/java/com/hierynomus/smbj/connection/PacketSignatoryTest.java',
+                    'src/test/java/com/hierynomus/smbj/connection/ResponseTestPackets.java',
                     'src/test/java/com/hierynomus/smbj/connection/SequenceWindowExhaustionTest.java',
                     'src/test/java/com/hierynomus/smbj/event/SessionLoggedOffEventTest.java',
                     'src/test/java/com/hierynomus/smbj/connection/TreeDisconnectedEventTest.java')

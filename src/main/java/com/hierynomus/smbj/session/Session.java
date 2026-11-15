@@ -564,7 +564,12 @@ public class Session implements AutoCloseable {
         return send(packet, selected, false);
     }
 
-    private <T extends SMB2Packet> Future<T> send(SMB2Packet packet, Connection selected, boolean encrypt) throws TransportException {
+    /** Send on an authenticated channel, preserving a request's required encryption for CANCEL. */
+    public <T extends SMB2Packet> Future<T> send(SMB2Packet packet, Connection selected, boolean encrypt) throws TransportException {
+        boolean sessionSetup = packet.getHeader().getMessage() == com.hierynomus.mssmb2.SMB2MessageCommandCode.SMB2_SESSION_SETUP;
+        if (encrypt && sessionSetup) {
+            throw new TransportException("SESSION_SETUP cannot be sent encrypted");
+        }
         SecretKey signingKey;
         // Closing a channel removes its key under this same monitor.
         synchronized (channels) {
@@ -585,7 +590,7 @@ public class Session implements AutoCloseable {
 
         }
 
-        if (packet.getHeader().getMessage() != com.hierynomus.mssmb2.SMB2MessageCommandCode.SMB2_SESSION_SETUP && (encrypt || shouldEncryptData())) {
+        if (!sessionSetup && (encrypt || shouldEncryptData())) {
             SecretKey encryptionKey = sessionContext.getEncryptionKey();
             if (encryptionKey == null) {
                 throw new TransportException("Message encryption is required, but no encryption key is negotiated");
@@ -615,7 +620,11 @@ public class Session implements AutoCloseable {
      *                           or a transport level error occurs
      */
     public <T extends SMB2Packet> Future<T> send(SMB2Packet packet, boolean encrypt) throws TransportException {
-        return send(packet, selectChannel(), encrypt);
+        if (!encrypt) {
+            return send(packet);
+        }
+
+        return send(packet, selectChannel(), true);
     }
 
     public <T extends SMB2Packet> T processSendResponse(SMB2CreateRequest packet) throws TransportException {
