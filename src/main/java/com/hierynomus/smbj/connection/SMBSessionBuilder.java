@@ -108,26 +108,33 @@ public class SMBSessionBuilder {
      * @return a (new) Session that is authenticated for the user.
      */
     public Session establish(AuthenticationContext authContext) {
-        if (connection.getOwningSession() != null) {
-            throw new IllegalStateException("A session-owned SMB channel cannot authenticate another session");
-        }
+        BuilderContext ctx = null;
+        boolean published = false;
         try {
             Authenticator authenticator = getAuthenticator(authContext);
             if (authenticator instanceof NtlmAuthenticator && config.getNtlmConfig().isIntegrityEnabled() && !(authContext.isAnonymous() && !(authContext.isGuest()))) {
                 authenticator = new NtlmSealer((NtlmAuthenticator) authenticator);
             }
 
-            BuilderContext ctx = newContext(authContext, authenticator);
+            ctx = newContext(authContext, authenticator);
 
             authenticator.init(config);
             processAuthenticationToken(ctx, connectionContext.getGssNegotiateToken());
 
             Session session = setupSession(ctx);
+            if (!sessionTable.registerSessionIfAbsent(session.getSessionId(), session)) {
+                throw new IOException("Authentication returned an already active SessionId");
+            }
+            published = true;
             logger.info("Successfully authenticated {} on {}, session is {}", authContext.getUsername(), connection.getRemoteHostname(), session.getSessionId());
-            sessionTable.registerSession(session.getSessionId(), session);
             return session;
         } catch (SpnegoException | IOException e) {
             throw new SMBRuntimeException(e);
+        } finally {
+            if (ctx != null && ctx.session != null) {
+                preauthSessionTable.removeSession(ctx.sessionId, ctx.session);
+                if (!published) ctx.session.discardUnpublishedAuthentication();
+            }
         }
     }
 
@@ -149,7 +156,9 @@ public class SMBSessionBuilder {
         }
         boolean bound = false;
         // As in go-smb2 sessionSetupBinding, install established cipher keys before reading binding replies.
-        sessionTable.registerSession(session.getSessionId(), session);
+        if (!sessionTable.registerSessionIfAbsent(session.getSessionId(), session)) {
+            throw new IOException("Connection already contains this SMB session");
+        }
         try {
             Authenticator authenticator = getAuthenticator(session.getAuthenticationContext());
             if (authenticator instanceof NtlmAuthenticator && config.getNtlmConfig().isIntegrityEnabled()) {
@@ -218,7 +227,7 @@ public class SMBSessionBuilder {
             throw new IOException("SMB channel authentication failed", e);
         } finally {
             if (!bound) {
-                sessionTable.removeSession(session.getSessionId());
+                sessionTable.removeSession(session.getSessionId(), session);
             }
         }
     }
@@ -268,17 +277,26 @@ public class SMBSessionBuilder {
     }
 
     private Session setupSession(BuilderContext ctx) throws IOException {
+        if (ctx.exchange == 16) throw new IOException("SMB authentication exceeded exchange limit");
         ctx.exchange++;
         initiateSessionSetup(ctx, ctx.securityContext);
         SMB2SessionSetup response = ctx.response;
-        ctx.sessionId = response.getHeader().getSessionId();
+        if (ctx.exchange == 1) {
+            ctx.sessionId = response.getHeader().getSessionId();
+        } else if (ctx.sessionId != response.getHeader().getSessionId()
+                && (response.getHeader().getStatusCode() == NtStatus.STATUS_SUCCESS.getValue()
+                    || response.getHeader().getStatusCode() == NtStatus.STATUS_MORE_PROCESSING_REQUIRED.getValue())) {
+            throw new IOException("Authentication continuation changed SessionId");
+        }
         SMB2Dialect dialect = connectionContext.getNegotiatedProtocol().getDialect();
         if (response.getHeader().getStatusCode() == NtStatus.STATUS_MORE_PROCESSING_REQUIRED.getValue()) {
             if (dialect == SMB2Dialect.SMB_3_1_1) {
-                Session preauthSession = preauthSessionTable.find(ctx.sessionId);
+                Session preauthSession = ctx.session;
                 if (preauthSession == null) {
                     preauthSession = newSession(ctx);
-                    preauthSessionTable.registerSession(ctx.sessionId, preauthSession);
+                    if (!preauthSessionTable.registerSessionIfAbsent(ctx.sessionId, preauthSession)) {
+                        throw new IOException("Authentication returned an already provisional SessionId");
+                    }
                 }
                 updatePreauthIntegrityValue(ctx, preauthSession.getSessionContext(), ctx.request);
                 updatePreauthIntegrityValue(ctx, preauthSession.getSessionContext(), ctx.response);
@@ -291,13 +309,8 @@ public class SMBSessionBuilder {
             connection.sessionSetupAccepted(response);
             throw new SMBApiException(response.getHeader(), format("Authentication failed for '%s' using %s", ctx.authContext.getUsername(), ctx.authenticator));
         } else {
-            Session session = preauthSessionTable.find(ctx.sessionId);
-
-            if (dialect == SMB2Dialect.SMB_3_1_1 && session != null) {
-                preauthSessionTable.removeSession(session.getSessionId());
-            } else {
-                session = newSession(ctx);
-            }
+            Session session = ctx.session;
+            if (session == null) session = newSession(ctx);
 
             SessionContext context = session.getSessionContext();
             processAuthenticationToken(ctx, response.getSecurityBuffer());
@@ -332,6 +345,7 @@ public class SMBSessionBuilder {
     private Session newSession(BuilderContext ctx) {
         Session preauthSession;
         preauthSession = sessionFactory.createSession(ctx.authContext);
+        ctx.session = preauthSession;
         preauthSession.setSessionId(ctx.sessionId);
         preauthSession.getSessionContext().setPreauthIntegrityHashValue(connectionContext.getPreauthIntegrityHashValue());
         return preauthSession;
@@ -552,6 +566,7 @@ public class SMBSessionBuilder {
 
     public static class BuilderContext {
         private int exchange;
+        private Session session;
         private Authenticator authenticator;
         private long sessionId;
         private byte[] sessionKey;

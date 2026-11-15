@@ -33,6 +33,7 @@ import com.hierynomus.smbj.share.DiskShare;
 import com.hierynomus.smbj.share.File;
 import com.hierynomus.smbj.transport.tcp.direct.DirectTcpTransport;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -47,6 +48,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.TimeUnit;
 
@@ -166,6 +168,78 @@ class PublicGmacBindingIT {
             observer.auxiliaryKeys(actualKeys);
             observer.verifyAndReport("public-" + run, 1, 8);
         }
+    }
+
+    @Test
+    void failedAuxiliaryContinuationDiscardsOnlyTheAttemptAndCanRetry() throws Exception {
+        String portValue = System.getenv("SMB_TEST_PORTS");
+        assumeTrue(portValue != null, "Dedicated GMAC fixture required");
+        int port = Integer.parseInt(portValue);
+        AtomicBoolean failNext = new AtomicBoolean();
+        AtomicInteger subscribers = new AtomicInteger();
+        SMBEventBus bus = new SMBEventBus() {
+            @Override public void subscribe(Object listener) {
+                super.subscribe(listener);
+                if (listener instanceof Session) subscribers.incrementAndGet();
+            }
+            @Override public boolean unsubscribe(Object listener) {
+                boolean removed = super.unsubscribe(listener);
+                if (removed && listener instanceof Session) subscribers.decrementAndGet();
+                return removed;
+            }
+        };
+        SmbConfig config = SmbConfig.builder().withDialects(SMB2Dialect.SMB_3_1_1)
+                .withSigningAlgorithms(SMB3SigningAlgorithm.AES_GMAC).withSigningRequired(true)
+                .withSecurityProvider(new BCSecurityProvider()).withTimeout(10, TimeUnit.SECONDS)
+                .withAuthenticators(new NtlmAuthenticator.Factory() {
+                    @Override public NtlmAuthenticator create() {
+                        boolean reject = failNext.getAndSet(false);
+                        return new NtlmAuthenticator() {
+                            private int calls;
+                            @Override public com.hierynomus.smbj.auth.AuthenticateResponse authenticate(
+                                    AuthenticationContext auth, byte[] token, ConnectionContext context) throws IOException {
+                                if (++calls == 2 && reject) throw new IOException("Injected auxiliary continuation failure");
+                                return super.authenticate(auth, token, context);
+                            }
+                        };
+                    }
+                }).build();
+        try (SMBClient client = new SMBClient(config, bus);
+             Connection primary = client.connect("127.0.0.1", port);
+             Session main = primary.authenticate(authentication())) {
+            Connection shared = new Connection(config, client, bus, client.getServerList());
+            try {
+                shared.connect("127.0.0.1", port);
+                try (Session older = shared.authenticate(authentication());
+                     DiskShare share = (DiskShare) older.connectShare("share")) {
+                    String name = "gmac-auth-failure-" + UUID.randomUUID() + ".bin";
+                    try (File file = share.openFile(name, EnumSet.of(AccessMask.GENERIC_READ, AccessMask.GENERIC_WRITE),
+                            EnumSet.of(FileAttributes.FILE_ATTRIBUTE_NORMAL), SMB2ShareAccess.ALL,
+                            SMB2CreateDisposition.FILE_CREATE, EnumSet.noneOf(SMB2CreateOptions.class))) {
+                        byte[] expected = new byte[131077]; new Random(53).nextBytes(expected);
+                        verifyContents(file, expected);
+                        int baselineSubscribers = subscribers.get();
+                        failNext.set(true);
+                        IOException failure = assertThrows(IOException.class, () -> shared.bind(main));
+                        assertTrue(failure.getMessage().contains("auxiliary authentication"));
+                        assertTrue(shared.getPreauthSessionTable().activeSessions().isEmpty());
+                        assertEquals(1, shared.getSessionTable().activeSessions().size());
+                        assertSame(older, shared.getSessionTable().find(older.getSessionId()));
+                        assertTrue(shared.isConnected()); assertEquals(1, main.getChannelCount());
+                        assertEquals(baselineSubscribers, subscribers.get(), "Failed attempt releases its event subscription");
+                        expected[0] ^= 1; verifyContents(file, expected);
+                        assertSame(main, shared.bind(main));
+                        assertEquals(2, main.getChannelCount());
+                        assertEquals(baselineSubscribers, subscribers.get(), "Successful auxiliary also releases its subscription");
+                        main.close();
+                        assertTrue(shared.isConnected());
+                        expected[1] ^= 1; verifyContents(file, expected);
+                    } finally { share.rm(name); }
+                }
+            } finally { shared.close(true); }
+        }
+        assertEquals(0, subscribers.get());
+        System.out.println("PUBLIC_GMAC_COMPLETE run=auxiliary-auth-failure signing=AES_GMAC failedCandidatePublished=false borrowedPreserved=true retry=true");
     }
 
     private static AuthenticationContext authentication() {

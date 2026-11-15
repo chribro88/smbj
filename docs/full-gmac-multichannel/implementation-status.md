@@ -59,6 +59,28 @@ actual Java 8 multichannel run, Kerberos under this public orchestration and
 Windows/target ONTAP acceptance remain open. Earlier entries below describe their
 recorded historical source states, including the earlier unconditional GMAC guard.
 
+### Authentication attempt ownership
+
+Authentication now keeps its provisional Session in the attempt context rather
+than looking it up again by a peer-controlled continuation SessionId. A failed
+continuation, rejected final or exceeded 16-exchange limit removes only that
+attempt's provisional entry and disposes its unpublished Session without LOGOFF
+or transport closure. Changed continuation SessionIds and collisions with
+provisional/active sessions are rejected. Conditional table registration/removal
+also protects channel binding against publication and replacement races.
+
+Both discarded authentication attempts and normally closed sessions release
+their event subscription. A native Samba test injects an NTLM authenticator
+failure after the auxiliary challenge while an older session has an open file.
+It checks empty provisional state, unchanged live subscription count, continued
+older-open I/O, and a successful bind retry on the same borrowed connection.
+The public native suite now has three cases; the two wire-audited concurrent/
+replacement cases still verify 116 signed inputs without observed reuse.
+The combined `check` passes **903 tests in 102 suites**, zero failures/errors/skips,
+with license and JaCoCo checks. The three public cases and sixteen native
+provider/transport/encryption profiles pass on the changed production source.
+See [validation-authentication-ownership.json](validation-authentication-ownership.json).
+
 ## Inputs and history
 
 - Branch: `feature/full-gmac-multichannel`.

@@ -401,6 +401,23 @@ public class Session implements AutoCloseable {
         }
     }
 
+    /** Dispose an authentication attempt without sending LOGOFF on its borrowed connection. */
+    public void discardUnpublishedAuthentication() {
+        synchronized (channels) {
+            if (connection.isSessionEstablished(this)) {
+                throw new IllegalStateException("Cannot discard a published SMB session");
+            }
+            closing = true;
+            closed = true;
+            channels.clear();
+            channelKeys.clear();
+            pendingChannels.clear();
+            ownedChannels.clear();
+        }
+        stopAsyncWrites();
+        bus.unsubscribe(this);
+    }
+
     /** Checks that a channel can carry the requests sized by this session's existing and future Shares. */
     public void validateChannelLimits(com.hierynomus.smbj.connection.NegotiatedProtocol candidate) throws IOException {
         com.hierynomus.smbj.connection.NegotiatedProtocol original = connection.getNegotiatedProtocol();

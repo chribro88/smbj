@@ -62,6 +62,35 @@ class SessionChannelsTest {
     }
 
     @Test
+    void discardingAnUnpublishedAuthenticationStopsItWithoutTouchingTheConnection() throws Exception {
+        com.hierynomus.smbj.event.SMBEventBus bus = spy(new com.hierynomus.smbj.event.SMBEventBus());
+        Session session = new Session(primary, SmbConfig.createDefaultConfig(), null, bus, null, signatory, null);
+
+        session.discardUnpublishedAuthentication();
+        session.close();
+
+        assertEquals(0, session.getChannelCount());
+        assertThrows(TransportException.class, () -> session.send(new SMB2Echo(SMB2Dialect.SMB_3_1_1)));
+        verify(bus).unsubscribe(session);
+        verify(bus, never()).publish(any());
+        verify(primary, never()).send(any());
+        verify(primary, never()).close(anyBoolean());
+    }
+
+    @Test
+    void discardingAuthenticationCannotInvalidateAnAlreadyPublishedSession() throws Exception {
+        com.hierynomus.smbj.event.SMBEventBus bus = spy(new com.hierynomus.smbj.event.SMBEventBus());
+        Session session = new Session(primary, SmbConfig.createDefaultConfig(), null, bus, null, signatory, null);
+        when(primary.isSessionEstablished(session)).thenReturn(true);
+
+        assertThrows(IllegalStateException.class, session::discardUnpublishedAuthentication);
+
+        assertEquals(1, session.getChannelCount());
+        verify(bus, never()).unsubscribe(session);
+        verify(primary, never()).close(anyBoolean());
+    }
+
+    @Test
     void closeDisposesOwnedChannelsAndPreservesBorrowedConnections() throws Exception {
         com.hierynomus.smbj.event.SMBEventBus bus = new com.hierynomus.smbj.event.SMBEventBus();
         when(signatory.sign(any(), any())).thenAnswer(call -> call.getArgument(0));

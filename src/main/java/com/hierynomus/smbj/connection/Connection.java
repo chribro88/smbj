@@ -626,6 +626,10 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
         }
     }
 
+    public boolean isSessionEstablished(Session session) {
+        return sessionTable.find(session.getSessionId()) == session;
+    }
+
     SessionTable getSessionTable() {
         return sessionTable;
     }

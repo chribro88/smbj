@@ -17,6 +17,15 @@ observed nonce reuse. This is implementation progress, with full lifetime, cost,
 failure and independent-server gates still open. See
 [validation-public-binding.json](validation-public-binding.json).
 
+The authentication-ownership follow-up makes failed auxiliary attempts dispose
+only their own provisional Session and event subscription, with no LOGOFF or
+shared-transport closure. Conditional registration/removal prevents another
+attempt's table entry from being overwritten or removed. The native failure
+case preserves an older open and retries on the same connection. This addresses
+a concrete preparation/failure path; it does not close the full key-lifetime or
+late-binding cost gates. See
+[validation-authentication-ownership.json](validation-authentication-ownership.json).
+
 ## 1. Decision to establish
 
 Determine how SMBJ can authenticate every binding exchange without reusing a GMAC signing key and nonce, while obeying SMB's key-selection, MessageId and credit rules. The construction must include failed attempts, concurrent bindings, authentication rounds, channel replacement and relevant reauthentication.

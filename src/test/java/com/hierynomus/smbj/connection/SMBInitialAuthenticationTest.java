@@ -213,6 +213,99 @@ class SMBInitialAuthenticationTest {
         }
     }
 
+    @Test
+    void failedContinuationRetiresOnlyItsOwnProvisionalSession() throws Exception {
+        Fixture fixture = new Fixture(false, SMB2Dialect.SMB_3_1_1, SMB3SigningAlgorithm.AES_GMAC);
+        fixture.rounds = 3;
+        Session unrelated = mock(Session.class);
+        fixture.preauth.registerSession(91L, unrelated);
+        doAnswer(call -> {
+            if (fixture.exchange == 1) throw new IOException("Continuation lost");
+            return fixture.reply(call.getArgument(0));
+        }).when(fixture.connection).sendAndReceive(any());
+        assertThrows(SMBRuntimeException.class, fixture::establish);
+        assertNull(fixture.preauth.find(47L));
+        assertSame(unrelated, fixture.preauth.find(91L));
+        verify(fixture.session).discardUnpublishedAuthentication();
+        verify(fixture.connection, never()).close(anyBoolean());
+    }
+
+    @Test
+    void cleanupCannotRemoveAnotherAttemptsReplacementEntry() throws Exception {
+        Fixture fixture = new Fixture(false, SMB2Dialect.SMB_3_1_1, SMB3SigningAlgorithm.AES_GMAC);
+        fixture.rounds = 3;
+        Session replacement = mock(Session.class);
+        doAnswer(call -> {
+            if (fixture.exchange == 1) {
+                fixture.preauth.removeSession(47L);
+                fixture.preauth.registerSession(47L, replacement);
+                throw new IOException("Continuation lost");
+            }
+            return fixture.reply(call.getArgument(0));
+        }).when(fixture.connection).sendAndReceive(any());
+        assertThrows(SMBRuntimeException.class, fixture::establish);
+        assertSame(replacement, fixture.preauth.find(47L));
+        verify(fixture.session).discardUnpublishedAuthentication();
+        verify(replacement, never()).discardUnpublishedAuthentication();
+    }
+
+    @Test
+    void provisionalSessionIdCollisionCannotStealAnotherAttemptsContext() throws Exception {
+        Fixture fixture = new Fixture(false, SMB2Dialect.SMB_3_1_1, SMB3SigningAlgorithm.AES_GMAC);
+        fixture.rounds = 2;
+        Session other = mock(Session.class);
+        fixture.preauth.registerSession(47L, other);
+        assertThrows(SMBRuntimeException.class, fixture::establish);
+        assertSame(other, fixture.preauth.find(47L));
+        verify(other, never()).getSessionContext();
+        verify(fixture.session).discardUnpublishedAuthentication();
+    }
+
+    @Test
+    void authenticatedSessionIdCollisionCannotReplaceAnExistingSession() throws Exception {
+        Fixture fixture = new Fixture(false, SMB2Dialect.SMB_3_1_1, SMB3SigningAlgorithm.AES_GMAC);
+        Session other = mock(Session.class);
+        doAnswer(call -> {
+            SMB2SessionSetup response = fixture.reply(call.getArgument(0));
+            fixture.sessions.registerSession(47L, other);
+            return response;
+        }).when(fixture.connection).sendAndReceive(any());
+        assertThrows(SMBRuntimeException.class, fixture::establish);
+        assertSame(other, fixture.sessions.find(47L));
+        verify(fixture.session).discardUnpublishedAuthentication();
+        verify(other, never()).discardUnpublishedAuthentication();
+    }
+
+    @Test
+    void changedContinuationSessionIdCannotSwitchAuthenticationOwnership() throws Exception {
+        Fixture fixture = new Fixture(false, SMB2Dialect.SMB_3_1_1, SMB3SigningAlgorithm.AES_GMAC);
+        fixture.rounds = 3;
+        Session other = mock(Session.class);
+        fixture.preauth.registerSession(48L, other);
+        doAnswer(call -> {
+            SMB2SessionSetup response = fixture.reply(call.getArgument(0));
+            if (fixture.exchange == 2) response.getHeader().setSessionId(48L);
+            return response;
+        }).when(fixture.connection).sendAndReceive(any());
+        SMBRuntimeException failure = assertThrows(SMBRuntimeException.class, fixture::establish);
+        assertTrue(failure.getCause().getMessage().contains("changed SessionId"));
+        assertNull(fixture.preauth.find(47L));
+        assertSame(other, fixture.preauth.find(48L));
+        verify(other, never()).getSessionContext();
+        verify(fixture.session).discardUnpublishedAuthentication();
+    }
+
+    @Test
+    void challengeLoopIsBoundedAndDiscardsTheAttempt() throws Exception {
+        Fixture fixture = new Fixture(false, SMB2Dialect.SMB_3_1_1, SMB3SigningAlgorithm.AES_GMAC);
+        fixture.rounds = 100;
+        SMBRuntimeException failure = assertThrows(SMBRuntimeException.class, fixture::establish);
+        assertTrue(failure.getCause().getMessage().contains("exchange limit"));
+        assertEquals(16, fixture.exchange);
+        assertTrue(fixture.preauth.activeSessions().isEmpty());
+        verify(fixture.session).discardUnpublishedAuthentication();
+    }
+
     private static final class Fixture {
         private final Connection connection = mock(Connection.class);
         private final ConnectionContext context = mock(ConnectionContext.class);

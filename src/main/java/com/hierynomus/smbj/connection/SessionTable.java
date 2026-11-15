@@ -36,6 +36,26 @@ public class SessionTable {
         }
     }
 
+    boolean registerSessionIfAbsent(Long id, Session session) {
+        lock.lock();
+        try {
+            return lookup.putIfAbsent(id, session) == null;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    boolean removeSession(Long id, Session expected) {
+        lock.lock();
+        try {
+            if (lookup.get(id) != expected) return false;
+            lookup.remove(id);
+            return true;
+        } finally {
+            lock.unlock();
+        }
+    }
+
     public Session find(Long id) {
         lock.lock();
         try {

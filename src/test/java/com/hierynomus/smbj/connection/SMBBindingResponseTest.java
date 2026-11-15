@@ -395,6 +395,44 @@ class SMBBindingResponseTest {
     }
 
     @org.junit.jupiter.api.Test
+    void aSessionPublishedAfterValidationCannotBeReplacedByBinding() throws Exception {
+        builder(true);
+        Session other = mock(Session.class);
+        SessionTable raced = new SessionTable() {
+            private boolean first = true;
+            @Override public Session find(Long id) {
+                if (first && id == 47L) {
+                    first = false;
+                    registerSession(id, other);
+                    return null;
+                }
+                return super.find(id);
+            }
+        };
+        when(secondary.getSessionTable()).thenReturn(raced);
+        SMBSessionBuilder builder = new SMBSessionBuilder(secondary, config, null);
+        Signatory signatory = mock(Signatory.class);
+        assertThrows(IOException.class, () -> builder.bind(session, signatory));
+        assertSame(other, raced.find(47L));
+        verifyNoInteractions(signatory);
+        verify(secondary, never()).sendAndReceive(any());
+    }
+
+    @org.junit.jupiter.api.Test
+    void failedBindingCannotRemoveAnotherSessionsReplacementEntry() throws Exception {
+        SMBSessionBuilder builder = builder(true);
+        Session replacement = mock(Session.class);
+        doAnswer(call -> {
+            bindingSessions.removeSession(47L);
+            bindingSessions.registerSession(47L, replacement);
+            throw new IOException("Binding failed after entry replacement");
+        }).when(secondary).sendAndReceive(any());
+        assertThrows(IOException.class, () -> builder.bind(session, new PacketSignatory(provider)));
+        assertSame(replacement, bindingSessions.find(47L));
+        verify(session, never()).addChannel(any(), any());
+    }
+
+    @org.junit.jupiter.api.Test
     void failedAuxiliaryCleanupCannotPublishTheBoundChannel() throws Exception {
         SMBSessionBuilder builder = builder(true);
         Session auxiliary = mock(Session.class);
