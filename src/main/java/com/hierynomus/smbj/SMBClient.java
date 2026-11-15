@@ -119,6 +119,25 @@ public class SMBClient implements Closeable {
         }
     }
 
+    public synchronized void registerBootstrapConnection(Connection bootstrap) throws IOException {
+        if (closed) throw new IOException("SMB client is closed");
+        if (bootstrap.getClient() != this) throw new IOException("Connection belongs to another SMB client");
+        channelConnections.add(bootstrap);
+    }
+
+    public void releaseBootstrapConnection(Connection bootstrap) {
+        channelConnections.remove(bootstrap);
+    }
+
+    public synchronized void publishBootstrapChannel(com.hierynomus.smbj.session.Session session,
+            Connection bootstrap, Connection caller) throws IOException {
+        if (closed) throw new IOException("SMB client is closed");
+        if (bootstrap.getClient() != this || caller.getClient() != this) {
+            throw new IOException("Bootstrap channel belongs to another SMB client");
+        }
+        session.adoptBootstrapChannel(bootstrap, caller);
+    }
+
     private Connection getEstablishedOrConnect(String hostname, int port) throws IOException {
         synchronized (this) {
             if (closed) {

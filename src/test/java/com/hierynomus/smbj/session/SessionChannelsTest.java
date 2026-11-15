@@ -62,6 +62,47 @@ class SessionChannelsTest {
     }
 
     @Test
+    void bootstrapAnchorKeepsBusyCallerIdsOutsideTheLowReservationCursor() {
+        // Bootstrap precedes all operational channel publication.
+        Session bootstrap = new Session(primary, SmbConfig.createDefaultConfig(), null, null, null, signatory, null);
+        bootstrap.initializeOriginalKeyMessageIdReservation(3);
+        bootstrap.prepareBootstrapChannel(secondary);
+        assertFalse(bootstrap.reserveOriginalKeyMessageId(secondary, 3, false));
+        assertTrue(bootstrap.reserveOriginalKeyMessageId(secondary, 1000000, false));
+        assertTrue(bootstrap.reserveOriginalKeyMessageId(secondary, 1000007, false));
+        assertFalse(bootstrap.reserveOriginalKeyMessageId(secondary, 1000000, false));
+        Connection fresh = connection();
+        assertTrue(bootstrap.reserveOriginalKeyMessageId(fresh, 4, false));
+        assertTrue(bootstrap.reserveOriginalKeyMessageId(fresh, 5, false));
+        assertTrue(bootstrap.reserveOriginalKeyMessageId(primary, 3, true));
+        assertFalse(bootstrap.reserveOriginalKeyMessageId(primary, 3, true));
+        assertFalse(bootstrap.reserveOriginalKeyMessageId(primary, -1, true));
+        assertFalse(bootstrap.reserveOriginalKeyMessageId(fresh, 1000000, false));
+    }
+
+    @Test
+    void bootstrapHandoffRequiresVerifiedMembershipAndUsesTheChannelKey() throws Exception {
+        Session session = new Session(primary, SmbConfig.createDefaultConfig(), null, null, null, signatory, null);
+        session.getSessionContext().setSigningKey(primaryKey);
+        session.initializeOriginalKeyMessageIdReservation(3);
+        session.prepareBootstrapChannel(secondary);
+        assertThrows(IllegalStateException.class, () -> session.adoptBootstrapChannel(primary, secondary));
+        session.addBorrowedChannel(secondary, secondaryKey);
+        session.adoptBootstrapChannel(primary, secondary);
+        assertSame(secondary, session.getConnection());
+        when(signatory.sign(any(), any())).thenAnswer(call -> call.getArgument(0));
+        com.hierynomus.smbj.connection.ConnectionContext context = mock(com.hierynomus.smbj.connection.ConnectionContext.class);
+        when(context.getSigningAlgorithm()).thenReturn(com.hierynomus.mssmb2.SMB3SigningAlgorithm.AES_GMAC);
+        when(secondary.getConnectionContext()).thenReturn(context);
+        SMB2Echo packet = new SMB2Echo(SMB2Dialect.SMB_3_1_1);
+        session.send(packet, secondary);
+        verify(signatory).sign(packet, secondaryKey);
+        verify(secondary).send(packet);
+        verify(secondary, never()).sendOriginalKey(any(), any());
+        assertTrue(session.reserveOriginalKeyMessageId(connection(), 4, false));
+    }
+
+    @Test
     void discardingAnUnpublishedAuthenticationStopsItWithoutTouchingTheConnection() throws Exception {
         com.hierynomus.smbj.event.SMBEventBus bus = spy(new com.hierynomus.smbj.event.SMBEventBus());
         Session session = new Session(primary, SmbConfig.createDefaultConfig(), null, bus, null, signatory, null);

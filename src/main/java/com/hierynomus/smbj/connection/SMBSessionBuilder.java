@@ -179,7 +179,7 @@ public class SMBSessionBuilder {
                 request.getHeader().setSessionId(ctx.sessionId);
                 SMB2Packet wire = signatory.sign(request, session.getSessionContext().getSigningKey());
                 SMB2SessionSetup response = signingAlgorithm(original) == SMB3SigningAlgorithm.AES_GMAC
-                        ? connection.sendAndReceive(wire, session::reserveOriginalKeyMessageId)
+                        ? connection.sendAndReceive(wire, messageId -> session.reserveOriginalKeyMessageId(connection, messageId, false))
                         : connection.sendAndReceive(wire);
                 if (dialect == SMB2Dialect.SMB_3_1_1) updatePreauthIntegrityValue(ctx, transcript, wire);
                 if (response.getHeader().getSessionId() != ctx.sessionId) {

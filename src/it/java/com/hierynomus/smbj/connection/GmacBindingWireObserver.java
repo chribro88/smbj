@@ -45,6 +45,7 @@ final class GmacBindingWireObserver extends SocketFactory {
     private final List<Event> events = new ArrayList<>();
     private final Map<Integer, Map<Long, byte[]>> auxiliaryKeys = new HashMap<>();
     private final Map<Integer, byte[]> channelKeys = new HashMap<>();
+    private final Map<Long, byte[]> originalSessionKeys = new HashMap<>();
     private final byte[] fingerprintKey = new byte[32];
     private long mainSessionId;
     private int originalSocket;
@@ -62,18 +63,28 @@ final class GmacBindingWireObserver extends SocketFactory {
 
     synchronized void original(Session main, Connection connection) {
         mainSessionId = main.getSessionId();
-        originalSocket = owners.get(connection).id;
+        originalSocket = authenticationSocket(mainSessionId);
         originalKey = main.getSessionContext().getSigningKey().getEncoded().clone();
     }
 
+    private int authenticationSocket(long sessionId) {
+        return events.stream().filter(event -> event.sessionId == sessionId && event.command == 1
+                && event.server && event.status == 0).findFirst().orElseThrow(AssertionError::new).connection;
+    }
+
     synchronized void auxiliary(Session session, Connection connection) {
+        byte[] original = session.getSessionContext().getSigningKey().getEncoded().clone();
+        originalSessionKeys.put(session.getSessionId(), original);
+        auxiliaryKeys.computeIfAbsent(authenticationSocket(session.getSessionId()), unused -> new HashMap<>())
+                .put(session.getSessionId(), original);
         auxiliaryKeys.computeIfAbsent(owners.get(connection).id, unused -> new HashMap<>())
-                .put(session.getSessionId(), session.getSessionContext().getSigningKey().getEncoded().clone());
+                .put(session.getSessionId(), session.getSigningKey(new SMB2Echo(SMB2Dialect.SMB_3_1_1).getHeader(), false, connection).getEncoded().clone());
     }
 
     synchronized void auxiliaryKeys(Map<Long, byte[]> keys) {
         for (ObservedSocket socket : sockets) {
-            auxiliaryKeys.computeIfAbsent(socket.id, unused -> new HashMap<>()).putAll(keys);
+            Map<Long, byte[]> actual = auxiliaryKeys.computeIfAbsent(socket.id, unused -> new HashMap<>());
+            keys.forEach(actual::putIfAbsent);
         }
     }
 
@@ -136,6 +147,9 @@ final class GmacBindingWireObserver extends SocketFactory {
             } else {
                 assertTrue(isAuxiliary, "Every signed session must have an observed actual key");
                 key = auxiliary.get(event.sessionId);
+                if (event.command == 1 && (!event.server || event.status != 0)) {
+                    key = originalSessionKeys.getOrDefault(event.sessionId, key);
+                }
                 role = "auxiliary";
             }
             assertNotNull(key);

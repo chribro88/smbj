@@ -45,7 +45,7 @@ if arguments.per_request_research:
     if os.environ.get('SMBJ_GMAC_AUX_RESEARCH') != 'true' or not Path('src/it/java/com/hierynomus/smbj/connection/GmacConcurrentBootstrapIT.java').is_file():
         parser.error('--per-request-research requires the detached research checkout and explicit opt-in')
 if arguments.public_binding:
-    test_class, expected_count, marker, label = ('com.hierynomus.smbj.connection.PublicGmacBindingIT', 3,
+    test_class, expected_count, marker, label = ('com.hierynomus.smbj.connection.PublicGmacBindingIT', 4,
                                                'PUBLIC_GMAC_COMPLETE ', 'public multichannel')
 elif arguments.per_request_research:
     test_class, expected_count, marker, label = ('com.hierynomus.smbj.connection.GmacConcurrentBootstrapIT', 7,

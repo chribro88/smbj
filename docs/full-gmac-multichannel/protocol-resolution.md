@@ -26,6 +26,17 @@ a concrete preparation/failure path; it does not close the full key-lifetime or
 late-binding cost gates. See
 [validation-authentication-ownership.json](validation-authentication-ownership.json).
 
+The automatic-bootstrap integration now retires the original signing transport
+before exposing the session and uses the caller's bound channel key for ordinary
+traffic. The original-key domain burns the initial authentication prefix and one
+abort MID, retains at most 16 sparse initial-caller binding IDs, and advances the
+existing CAS cursor for later binding rounds. A busy caller's high counter and
+subsequent application traffic do not raise that low cursor. The tested native
+busy-caller and final-reply cleanup paths are recorded in
+[validation-bootstrap-production.json](validation-bootstrap-production.json).
+This is implemented state/ownership coordination using the existing signers and
+KDF, with full lifetime, failure, cost and interoperability gates still open.
+
 ## 1. Decision to establish
 
 Determine how SMBJ can authenticate every binding exchange without reusing a GMAC signing key and nonce, while obeying SMB's key-selection, MessageId and credit rules. The construction must include failed attempts, concurrent bindings, authentication rounds, channel replacement and relevant reauthentication.

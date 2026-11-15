@@ -81,6 +81,50 @@ with license and JaCoCo checks. The three public cases and sixteen native
 provider/transport/encryption profiles pass on the changed production source.
 See [validation-authentication-ownership.json](validation-authentication-ownership.json).
 
+### Automatic GMAC bootstrap and caller handoff
+
+Client-managed GMAC authentication now establishes the logical session on a
+private connection, binds it back onto the caller's existing connection, and
+retires the private transport without LOGOFF before returning. The returned
+`Session.getConnection()` is the caller, retains the real SMBClient and pooled
+identity, and sends ordinary I/O under its verified channel key. Original-key
+reservations are therefore driven by binding rounds rather than file traffic.
+Signing-disabled and non-multichannel paths retain direct authentication.
+
+The private bootstrap's next MID is reserved for possible abort LOGOFF. The
+initial caller's at-most-16 original-key binding MIDs are kept as sparse outliers
+instead of raising the fresh-candidate reservation cursor to a busy caller's
+counter. Later per-request claims exclude the initial prefix, abort nonce and
+sparse outliers. The existing per-connection allocation and unsigned ECHO path
+still consume all native MIDs legally; there is no fabricated counter jump.
+
+The private connection inherits the caller's exact configuration, event bus,
+authentication hostname and actual endpoint, including borrowed callers whose
+settings differ from the SMBClient defaults. The client tracks private candidates
+explicitly through connect/authentication and releases them even when the caller
+uses a different event bus. Client closure is checked at handoff publication. On failure, session cleanup preserves the
+borrowed caller; on success the closed bootstrap is removed from channel
+membership. The original signing context remains available for later binding.
+
+Native coverage includes a busy pooled session with 1,024 prior requests and
+1,024 application requests before fresh concurrent binds and replacement. The
+fresh-channel catch-up assertion is at most 32 ECHOs across the tested attempts,
+independent of those 2,048 application requests. A final-reply client-input fault
+verifies genuine peer MAC acceptance, rejection after corruption, original-key
+LOGOFF at reserved MID 3, private-root disposal, older-open continuity and retry.
+The combined `check` passes **905 tests in 102 suites**, zero failures/errors/skips,
+with license and JaCoCo checks. All 20 Java 21 native cases pass; the actual Java 8
+profile passes 40 cases (16 native, 24 selected local) using the identical production
+JAR. The two independently audited public profiles verify 4,243 signed inputs
+without observed distinct-message actual-key/nonce reuse.
+See [validation-bootstrap-production.json](validation-bootstrap-production.json).
+
+This removes application-traffic-driven catch-up in the integrated public path;
+it does not prove constant cost for an unbounded binding/retry history. Lost
+finals, private-root loss, all publication/close races, public Kerberos/runtime
+variants, the complete actual-key lifetime and independent server acceptance
+remain open. Earlier cost/status statements below retain their historical scope.
+
 ## Inputs and history
 
 - Branch: `feature/full-gmac-multichannel`.

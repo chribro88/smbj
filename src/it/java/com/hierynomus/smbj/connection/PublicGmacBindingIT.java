@@ -50,6 +50,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -105,9 +106,20 @@ class PublicGmacBindingIT {
         Connection shared = null;
         try (SMBClient client = new SMBClient(config, bus)) {
             Connection primary = client.connect("127.0.0.1", port); observer.register(primary);
+            try (Session prior = borrowed ? primary.authenticate(authentication()) : null) {
+                if (prior != null) {
+                    observer.auxiliary(prior, primary);
+                    for (int i = 0; i < 1024; i++) echo(prior);
+                }
             try (Session main = primary.authenticate(authentication())) {
                 observer.original(main, primary);
+                observer.bound(main, primary);
+                assertSame(primary, main.getConnection());
                 mainSession.set(main.getSessionId());
+                if (borrowed) for (int i = 0; i < 1024; i++) echo(main);
+                int initialCatchUp = observer.unsignedEchoRequests();
+                assertSame(client, main.getConnection().getClient());
+                try (Connection lease = client.connect("127.0.0.1", port)) { assertSame(primary, lease); }
                 assertEquals(SMB3SigningAlgorithm.AES_GMAC, primary.getConnectionContext().getSigningAlgorithm());
                 Session older = null;
                 Connection replacement;
@@ -161,7 +173,11 @@ class PublicGmacBindingIT {
                     assertEquals(0, older.<SMB2Echo>send(echo).get(5, TimeUnit.SECONDS).getHeader().getStatusCode());
                     older.close();
                 }
-                System.out.printf("PUBLIC_GMAC_COMPLETE run=%s signing=AES_GMAC replacement=true concurrentBindings=2 borrowedPreserved=%s%n", run, borrowed);
+                int catchUp = observer.unsignedEchoRequests() - initialCatchUp;
+                assertTrue(catchUp <= 32, "Application traffic and the busy initial caller cannot drive later catch-up: " + catchUp);
+                System.out.printf("PUBLIC_GMAC_COMPLETE run=%s signing=AES_GMAC replacement=true concurrentBindings=2 borrowedPreserved=%s priorTraffic=%d applicationTraffic=%d collisionEchoes=%d%n",
+                        run, borrowed, borrowed ? 1024 : 0, borrowed ? 1024 : 0, catchUp);
+            }
             }
         } finally {
             if (shared != null) shared.close(true);
@@ -240,6 +256,104 @@ class PublicGmacBindingIT {
         }
         assertEquals(0, subscribers.get());
         System.out.println("PUBLIC_GMAC_COMPLETE run=auxiliary-auth-failure signing=AES_GMAC failedCandidatePublished=false borrowedPreserved=true retry=true");
+    }
+
+    @Test
+    void rejectedBootstrapFinalUsesItsReservedLogoffWithoutClosingTheCaller() throws Exception {
+        String portValue = System.getenv("SMB_TEST_PORTS");
+        assumeTrue(portValue != null, "Dedicated GMAC fixture required");
+        int port = Integer.parseInt(portValue);
+        AtomicBoolean rejecting = new AtomicBoolean();
+        AtomicLong failedSession = new AtomicLong();
+        AtomicReference<byte[]> originalKey = new AtomicReference<>();
+        List<Long> bindingMids = new ArrayList<>(), abortMids = new ArrayList<>();
+        List<TransportLayer<SMBPacket<?, ?>>> transports = new ArrayList<>();
+        Field keyField = PacketSignatory.SignedPacketWrapper.class.getDeclaredField("secretKey"); keyField.setAccessible(true);
+        SmbConfig config = SmbConfig.builder().withDialects(SMB2Dialect.SMB_3_1_1)
+                .withSigningAlgorithms(SMB3SigningAlgorithm.AES_GMAC).withSigningRequired(true)
+                .withSecurityProvider(new BCSecurityProvider()).withTimeout(10, TimeUnit.SECONDS)
+                .withAuthenticators(new NtlmAuthenticator.Factory()).withTransportLayerFactory((handlers, settings) -> {
+                    TransportLayer<SMBPacket<?, ?>> delegate = new DirectTcpTransport<>(settings.getSocketFactory(), settings.getSoTimeout(), handlers);
+                    transports.add(delegate);
+                    return new TransportLayer<SMBPacket<?, ?>>() {
+                        public void connect(InetSocketAddress address) throws IOException { delegate.connect(address); }
+                        public void disconnect() throws IOException { delegate.disconnect(); }
+                        public boolean isConnected() { return delegate.isConnected(); }
+                        public void write(SMBPacket<?, ?> packet) throws TransportException {
+                            if (rejecting.get() && packet instanceof PacketSignatory.SignedPacketWrapper) {
+                                SMB2Packet smb = (SMB2Packet) packet;
+                                try {
+                                    byte[] key = ((SecretKey) keyField.get(packet)).getEncoded();
+                                    if (smb.getHeader().getMessage() == SMB2MessageCommandCode.SMB2_SESSION_SETUP) {
+                                        failedSession.compareAndSet(0, smb.getHeader().getSessionId());
+                                        originalKey.compareAndSet(null, key.clone());
+                                        bindingMids.add(smb.getHeader().getMessageId());
+                                    } else if (smb.getHeader().getMessage() == SMB2MessageCommandCode.SMB2_LOGOFF
+                                            && smb.getHeader().getSessionId() == failedSession.get()) {
+                                        assertTrue(java.security.MessageDigest.isEqual(originalKey.get(), key), "Abort must use the original signing key");
+                                        abortMids.add(smb.getHeader().getMessageId());
+                                    }
+                                } catch (IllegalAccessException failure) { throw new AssertionError(failure); }
+                            }
+                            delegate.write(packet);
+                        }
+                    };
+                }).build();
+        try (SMBClient client = new SMBClient(SmbConfig.builder(config)
+                .withSigningAlgorithms(SMB3SigningAlgorithm.AES_CMAC).build());
+             Connection caller = new Connection(config, client, new SMBEventBus(), client.getServerList())) {
+            caller.connect("127.0.0.1", port);
+            try (Session older = caller.authenticate(authentication());
+                 DiskShare share = (DiskShare) older.connectShare("share")) {
+            String name = "bootstrap-abort-" + UUID.randomUUID() + ".bin";
+            try (File file = share.openFile(name, EnumSet.of(AccessMask.GENERIC_READ, AccessMask.GENERIC_WRITE),
+                    EnumSet.of(FileAttributes.FILE_ATTRIBUTE_NORMAL), SMB2ShareAccess.ALL,
+                    SMB2CreateDisposition.FILE_CREATE, EnumSet.noneOf(SMB2CreateOptions.class))) {
+                byte[] expected = new byte[131077]; new Random(57).nextBytes(expected); verifyContents(file, expected);
+                int before = transports.size();
+                Field signerField = Connection.class.getDeclaredField("signatory"); signerField.setAccessible(true);
+                Signatory actualSigner = (Signatory) signerField.get(caller);
+                signerField.set(caller, new Signatory() {
+                    public SMB2Packet sign(SMB2Packet packet, SecretKey key) { return actualSigner.sign(packet, key); }
+                    public boolean verify(SMB2PacketData packet, SecretKey key) {
+                        if (rejecting.get() && packet.getHeader().getMessage() == SMB2MessageCommandCode.SMB2_SESSION_SETUP
+                                && packet.getHeader().getSessionId() == failedSession.get() && packet.getHeader().getStatusCode() == 0) {
+                            assertTrue(actualSigner.verify(packet, key), "Genuine final binding reply must verify before client-input corruption");
+                            byte[] corrupted = Arrays.copyOfRange(packet.getDataBuffer().array(),
+                                    packet.getHeader().getHeaderStartPosition(), packet.getHeader().getMessageEndPosition());
+                            corrupted[48] ^= 1;
+                            try { return actualSigner.verify(new SMB2PacketData(corrupted), key); }
+                            catch (com.hierynomus.protocol.commons.buffer.Buffer.BufferException failure) { throw new AssertionError(failure); }
+                        }
+                        return actualSigner.verify(packet, key);
+                    }
+                });
+                rejecting.set(true);
+                com.hierynomus.smbj.common.SMBRuntimeException failure = assertThrows(
+                        com.hierynomus.smbj.common.SMBRuntimeException.class, () -> caller.authenticate(authentication()));
+                assertNotNull(failure.getCause(), failure.getClass().getSimpleName() + ": " + failure.getMessage());
+                assertTrue(failure.getCause().getMessage().contains("response signature is invalid"));
+                assertEquals(before + 1, transports.size());
+                assertFalse(transports.get(before).isConnected());
+                assertEquals(Arrays.asList(3L), abortMids);
+                assertEquals(2, bindingMids.size()); assertFalse(bindingMids.contains(3L));
+                assertTrue(caller.isConnected()); assertEquals(1, caller.getSessionTable().activeSessions().size());
+                assertSame(older, caller.getSessionTable().find(older.getSessionId()));
+                expected[0] ^= 1; verifyContents(file, expected);
+                rejecting.set(false);
+                try (Session retried = caller.authenticate(authentication())) { assertSame(caller, retried.getConnection()); }
+                expected[1] ^= 1; verifyContents(file, expected);
+            } finally { share.rm(name); }
+            }
+        }
+        assertTrue(transports.stream().noneMatch(TransportLayer::isConnected));
+        System.out.println("PUBLIC_GMAC_COMPLETE run=bootstrap-final-signature-failure signing=AES_GMAC abortMID=3 privateRootClosed=true callerPreserved=true retry=true");
+    }
+
+    private static void echo(Session session) throws Exception {
+        SMB2Echo request = new SMB2Echo(SMB2Dialect.SMB_3_1_1);
+        request.getHeader().setSessionId(session.getSessionId());
+        assertEquals(0, session.<SMB2Echo>send(request).get(5, TimeUnit.SECONDS).getHeader().getStatusCode());
     }
 
     private static AuthenticationContext authentication() {

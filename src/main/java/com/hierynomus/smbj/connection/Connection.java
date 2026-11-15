@@ -79,6 +79,7 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
     private IncomingPacketHandler packetHandlerChain;
 
     private ConnectionContext connectionContext;
+    private InetSocketAddress remoteAddress;
     private final LeaseManager leaseManager = new LeaseManager();
     private SessionTable sessionTable = new SessionTable();
     private SessionTable preauthSessionTable = new SessionTable();
@@ -166,6 +167,7 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
             throw failure;
         }
         this.connectionContext = new ConnectionContext(config.getClientGuid(), hostname, port, config);
+        this.remoteAddress = address;
         try {
             transport.connect(address);
             failure = error.get();
@@ -267,6 +269,50 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
      * @return a (new) Session that is authenticated for the user.
      */
     public Session authenticate(AuthenticationContext authContext) {
+        if (client != null && config.isSigningEnabled()
+                && connectionContext.getSigningAlgorithm() == SMB3SigningAlgorithm.AES_GMAC
+                && connectionContext.getServerCapabilities().contains(SMB2GlobalCapability.SMB2_GLOBAL_CAP_MULTI_CHANNEL)) {
+            try {
+                return authenticateWithBootstrap(authContext);
+            } catch (IOException failure) {
+                throw new com.hierynomus.smbj.common.SMBRuntimeException(failure);
+            }
+        }
+        return authenticateDirect(authContext);
+    }
+
+    private Session authenticateWithBootstrap(AuthenticationContext authContext) throws IOException {
+        Connection bootstrap = new Connection(config, client, bus, serverList);
+        Session session = null;
+        Throwable primary = null;
+        try {
+            client.registerBootstrapConnection(bootstrap);
+            bootstrap.connect(getRemoteHostname(), remoteAddress);
+            session = bootstrap.authenticateDirect(authContext);
+            session.prepareBootstrapChannel(this);
+            bind(session);
+            client.publishBootstrapChannel(session, bootstrap, this);
+            bootstrap.close(true);
+            return session;
+        } catch (IOException | RuntimeException | Error failure) {
+            primary = failure;
+            if (session != null) {
+                try { session.close(); }
+                catch (IOException | RuntimeException cleanup) { if (cleanup != failure) failure.addSuppressed(cleanup); }
+            }
+            throw failure;
+        } finally {
+            try { bootstrap.close(true); }
+            catch (IOException cleanup) {
+                if (primary == null) throw cleanup;
+                if (cleanup != primary) primary.addSuppressed(cleanup);
+            } finally {
+                client.releaseBootstrapConnection(bootstrap);
+            }
+        }
+    }
+
+    private Session authenticateDirect(AuthenticationContext authContext) {
         return new SMBSessionBuilder(this, config, new SMBSessionBuilder.SessionFactory() {
             @Override
             public Session createSession(AuthenticationContext context) {
@@ -293,7 +339,7 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
         try {
             boolean gmac = connectionContext.getSigningAlgorithm() == SMB3SigningAlgorithm.AES_GMAC;
             // A real authenticated session keeps the connection eligible for collision ECHOs.
-            try (Session auxiliary = gmac ? authenticate(session.getAuthenticationContext()) : null) {
+            try (Session auxiliary = gmac ? authenticateDirect(session.getAuthenticationContext()) : null) {
                 return builder.bind(session, signatory, ownsTransport, auxiliary);
             }
         } catch (com.hierynomus.smbj.common.SMBRuntimeException failure) {
@@ -333,7 +379,8 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
     }
 
     public <T extends SMB2Packet> Future<T> sendOriginalKey(SMB2Packet packet, Session session) throws TransportException {
-        return send(packet, session::reserveOriginalKeyMessageId);
+        return send(packet, messageId -> session.reserveOriginalKeyMessageId(this, messageId,
+                packet.getHeader().getMessage() == SMB2MessageCommandCode.SMB2_LOGOFF));
     }
 
     private <T extends SMB2Packet> Future<T> send(SMB2Packet packet, LongPredicate messageIdReservation) throws TransportException {

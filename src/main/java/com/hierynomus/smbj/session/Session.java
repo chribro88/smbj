@@ -61,8 +61,12 @@ public class Session implements AutoCloseable {
     private static final Logger logger = LoggerFactory.getLogger(Session.class);
     private long sessionId;
 
-    private final Connection connection;
+    private volatile Connection connection;
     private final com.hierynomus.smbj.connection.LeaseManager leaseManager = new com.hierynomus.smbj.connection.LeaseManager();
+    private volatile Connection originalSigningConnection;
+    private volatile Connection bootstrapAnchor;
+    private final java.util.Set<Long> bootstrapMessageIds = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private final java.util.concurrent.atomic.AtomicLong bootstrapAbortMessageId = new java.util.concurrent.atomic.AtomicLong(-1);
     private final SmbConfig config;
     private SMBEventBus bus;
     private final PathResolver pathResolver;
@@ -94,6 +98,7 @@ public class Session implements AutoCloseable {
 
     public Session(Connection connection, SmbConfig config, AuthenticationContext userCredentials, SMBEventBus bus, PathResolver pathResolver, Signatory signatory, PacketEncryptor encryptor) {
         this.connection = connection;
+        this.originalSigningConnection = connection;
         asyncWrites.allowCoreThreadTimeOut(true);
         if (connection != null) {
             channels.add(connection);
@@ -428,6 +433,46 @@ public class Session implements AutoCloseable {
         }
     }
 
+    public void prepareBootstrapChannel(Connection caller) {
+        synchronized (channels) {
+            if (closing || closed || bootstrapAnchor != null || multichannel || caller == connection) {
+                throw new IllegalStateException("Cannot prepare this session for bootstrap binding");
+            }
+            long abortId = originalKeyMessageIdReservation.get();
+            if (abortId == -1L) throw new IllegalStateException("SMB MessageId space exhausted");
+            bootstrapAbortMessageId.set(abortId);
+            initializeOriginalKeyMessageIdReservation(abortId + 1);
+            bootstrapAnchor = caller;
+        }
+    }
+
+    public void adoptBootstrapChannel(Connection bootstrap, Connection channel) {
+        synchronized (channels) {
+            if (connection != bootstrap || bootstrapAnchor != channel || closing || closed || channelsFailed.get()
+                    || !channels.contains(channel) || !channelKeys.containsKey(channel) || channel.isClosed()) {
+                throw new IllegalStateException("Cannot adopt an unverified or inactive bootstrap channel");
+            }
+            connection = channel;
+            originalSigningConnection = null;
+            bootstrapAnchor = null;
+        }
+    }
+
+    public boolean reserveOriginalKeyMessageId(Connection sender, long messageId, boolean logoff) {
+        if (messageId == -1L) return false;
+        if (logoff && sender == originalSigningConnection && bootstrapAnchor != null
+                && bootstrapAbortMessageId.compareAndSet(messageId, -1)) {
+            return true;
+        }
+        if (sender == bootstrapAnchor) {
+            if (Long.compareUnsigned(messageId, originalKeyMessageIdReservation.get()) < 0) return false;
+            if (bootstrapMessageIds.size() >= 16) throw new IllegalStateException("Bootstrap authentication exceeded exchange limit");
+            return bootstrapMessageIds.add(messageId);
+        }
+        if (bootstrapMessageIds.contains(messageId)) return false;
+        return reserveOriginalKeyMessageId(messageId);
+    }
+
     public Connection getConnection() {
         return connection;
     }
@@ -516,8 +561,8 @@ public class Session implements AutoCloseable {
             return selected.send(packet);
         }
         SMB2Packet signed = signatory.sign(packet, signingKey);
-        if (signingKey != null && selected == connection && connection.getConnectionContext() != null
-                && connection.getConnectionContext().getSigningAlgorithm() == SMB3SigningAlgorithm.AES_GMAC) {
+        if (signingKey != null && selected == originalSigningConnection && selected.getConnectionContext() != null
+                && selected.getConnectionContext().getSigningAlgorithm() == SMB3SigningAlgorithm.AES_GMAC) {
             return selected.sendOriginalKey(signed, this);
         }
         return selected.send(signed);

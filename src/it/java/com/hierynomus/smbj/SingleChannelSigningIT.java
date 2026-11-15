@@ -93,8 +93,9 @@ class SingleChannelSigningIT {
                     assertEquals(SMB3SigningAlgorithm.AES_GMAC, algorithm);
                     Connection secondary = client.openChannel(session, hostname(), Integer.parseInt(port));
                     assertEquals(SMB3SigningAlgorithm.AES_GMAC, secondary.getConnectionContext().getSigningAlgorithm());
-                    assertEquals(2, transports.size());
-                    assertTrue(transports.get(1).isConnected());
+                    assertEquals(3, transports.size());
+                    assertFalse(transports.get(1).isConnected(), "Private bootstrap was retired before authentication returned");
+                    assertTrue(transports.get(2).isConnected());
                     assertEquals(2, session.getChannelCount());
                 }
                 assertEquals(algorithm == SMB3SigningAlgorithm.AES_GMAC ? 2 : 1, session.getChannelCount());
