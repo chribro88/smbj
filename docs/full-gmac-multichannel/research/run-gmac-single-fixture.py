@@ -18,6 +18,7 @@ parser.add_argument('--output', type=Path, required=True)
 profile = parser.add_mutually_exclusive_group()
 profile.add_argument('--java8-home', type=Path)
 profile.add_argument('--async-cancel', action='store_true')
+profile.add_argument('--public-binding', action='store_true')
 profile.add_argument('--public-anchor-research', action='store_true')
 profile.add_argument('--bootstrap-abort-research', action='store_true')
 profile.add_argument('--unsigned-echo-research', action='store_true')
@@ -43,7 +44,10 @@ if arguments.unsigned_echo_research:
 if arguments.per_request_research:
     if os.environ.get('SMBJ_GMAC_AUX_RESEARCH') != 'true' or not Path('src/it/java/com/hierynomus/smbj/connection/GmacConcurrentBootstrapIT.java').is_file():
         parser.error('--per-request-research requires the detached research checkout and explicit opt-in')
-if arguments.per_request_research:
+if arguments.public_binding:
+    test_class, expected_count, marker, label = ('com.hierynomus.smbj.connection.PublicGmacBindingIT', 2,
+                                               'PUBLIC_GMAC_COMPLETE ', 'public multichannel')
+elif arguments.per_request_research:
     test_class, expected_count, marker, label = ('com.hierynomus.smbj.connection.GmacConcurrentBootstrapIT', 7,
                                                'AUXCON_COMPLETE ', 'per-request reservation research')
 elif arguments.unsigned_echo_research:

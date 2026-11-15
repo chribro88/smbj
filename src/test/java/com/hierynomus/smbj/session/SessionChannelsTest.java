@@ -61,6 +61,48 @@ class SessionChannelsTest {
         return result;
     }
 
+    @Test
+    void closeDisposesOwnedChannelsAndPreservesBorrowedConnections() throws Exception {
+        com.hierynomus.smbj.event.SMBEventBus bus = new com.hierynomus.smbj.event.SMBEventBus();
+        when(signatory.sign(any(), any())).thenAnswer(call -> call.getArgument(0));
+        Session session = new Session(primary, SmbConfig.createDefaultConfig(), null, bus, null, signatory, null);
+        session.getSessionContext().setSigningKey(primaryKey);
+        session.addBorrowedChannel(secondary, secondaryKey);
+        Connection owned = connection();
+        session.addChannel(owned, secondaryKey);
+        com.hierynomus.mssmb2.messages.SMB2Logoff response =
+                new com.hierynomus.mssmb2.messages.SMB2Logoff(SMB2Dialect.SMB_3_1_1, 0);
+        doReturn(CompletableFuture.completedFuture(response)).when(primary).send(any());
+
+        session.close();
+
+        verify(owned).close(true);
+        verify(secondary, never()).close(anyBoolean());
+        verify(primary, never()).close(anyBoolean());
+        assertEquals(0, session.getChannelCount());
+    }
+
+    @Test
+    void closeAbortsOwnedPendingConnectionsAndLeavesBorrowedAttemptsUnpublished() throws Exception {
+        com.hierynomus.smbj.event.SMBEventBus bus = new com.hierynomus.smbj.event.SMBEventBus();
+        when(signatory.sign(any(), any())).thenAnswer(call -> call.getArgument(0));
+        Session session = new Session(primary, SmbConfig.createDefaultConfig(), null, bus, null, signatory, null);
+        session.getSessionContext().setSigningKey(primaryKey);
+        Connection owned = connection();
+        assertTrue(session.beginBinding(owned, true));
+        assertTrue(session.beginBinding(secondary, false));
+        doReturn(CompletableFuture.completedFuture(
+                new com.hierynomus.mssmb2.messages.SMB2Logoff(SMB2Dialect.SMB_3_1_1, 0)))
+                .when(primary).send(any());
+
+        session.close();
+
+        verify(owned).close(true);
+        verify(secondary, never()).close(anyBoolean());
+        assertThrows(IllegalStateException.class, () -> session.addBorrowedChannel(secondary, secondaryKey));
+        assertThrows(java.io.IOException.class, () -> session.beginBinding(secondary, false));
+    }
+
     // Behavioral regression: go-smb2 7f69f658, TestSessionChannelsSelectLiveConnections.
     @Test
     void distributesRequestsWithEachChannelsOwnSigningKey() throws Exception {

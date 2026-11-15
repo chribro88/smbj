@@ -116,7 +116,7 @@ class SMBChannelAdmissionTest {
     }
 
     @Test
-    void gmacRejectionLeavesExistingFileUsableAndCallerOwnedCandidateOpen() throws Exception {
+    void failedGmacAuxiliaryAuthenticationLeavesExistingFileUsableAndBorrowedConnectionOpen() throws Exception {
         try (Fixture fixture = new Fixture(Operation.WRITE, MIB, MIB, MIB, MIB)) {
             DiskShare share = (DiskShare) fixture.session.connectShare("before");
             File file = fixture.open(share);
@@ -124,8 +124,8 @@ class SMBChannelAdmissionTest {
             set(fixture.candidate.getConnectionContext(), "signingAlgorithm", SMB3SigningAlgorithm.AES_GMAC);
             fixture.session.getSessionContext().setSigningKey(new SecretKeySpec(new byte[16], "AES-GMAC"));
             IOException failure = assertThrows(IOException.class, () -> fixture.candidate.bind(fixture.session));
-            assertTrue(failure.getMessage().contains("nonce uniqueness"));
-            assertEquals(0, fixture.candidateWire.bindings);
+            assertTrue(failure.getMessage().contains("auxiliary authentication"));
+            assertEquals(1, fixture.candidateWire.bindings, "Only auxiliary authentication reached the peer");
             verifyNoInteractions(fixture.candidateSigner);
             assertTrue(fixture.candidateTable().activeSessions().isEmpty());
             assertFalse(fixture.candidate.isClosed());

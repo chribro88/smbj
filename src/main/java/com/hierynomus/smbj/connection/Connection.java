@@ -277,17 +277,48 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
 
     // CUSTOM ADDED: bind this independent physical connection to an existing logical session.
     public Session bind(Session session) throws IOException {
-        if (owningSession != null && owningSession != session) {
+        return bind(session, false);
+    }
+
+    public Session bind(Session session, boolean ownsTransport) throws IOException {
+        if (ownsTransport && owningSession != null && owningSession != session) {
             throw new IOException("SMB channel belongs to a different session");
         }
-        boolean registered = session.beginBinding(this);
+        if (sessionTable.find(session.getSessionId()) != null) {
+            throw new IOException("Connection already contains this SMB session");
+        }
+        SMBSessionBuilder builder = new SMBSessionBuilder(this, config, null);
+        builder.validateBinding(session);
+        boolean registered = session.beginBinding(this, ownsTransport);
         try {
-            return new SMBSessionBuilder(this, config, null).bind(session, signatory);
+            boolean gmac = connectionContext.getSigningAlgorithm() == SMB3SigningAlgorithm.AES_GMAC;
+            // A real authenticated session keeps the connection eligible for collision ECHOs.
+            try (Session auxiliary = gmac ? authenticate(session.getAuthenticationContext()) : null) {
+                return builder.bind(session, signatory, ownsTransport, auxiliary);
+            }
+        } catch (com.hierynomus.smbj.common.SMBRuntimeException failure) {
+            if (failure.getCause() instanceof IOException) {
+                throw new IOException("SMB auxiliary authentication failed", failure);
+            }
+            throw failure;
         } finally {
             if (registered) {
                 session.endBinding(this);
             }
         }
+    }
+
+    boolean hasIndependentSigningSession(Session target) {
+        javax.crypto.SecretKey original = target.getSessionContext().getSigningKey();
+        if (original == null) return false;
+        for (Session established : sessionTable.activeSessions()) {
+            javax.crypto.SecretKey key = established.getSessionContext().getSigningKey();
+            if (established != target && key != null && !established.isGuest() && !established.isAnonymous()
+                    && !java.security.MessageDigest.isEqual(original.getEncoded(), key.getEncoded())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

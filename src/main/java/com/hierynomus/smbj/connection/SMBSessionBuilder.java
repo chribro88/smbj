@@ -133,29 +133,19 @@ public class SMBSessionBuilder {
 
     // CUSTOM ADDED BEGIN: MS-SMB2 3.2.4.2.3 / 3.3.5.5.3, SMB 3.x channel binding.
     public Session bind(Session session, Signatory signatory) throws IOException {
-        if (connection.getOwningSession() != null && connection.getOwningSession() != session) {
+        return bind(session, signatory, true, null);
+    }
+
+    Session bind(Session session, Signatory signatory, boolean ownsTransport, Session auxiliary) throws IOException {
+        if (ownsTransport && connection.getOwningSession() != null && connection.getOwningSession() != session) {
             throw new IOException("SMB channel belongs to a different session");
         }
+        validateBinding(session);
         ConnectionContext original = session.getConnection().getConnectionContext();
         SMB2Dialect dialect = original.getNegotiatedProtocol().getDialect();
-        if (!dialect.isSmb3x()
-                || connectionContext.getNegotiatedProtocol().getDialect() != dialect
-                || !original.getServerGuid().equals(connectionContext.getServerGuid())
-                || !original.getClientGuid().equals(connectionContext.getClientGuid())
-                || original.getCipherId() != connectionContext.getCipherId()
-                || signingAlgorithm(original) != signingAlgorithm(connectionContext)
-                || original.isServerRequiresSigning() != connectionContext.isServerRequiresSigning()
-                || !connectionContext.getServerCapabilities().contains(com.hierynomus.mssmb2.SMB2GlobalCapability.SMB2_GLOBAL_CAP_MULTI_CHANNEL)
-                || !config.isSigningEnabled()
-                || session.isGuest() || session.isAnonymous() || session.getSessionContext().getSigningKey() == null) {
-            throw new IOException("SMB channel does not match the established authenticated SMB 3.x server/session policy");
-        }
-        if (signingAlgorithm(original) == SMB3SigningAlgorithm.AES_GMAC) {
-            throw new IOException("GMAC session binding is unsupported: signing nonce uniqueness cannot be guaranteed");
-        }
-        session.validateChannelLimits(connectionContext.getNegotiatedProtocol());
-        if (sessionTable.find(session.getSessionId()) != null) {
-            throw new IOException("Connection already contains this SMB session");
+        if (signingAlgorithm(original) == SMB3SigningAlgorithm.AES_GMAC
+                && !connection.hasIndependentSigningSession(session)) {
+            throw new IOException("GMAC binding nonce uniqueness requires an independent authenticated session");
         }
         boolean bound = false;
         // As in go-smb2 sessionSetupBinding, install established cipher keys before reading binding replies.
@@ -209,7 +199,9 @@ public class SMBSessionBuilder {
                             dialect == SMB2Dialect.SMB_3_1_1 ? signingAlgorithm() : AES_128_CMAC_ALGORITHM);
                     verifySessionSetupResponse(response, channelKey, signatory, "channel binding", exchange + 1);
                     connection.sessionSetupAccepted(response);
-                    session.addChannel(connection, channelKey);
+                    if (auxiliary != null) auxiliary.close();
+                    if (ownsTransport) session.addChannel(connection, channelKey);
+                    else session.addBorrowedChannel(connection, channelKey);
                     bound = true;
                     return session;
                 } else {
@@ -228,6 +220,27 @@ public class SMBSessionBuilder {
             if (!bound) {
                 sessionTable.removeSession(session.getSessionId());
             }
+        }
+    }
+
+    void validateBinding(Session session) throws IOException {
+        ConnectionContext original = session.getConnection().getConnectionContext();
+        SMB2Dialect dialect = original.getNegotiatedProtocol().getDialect();
+        if (!dialect.isSmb3x()
+                || connectionContext.getNegotiatedProtocol().getDialect() != dialect
+                || !original.getServerGuid().equals(connectionContext.getServerGuid())
+                || !original.getClientGuid().equals(connectionContext.getClientGuid())
+                || original.getCipherId() != connectionContext.getCipherId()
+                || signingAlgorithm(original) != signingAlgorithm(connectionContext)
+                || original.isServerRequiresSigning() != connectionContext.isServerRequiresSigning()
+                || !connectionContext.getServerCapabilities().contains(com.hierynomus.mssmb2.SMB2GlobalCapability.SMB2_GLOBAL_CAP_MULTI_CHANNEL)
+                || !config.isSigningEnabled()
+                || session.isGuest() || session.isAnonymous() || session.getSessionContext().getSigningKey() == null) {
+            throw new IOException("SMB channel does not match the established authenticated SMB 3.x server/session policy");
+        }
+        session.validateChannelLimits(connectionContext.getNegotiatedProtocol());
+        if (sessionTable.find(session.getSessionId()) != null) {
+            throw new IOException("Connection already contains this SMB session");
         }
     }
 

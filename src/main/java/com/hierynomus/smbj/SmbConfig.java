@@ -342,8 +342,8 @@ public final class SmbConfig {
 
         /**
          * Selects the SMB 3.1.1 signing algorithms to advertise, in preference order.
-         * GMAC is supported for single-channel sessions only. For multichannel, select AES_CMAC
-         * before connecting; GMAC binding is rejected because signing nonce uniqueness is not guaranteed.
+         * GMAC channel binding authenticates an auxiliary session when needed and reserves
+         * original-key MessageIds across the session before sending binding requests.
          */
         public Builder withSigningAlgorithms(SMB3SigningAlgorithm... algorithms) {
             if (algorithms == null || algorithms.length == 0 || Arrays.asList(algorithms).contains(null)) {

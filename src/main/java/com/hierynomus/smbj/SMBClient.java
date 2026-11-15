@@ -100,7 +100,7 @@ public class SMBClient implements Closeable {
                 channelConnections.add(channel);
             }
             channel.connect(session.getConnection().getRemoteHostname(), new java.net.InetSocketAddress(hostname, port));
-            channel.bind(session);
+            channel.bind(session, true);
             return channel;
         } catch (IOException | RuntimeException e) {
             try {

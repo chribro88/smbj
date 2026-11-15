@@ -3,9 +3,19 @@
 **Status:** OPEN — prerequisite to accepting the GMAC multichannel design.  
 **Scope:** Full SMB 3.1.1 GMAC support throughout SMBJ TCP multichannel.  
 **Evidence reviewed:** 13 November 2026.  
-**Deliverable:** A concrete protocol-compliant construction, implementation mapping and independently checked evidence. This document is a design decision record within the implementation plan; it is not an implemented solution.
+**Deliverable:** A concrete protocol-compliant construction, implementation mapping and independently checked evidence. This decision record includes a partial production implementation; full G0 acceptance is still open.
 
 Full GMAC remains mandatory. A CMAC-only release, disabled GMAC binding, or an unspecified nonce allocator does not close G0. Independent work on signing, lifecycle and admission can proceed, but the overall feature cannot be accepted as complete while G0 is open.
+
+The current public implementation uses the existing per-request reservation
+mechanism and an attempt-owned auxiliary session. It validates policy first,
+requires an independent signing key, reserves every binding round, and logs off
+the auxiliary session before publishing the verified target channel. Two real
+public-API Samba cases cover concurrent binding, channel replacement and borrowed
+transport ownership; the reused wire audit verifies 116 signed inputs without
+observed nonce reuse. This is implementation progress, with full lifetime, cost,
+failure and independent-server gates still open. See
+[validation-public-binding.json](validation-public-binding.json).
 
 ## 1. Decision to establish
 

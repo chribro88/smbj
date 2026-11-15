@@ -2,8 +2,9 @@
 
 The requested full feature is **incomplete**. The completion contract in
 [plan.md](plan.md) remains unchanged. G0 is open: this branch does not yet have a
-protocol-compliant, independently verified binding key/nonce uniqueness mechanism.
-The inherited GMAC-binding rejection remains containment and does not satisfy G0.
+fully qualified binding key/nonce lifetime mechanism. The public API now uses
+auxiliary authentication and per-request original-key reservations for GMAC
+binding; full lifetime, failure, cost and interoperability qualification remain open.
 An independent live Go/Samba trace now confirms the ordinary legitimate-binding
 collision in both directions; see [research evidence](research/README.md).
 
@@ -23,6 +24,40 @@ force-close without original-key LOGOFF. This remains an unselected bounded
 NTLM/direct-TCP/BC construction with quadratic padding cost; see
 [validation-auxiliary-concurrent.json](validation-auxiliary-concurrent.json) and
 [the concurrent record](research/concurrent/README.md).
+
+## Current production integration
+
+The public `SMBClient.openChannel` and `Connection.bind` paths now prepare a GMAC
+candidate with an independently authenticated auxiliary session. Policy and
+operation limits are checked before that authentication. The auxiliary signing
+key must differ in actual bytes from the target session's original key. Each
+binding round uses the existing session reservation callback and consumes
+colliding native MIDs with unsigned connection ECHOs. The auxiliary session is
+logged off before the verified channel is published. Cleanup failure removes
+the provisional target entry and cannot publish the channel.
+
+`openChannel` owns its new transport; direct `Connection.bind` borrows the
+caller's transport. Session close disposes owned active/pending channels and
+prevents late publication on borrowed candidates without closing their transports.
+The underlying signing, KDF, encryption and native credit/MID implementations
+remain the existing ones.
+
+Two native public-API cases pass on Samba 4.23.10, NTLM, Direct TCP and BC. They
+hold two concurrent binding attempts before their first socket write, preserve
+one open across channel loss/replacement, and verify borrowed-session continuity
+after target-session close. The reused independent JCE wire audit verifies 116
+signed inputs with zero observed distinct-message actual-key/nonce reuses. These
+run the production source directly, without a detached guard-removal patch.
+The combined `check` milestone passes **893 tests in 102 suites**, zero
+failures/errors/skips, with license and JaCoCo checks. The final native matrix
+also passes 16 cases across Direct/Async, BC/default JCE, GCM off/on and
+write-through off/on, with successful public GMAC binding and existing-open I/O.
+See [validation-public-binding.json](validation-public-binding.json).
+
+The general lifetime proof, bounded late-binding cost, public failure matrix,
+actual Java 8 multichannel run, Kerberos under this public orchestration and
+Windows/target ONTAP acceptance remain open. Earlier entries below describe their
+recorded historical source states, including the earlier unconditional GMAC guard.
 
 ## Inputs and history
 

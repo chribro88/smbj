@@ -60,6 +60,32 @@ import static org.mockito.Mockito.when;
 class ConnectionMessageIdReservationTest {
 
     @Test
+    void auxiliaryPreparationRequiresDifferentActualSigningKeyBytes() throws Exception {
+        TransportLayer<SMBPacket<?, ?>> transport = mock(TransportLayer.class);
+        when(transport.isConnected()).thenReturn(true);
+        Connection connection = connectionWithTransport(transport);
+        try {
+            Session main = mock(Session.class);
+            when(main.getSessionContext()).thenReturn(new com.hierynomus.smbj.session.SessionContext());
+            main.getSessionContext().setSigningKey(new javax.crypto.spec.SecretKeySpec(new byte[16], "AES-GMAC"));
+            Session auxiliary = mock(Session.class);
+            when(auxiliary.getSessionContext()).thenReturn(new com.hierynomus.smbj.session.SessionContext());
+            auxiliary.getSessionContext().setSigningKey(new javax.crypto.spec.SecretKeySpec(new byte[16], "AES-GMAC"));
+            connection.getSessionTable().registerSession(1L, main);
+            assertFalse(connection.hasIndependentSigningSession(main));
+            connection.getSessionTable().registerSession(2L, auxiliary);
+            assertFalse(connection.hasIndependentSigningSession(main), "Different session/key objects cannot hide equal key bytes");
+            byte[] different = new byte[16]; different[0] = 1;
+            auxiliary.getSessionContext().setSigningKey(new javax.crypto.spec.SecretKeySpec(different, "AES-GMAC"));
+            assertTrue(connection.hasIndependentSigningSession(main));
+            connection.getSessionTable().removeSession(2L);
+            assertFalse(connection.hasIndependentSigningSession(main));
+        } finally {
+            connection.close(true);
+        }
+    }
+
+    @Test
     void originalKeyReservationsAreMonotonicAndNeverReleased() {
         Session session = new Session(null, null, null, null, null, null, null);
         session.initializeOriginalKeyMessageIdReservation(3);

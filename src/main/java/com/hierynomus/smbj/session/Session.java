@@ -81,7 +81,8 @@ public class Session implements AutoCloseable {
     private final java.util.concurrent.atomic.AtomicInteger channelSequence = new java.util.concurrent.atomic.AtomicInteger();
     private final java.util.concurrent.atomic.AtomicLong originalKeyMessageIdReservation = new java.util.concurrent.atomic.AtomicLong();
     private volatile boolean multichannel;
-    private final java.util.Set<Connection> pendingChannels = new java.util.HashSet<>();
+    private final java.util.Map<Connection, Boolean> pendingChannels = new java.util.HashMap<>();
+    private final java.util.Set<Connection> ownedChannels = new java.util.HashSet<>();
     private boolean closing;
     private volatile boolean closed;
     private final ThreadPoolExecutor asyncWrites = new ThreadPoolExecutor(4, 4, 30, TimeUnit.SECONDS,
@@ -351,13 +352,18 @@ public class Session implements AutoCloseable {
     @Override
     public void close() throws IOException {
         java.util.List<Connection> pending;
+        java.util.Set<Connection> owned;
         synchronized (channels) {
             if (closing) {
                 return;
             }
             closing = true;
-            pending = new java.util.ArrayList<>(pendingChannels);
-            pendingChannels.removeIf(channel -> channel.getOwningSession() == this);
+            pending = new java.util.ArrayList<>();
+            for (java.util.Map.Entry<Connection, Boolean> entry : pendingChannels.entrySet()) {
+                if (entry.getValue()) pending.add(entry.getKey());
+            }
+            pendingChannels.clear();
+            owned = new java.util.HashSet<>(ownedChannels);
         }
         // Close pending transports before LOGOFF so authentication cannot publish a late channel.
         for (Connection channel : pending) {
@@ -374,7 +380,7 @@ public class Session implements AutoCloseable {
             logoff();
         } finally {
             for (Connection channel : channels) {
-                if (channel != connection && channel.getOwningSession() == this) {
+                if (channel != connection && owned.contains(channel)) {
                     try {
                         channel.close(true);
                     } catch (IOException e) {
@@ -386,6 +392,7 @@ public class Session implements AutoCloseable {
                 closed = true;
                 channels.clear();
                 channelKeys.clear();
+                ownedChannels.clear();
             }
             leaseManager.abort();
             if (bus != null) {
@@ -534,6 +541,14 @@ public class Session implements AutoCloseable {
      * @return
      */
     public void addChannel(Connection channel, SecretKey key) {
+        addChannel(channel, key, true);
+    }
+
+    public void addBorrowedChannel(Connection channel, SecretKey key) {
+        addChannel(channel, key, false);
+    }
+
+    private void addChannel(Connection channel, SecretKey key, boolean owned) {
         if (channel.isClosed() || !channel.isConnected()) {
             throw new IllegalStateException("SMB channel disconnected before binding completed");
         }
@@ -542,17 +557,22 @@ public class Session implements AutoCloseable {
                 throw new IllegalStateException("SMB session or candidate channel is closing or closed");
             }
             channelKeys.put(channel, key);
+            if (owned) ownedChannels.add(channel);
             channels.addIfAbsent(channel);
             multichannel = true;
         }
     }
 
     public boolean beginBinding(Connection channel) throws IOException {
+        return beginBinding(channel, true);
+    }
+
+    public boolean beginBinding(Connection channel, boolean owned) throws IOException {
         synchronized (channels) {
             if (closing || channelsFailed.get() || (multichannel && getChannelCount() == 0)) {
                 throw new IOException("SMB session is closing or has no surviving channels");
             }
-            return pendingChannels.add(channel);
+            return pendingChannels.putIfAbsent(channel, owned) == null;
         }
     }
 
@@ -575,6 +595,7 @@ public class Session implements AutoCloseable {
             if (channel.isClosed()) {
                 channels.remove(i);
                 channelKeys.remove(channel);
+                ownedChannels.remove(channel);
                 channelSequence.incrementAndGet();
             }
         }
@@ -590,6 +611,7 @@ public class Session implements AutoCloseable {
         synchronized (channels) {
             if (channels.remove(event.getConnection())) {
                 channelKeys.remove(event.getConnection());
+                ownedChannels.remove(event.getConnection());
                 if (multichannel) channelSequence.incrementAndGet();
             }
             lastChannel = channels.isEmpty();

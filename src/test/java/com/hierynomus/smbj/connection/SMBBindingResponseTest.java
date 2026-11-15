@@ -395,6 +395,23 @@ class SMBBindingResponseTest {
     }
 
     @org.junit.jupiter.api.Test
+    void failedAuxiliaryCleanupCannotPublishTheBoundChannel() throws Exception {
+        SMBSessionBuilder builder = builder(true);
+        Session auxiliary = mock(Session.class);
+        IOException failure = new IOException("Auxiliary LOGOFF failed");
+        doThrow(failure).when(auxiliary).close();
+        when(secondary.sendAndReceive(any())).thenAnswer(call -> {
+            MessageDigest hash = MessageDigest.getInstance("SHA-512");
+            hash.update(new byte[64]);
+            return response(0, true, false, channelKey(hash.digest(requestBytes(call.getArgument(0)))), 0);
+        });
+        assertSame(failure, assertThrows(IOException.class,
+                () -> builder.bind(session, new PacketSignatory(provider), true, auxiliary)));
+        verify(session, never()).addChannel(any(), any());
+        assertNull(bindingSessions.find(47L));
+    }
+
+    @org.junit.jupiter.api.Test
     void bindingMakesEstablishedCipherKeysAvailableBeforeChannelPublication() throws Exception {
         SMBSessionBuilder builder = builder(true);
         when(secondary.sendAndReceive(any())).thenAnswer(call -> {

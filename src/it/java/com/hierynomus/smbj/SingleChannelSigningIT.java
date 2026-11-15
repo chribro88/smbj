@@ -54,7 +54,7 @@ class SingleChannelSigningIT {
 
     @ParameterizedTest
     @MethodSource("signingConfigurations")
-    void existingFileWorksWithNegotiatedSigningAndAfterGmacBindingRejection(String port, boolean encryption,
+    void existingFileWorksWithNegotiatedSigningAndGmacChannelBinding(String port, boolean encryption,
             boolean writeThrough, boolean async, boolean jce) throws Exception {
         assumeTrue(port != null, "SMB_TEST_PORT enables dedicated server tests");
         List<TransportLayer<SMBPacket<?, ?>>> transports = new ArrayList<>();
@@ -91,12 +91,13 @@ class SingleChannelSigningIT {
                 SMB3SigningAlgorithm algorithm = primary.getConnectionContext().getSigningAlgorithm();
                 if (settings.getSigningAlgorithms().equals(Collections.singletonList(SMB3SigningAlgorithm.AES_GMAC))) {
                     assertEquals(SMB3SigningAlgorithm.AES_GMAC, algorithm);
-                    IOException failure = assertThrows(IOException.class, () -> client.openChannel(session, hostname(), Integer.parseInt(port)));
-                    assertTrue(failure.getMessage().contains("nonce uniqueness"));
+                    Connection secondary = client.openChannel(session, hostname(), Integer.parseInt(port));
+                    assertEquals(SMB3SigningAlgorithm.AES_GMAC, secondary.getConnectionContext().getSigningAlgorithm());
                     assertEquals(2, transports.size());
-                    assertFalse(transports.get(1).isConnected(), "openChannel closes its rejected owned transport");
+                    assertTrue(transports.get(1).isConnected());
+                    assertEquals(2, session.getChannelCount());
                 }
-                assertEquals(1, session.getChannelCount());
+                assertEquals(algorithm == SMB3SigningAlgorithm.AES_GMAC ? 2 : 1, session.getChannelCount());
                 byte[] actual = new byte[bytes.length];
                 assertEquals(bytes.length, file.read(actual, 0));
                 assertArrayEquals(bytes, actual);
