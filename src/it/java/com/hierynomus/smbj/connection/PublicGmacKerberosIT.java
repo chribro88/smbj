@@ -471,7 +471,7 @@ class PublicGmacKerberosIT {
                             assertEquals(0, main.getChannelCount(), "CLOSE on the retired open must fail locally");
                         }
                         assertTrue(peerRetired);
-                        assertThrows(com.hierynomus.smbj.common.SMBRuntimeException.class, share::close);
+                        assertThrows(TransportException.class, share::close);
                     }
                     main.close(); assertTrue(caller.isConnected());
                     if (older != null) echo(older, caller);
