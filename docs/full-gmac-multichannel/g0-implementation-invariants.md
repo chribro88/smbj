@@ -134,3 +134,4 @@ profiles. Binding remains signed and unencrypted.
 - [Client-close and candidate lifecycle](validation-bootstrap-lifecycle.json)
 - [Public Kerberos](validation-public-kerberos.json)
 - [Public reauthentication](validation-public-reauthentication.json)
+- [Public multichannel CANCEL and CHANGE_NOTIFY](validation-public-cancellation.json)

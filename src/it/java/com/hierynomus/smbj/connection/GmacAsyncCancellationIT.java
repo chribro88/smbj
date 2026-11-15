@@ -18,6 +18,7 @@ package com.hierynomus.smbj.connection;
 import com.hierynomus.msdtyp.AccessMask;
 import com.hierynomus.mssmb2.*;
 import com.hierynomus.mssmb2.messages.SMB2ChangeNotifyResponse;
+import com.hierynomus.mssmb2.messages.SMB2Echo;
 import com.hierynomus.protocol.commons.buffer.Buffer;
 import com.hierynomus.protocol.transport.*;
 import com.hierynomus.security.bc.BCSecurityProvider;
@@ -51,7 +52,7 @@ import static com.hierynomus.smbj.testing.MultichannelTestSupport.*;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
-@Timeout(45)
+@Timeout(60)
 class GmacAsyncCancellationIT {
     @ParameterizedTest
     @CsvSource({"false,false", "false,true", "true,false", "true,true"})
@@ -61,6 +62,7 @@ class GmacAsyncCancellationIT {
         Observer observer = new Observer();
         SmbConfig settings = SmbConfig.builder(config(false))
                 .withSigningAlgorithms(SMB3SigningAlgorithm.AES_GMAC)
+                .withDirectoryLeasingEnabled(false)
                 .withSecurityProvider(jce ? new JceSecurityProvider() : new BCSecurityProvider())
                 .withAuthenticators(new NtlmAuthenticator.Factory())
                 .withTransportLayerFactory((handlers, configuration) -> {
@@ -69,55 +71,87 @@ class GmacAsyncCancellationIT {
                             : new DirectTcpTransportFactory().createTransportLayer(observed, configuration);
                 }).build();
         String directoryName = "async-gmac-" + UUID.randomUUID();
-        byte[] key;
         try (SMBClient client = new SMBClient(settings);
              Connection connection = client.connect(hostname(), Integer.parseInt(ports.split(",")[0].trim()));
              Session session = connection.authenticate(authentication());
              DiskShare share = (DiskShare) session.connectShare(shareName())) {
             assertEquals(SMB3SigningAlgorithm.AES_GMAC, connection.getConnectionContext().getSigningAlgorithm());
             assertEquals(1, session.getChannelCount());
-            key = session.getSessionContext().getSigningKey().getEncoded().clone();
+            observer.bound(session, connection);
+            Connection secondary = client.openChannel(session, hostname(), Integer.parseInt(ports.split(",")[0].trim()));
+            observer.bound(session, secondary);
+            assertEquals(2, session.getChannelCount());
             share.mkdir(directoryName);
-            try (Directory directory = share.openDirectory(directoryName, EnumSet.of(AccessMask.GENERIC_READ),
-                    null, SMB2ShareAccess.ALL, SMB2CreateDisposition.FILE_OPEN, null)) {
-                for (int round = 0; round < 4; round++) {
-                    observer.arm(round == 0);
-                    Future<SMB2ChangeNotifyResponse> watch = directory.watchAsync(
-                            EnumSet.of(SMB2CompletionFilter.FILE_NOTIFY_CHANGE_FILE_NAME), false);
-                    if (round == 0) {
-                        try {
-                            assertTrue(observer.receivedPending.await(5, TimeUnit.SECONDS));
-                            assertFalse(watch.isDone());
-                            assertTrue(watch.cancel(true), "CANCEL snapshots sync identity before pending publication");
-                        } finally { observer.releasePending.countDown(); }
+            try {
+                for (int cycle = 0; cycle < 2; cycle++) {
+                    String watchedDirectory = directoryName + "/" + cycle;
+                    share.mkdir(watchedDirectory);
+                    try (Directory directory = share.openDirectory(watchedDirectory, EnumSet.of(AccessMask.GENERIC_READ),
+                            null, SMB2ShareAccess.ALL, SMB2CreateDisposition.FILE_OPEN, null)) {
+                        for (int phase = 0; phase < 4; phase++) {
+                            observer.arm(phase == 0);
+                            Future<SMB2ChangeNotifyResponse> watch = directory.watchAsync(
+                                    EnumSet.of(SMB2CompletionFilter.FILE_NOTIFY_CHANGE_FILE_NAME), false);
+                            if (phase == 0) {
+                                try {
+                                    assertTrue(observer.receivedPending.await(5, TimeUnit.SECONDS));
+                                    advanceScheduler(session, observer);
+                                    if (cycle == 1) {
+                                        observer.echoOwner.close(true);
+                                        Connection replacement = client.openChannel(session, hostname(), Integer.parseInt(ports.split(",")[0].trim()));
+                                        observer.bound(session, replacement);
+                                        assertEquals(2, session.getChannelCount());
+                                    }
+                                    assertFalse(watch.isDone());
+                                    assertTrue(watch.cancel(true), "CANCEL snapshots sync identity before pending publication");
+                                } finally { observer.releasePending.countDown(); }
+                            }
+                            assertTrue(observer.pending.await(5, TimeUnit.SECONDS), "Native STATUS_PENDING must reach Request");
+                            if (phase > 0) {
+                                assertFalse(watch.isDone());
+                                advanceScheduler(session, observer);
+                            }
+                            if (phase < 3) {
+                                if (phase == 1) assertTrue(watch.cancel(true));
+                                if (phase == 2) cancelConcurrently(watch);
+                                assertFalse(watch.cancel(true), "A second cancel must not emit another GMAC input");
+                                assertThrows(CancellationException.class, () -> watch.get(5, TimeUnit.SECONDS));
+                            } else {
+                                String name = watchedDirectory + "/event.bin";
+                                try (File ignored = share.openFile(name, EnumSet.of(AccessMask.GENERIC_WRITE), null,
+                                        SMB2ShareAccess.ALL, SMB2CreateDisposition.FILE_CREATE, null)) {
+                                    SMB2ChangeNotifyResponse response = watch.get(5, TimeUnit.SECONDS);
+                                    assertEquals(1, response.getFileNotifyInfoList().size());
+                                    assertEquals("event.bin", response.getFileNotifyInfoList().get(0).getFileName());
+                                } finally { share.rm(name); }
+                                assertFalse(watch.cancel(true), "A completed notification cannot emit CANCEL");
+                            }
+                            assertTrue(observer.finished.await(5, TimeUnit.SECONDS), "Final peer response must be processed");
+                            assertSame(observer.requestOwner, observer.completedOwner, "Final response stays on the request owner");
+                            assertNull(observer.completedOwner.outstandingRequests.getRequestByMessageId(observer.completedMid),
+                                    "Final response retires the request even when its Future was cancelled");
+                            echo(session);
+                        }
+                        assertTrue(observer.completedOwner.isConnected());
+                        assertEquals(2, session.getChannelCount());
                     }
-                    assertTrue(observer.pending.await(5, TimeUnit.SECONDS), "Native STATUS_PENDING must reach Request");
-                    if (round > 0) assertFalse(watch.isDone());
-                    if (round < 3) {
-                        if (round == 1) assertTrue(watch.cancel(true));
-                        if (round == 2) cancelConcurrently(watch);
-                        assertFalse(watch.cancel(true), "A second cancel must not emit another GMAC input");
-                        assertThrows(CancellationException.class, () -> watch.get(5, TimeUnit.SECONDS));
-                    } else {
-                        String name = directoryName + "/event.bin";
-                        try (File ignored = share.openFile(name, EnumSet.of(AccessMask.GENERIC_WRITE), null,
-                                SMB2ShareAccess.ALL, SMB2CreateDisposition.FILE_CREATE, null)) {
-                            SMB2ChangeNotifyResponse response = watch.get(5, TimeUnit.SECONDS);
-                            assertEquals(1, response.getFileNotifyInfoList().size());
-                            assertEquals("event.bin", response.getFileNotifyInfoList().get(0).getFileName());
-                        } finally { share.rm(name); }
-                        assertFalse(watch.cancel(true), "A completed notification cannot emit CANCEL");
-                    }
-                    assertTrue(observer.finished.await(5, TimeUnit.SECONDS), "Final peer response must be processed");
-                    assertNull(connection.outstandingRequests.getRequestByMessageId(observer.completedMid),
-                            "Final response retires the request even when its Future was cancelled");
                 }
-                assertTrue(connection.isConnected());
             } finally { share.rmdir(directoryName, true); }
         }
-        observer.verify(key);
-        System.out.printf("GMAC_ASYNC java=%s provider=%s transport=%s signing=AES_GMAC encrypt=false pending=4 cancels=3 syncCancels=1 asyncCancels=2 cancelledFinals=3 successFinals=1 verifiedTags=11 distinctNonces=11%n",
+        observer.verify();
+        System.out.printf("GMAC_ASYNC java=%s provider=%s transport=%s signing=AES_GMAC encrypt=false channels=2 replacements=1 pending=8 cancels=6 syncCancels=2 asyncCancels=4 cancelledFinals=6 successFinals=2 verifiedTags=22 distinctNonces=22%n",
                 System.getProperty("java.version"), jce ? "default-JCE" : "BC", async ? "async" : "direct");
+    }
+
+    private static void advanceScheduler(Session session, Observer observer) throws Exception {
+        echo(session);
+        assertNotSame(observer.requestOwner, observer.echoOwner, "Round robin moved ordinary traffic off the pending request owner");
+    }
+
+    private static void echo(Session session) throws Exception {
+        SMB2Echo echo = new SMB2Echo(SMB2Dialect.SMB_3_1_1);
+        echo.getHeader().setSessionId(session.getSessionId());
+        assertEquals(0, session.<SMB2Echo>send(echo).get(5, TimeUnit.SECONDS).getHeader().getStatusCode());
     }
 
     private static void cancelConcurrently(Future<?> watch) throws Exception {
@@ -146,8 +180,19 @@ class GmacAsyncCancellationIT {
     private static final class Observer {
         private final List<byte[]> messages = new ArrayList<>();
         private final Set<byte[]> incoming = new HashSet<>();
+        private final Map<byte[], Connection> owners = new IdentityHashMap<>();
+        private final Map<Connection, byte[]> keys = new IdentityHashMap<>();
+        private final Map<Connection, Long> nextMessageId = new IdentityHashMap<>();
+        private final Map<Connection, Integer> connectionIds = new IdentityHashMap<>();
         private volatile CountDownLatch pending, finished, receivedPending, releasePending;
+        private volatile Connection requestOwner, completedOwner, echoOwner;
         private long completedMid;
+
+        synchronized void bound(Session session, Connection connection) {
+            byte[] key = session.getSigningKey(new SMB2Echo(SMB2Dialect.SMB_3_1_1).getHeader(), false, connection).getEncoded().clone();
+            assertFalse(Arrays.equals(session.getSessionContext().getSigningKey().getEncoded(), key), "Notifications use bound key D, not original K");
+            keys.put(connection, key);
+        }
 
         void arm(boolean holdPending) {
             pending = new CountDownLatch(1);
@@ -157,15 +202,17 @@ class GmacAsyncCancellationIT {
         }
 
         PacketHandlers<SMBPacketData<?>, SMBPacket<?, ?>> wrap(PacketHandlers<SMBPacketData<?>, SMBPacket<?, ?>> handlers) {
+            Connection owner = (Connection) handlers.getReceiver();
+            connectionIds.put(owner, connectionIds.size());
             PacketSerializer<SMBPacket<?, ?>, SMBBuffer> serializer = packet -> {
                 SMBBuffer buffer = (SMBBuffer) handlers.getSerializer().write(packet);
-                capture(buffer, false);
+                capture(buffer, false, owner);
                 return buffer;
             };
             return new PacketHandlers<>(serializer, new PacketReceiver<SMBPacketData<?>>() {
                 @Override
                 public void handle(SMBPacketData<?> packet) throws TransportException {
-                    byte[] message = capture(packet.getDataBuffer(), true);
+                    byte[] message = capture(packet.getDataBuffer(), true, owner);
                     if (message != null && status(message) == 0x103) {
                         receivedPending.countDown();
                         try {
@@ -180,6 +227,7 @@ class GmacAsyncCancellationIT {
                         if (status(message) == 0x103) pending.countDown();
                         else {
                             completedMid = ByteBuffer.wrap(message).order(ByteOrder.LITTLE_ENDIAN).getLong(24);
+                            completedOwner = owner;
                             finished.countDown();
                         }
                     }
@@ -190,32 +238,46 @@ class GmacAsyncCancellationIT {
             }, handlers.getPacketFactory());
         }
 
-        private synchronized byte[] capture(Buffer<?> buffer, boolean server) {
+        private synchronized byte[] capture(Buffer<?> buffer, boolean server, Connection owner) {
             byte[] data = buffer.array();
             int end = buffer.wpos();
-            if (end < 64 || data[0] != (byte) 0xfe || (command(data) != 15 && command(data) != 12)) return null;
-            assertTrue(messages.size() < 32, "Bounded observation");
+            if (end < 64 || data[0] != (byte) 0xfe) return null;
+            if (!server && command(data) != 12) {
+                ByteBuffer header = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
+                long expected = nextMessageId.getOrDefault(owner, 0L);
+                assertEquals(expected, header.getLong(24), "Ordinary requests consume the lowest native MID; CANCEL consumes none");
+                nextMessageId.put(owner, expected + Math.max(1, header.getShort(6) & 0xffff));
+                if (command(data) == 13) echoOwner = owner;
+            }
+            if (command(data) != 15 && command(data) != 12) return null;
+            assertTrue(messages.size() < 64, "Bounded observation");
             byte[] copy = Arrays.copyOf(data, end);
             messages.add(copy);
+            owners.put(copy, owner);
             if (server) incoming.add(copy);
+            else if (command(data) == 15) requestOwner = owner;
             return copy;
         }
 
-        synchronized void verify(byte[] key) throws Exception {
-            assertEquals(15, messages.size(), "Four requests, four interim, four finals, three CANCELs");
-            Map<Long, byte[]> requests = new HashMap<>(), interim = new HashMap<>(), finals = new HashMap<>(), cancels = new HashMap<>();
+        synchronized void verify() throws Exception {
+            assertEquals(30, messages.size(), "Eight requests, eight interim, eight finals, six CANCELs");
+            Map<String, byte[]> requests = new HashMap<>(), interim = new HashMap<>(), finals = new HashMap<>(), cancels = new HashMap<>();
             Set<String> nonces = new HashSet<>();
             int verified = 0;
             for (byte[] message : messages) {
                 ByteBuffer header = ByteBuffer.wrap(message).order(ByteOrder.LITTLE_ENDIAN);
                 long mid = header.getLong(24);
+                Connection owner = owners.get(message);
+                byte[] key = keys.get(owner);
+                assertNotNull(key, "Every notification has an authenticated channel key");
                 int flags = header.getInt(16);
                 boolean server = incoming.contains(message);
                 assertEquals(server ? 1 : 0, flags & 1, "Header role must match the observed transport direction");
                 boolean cancel = command(message) == 12;
                 assertEquals(0, header.getInt(20), "Standalone exact message extents");
-                Map<Long, byte[]> kind = cancel ? cancels : !server ? requests : status(message) == 0x103 ? interim : finals;
-                assertNull(kind.put(mid, message), "Each request has only one input of each phase");
+                Map<String, byte[]> kind = cancel ? cancels : !server ? requests : status(message) == 0x103 ? interim : finals;
+                String identity = connectionIds.get(owner) + ":" + Long.toUnsignedString(mid);
+                assertNull(kind.put(identity, message), "Each owner/request has only one input of each phase");
                 if (server) assertEquals(2, flags & 2, "Native async responses carry AsyncId");
                 if (server && status(message) == 0x103) {
                     assertEquals(0, flags & 8, "Interim response must not consume the final response nonce");
@@ -225,7 +287,8 @@ class GmacAsyncCancellationIT {
                 assertEquals(8, flags & 8, "Requests, CANCELs and finals must be signed");
                 byte[] nonce = ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN)
                         .putLong(mid).putInt((server ? 1 : 0) | (cancel ? 2 : 0)).array();
-                assertTrue(nonces.add(Arrays.toString(nonce)), "No actual key/nonce repeats, including duplicate CANCEL");
+                String keyId = Base64.getEncoder().encodeToString(MessageDigest.getInstance("SHA-256").digest(key));
+                assertTrue(nonces.add(keyId + ":" + Arrays.toString(nonce)), "No actual key/nonce repeats across channels or duplicate CANCEL");
                 byte[] input = message.clone();
                 Arrays.fill(input, 48, 64, (byte) 0);
                 Cipher oracle = Cipher.getInstance("AES/GCM/NoPadding");
@@ -244,20 +307,16 @@ class GmacAsyncCancellationIT {
                         (server ? 1 : 0) | (cancel ? 2 : 0));
                 verified++;
             }
-            assertEquals(4, requests.size());
+            assertEquals(8, requests.size());
+            Set<Connection> notificationOwners = Collections.newSetFromMap(new IdentityHashMap<Connection, Boolean>());
+            for (byte[] request : requests.values()) notificationOwners.add(owners.get(request));
+            assertEquals(3, notificationOwners.size(), "Both original channels and their replacement carry notifications");
             assertEquals(requests.keySet(), interim.keySet());
             assertEquals(requests.keySet(), finals.keySet());
-            assertEquals(3, cancels.size());
-            List<Long> ordered = new ArrayList<>(requests.keySet());
-            Collections.sort(ordered);
-            for (int i = 1; i < ordered.size(); i++) {
-                long previous = ordered.get(i - 1);
-                int charge = ByteBuffer.wrap(requests.get(previous)).order(ByteOrder.LITTLE_ENDIAN).getShort(6) & 0xffff;
-                assertEquals(previous + Math.max(1, charge), (long) ordered.get(i), "CANCEL consumes no new MID range");
-            }
+            assertEquals(6, cancels.size());
             int syncCancels = 0;
-            for (Map.Entry<Long, byte[]> entry : finals.entrySet()) {
-                long mid = entry.getKey();
+            for (Map.Entry<String, byte[]> entry : finals.entrySet()) {
+                String mid = entry.getKey();
                 byte[] result = entry.getValue();
                 long asyncId = ByteBuffer.wrap(interim.get(mid)).order(ByteOrder.LITTLE_ENDIAN).getLong(32);
                 assertNotEquals(0, asyncId);
@@ -270,8 +329,8 @@ class GmacAsyncCancellationIT {
                     assertEquals(0xc0000120L, status(result));
                 } else assertEquals(0, status(result));
             }
-            assertEquals(1, syncCancels);
-            assertEquals(11, verified);
+            assertEquals(2, syncCancels);
+            assertEquals(22, verified);
         }
 
         private static int command(byte[] message) {

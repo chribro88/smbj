@@ -28,9 +28,9 @@ arguments = parser.parse_args()
 if not Path('gradlew').is_file():
     parser.error('Run from the SMBJ feature worktree')
 if arguments.java8_home:
-    if any((arguments.async_cancel, arguments.public_anchor_research, arguments.bootstrap_abort_research,
+    if any((arguments.public_anchor_research, arguments.bootstrap_abort_research,
             arguments.unsigned_echo_research, arguments.per_request_research)):
-        parser.error('--java8-home supports the default matrix or --public-binding')
+        parser.error('--java8-home supports the default matrix, --public-binding or --async-cancel')
     if not os.environ.get('JAVA_HOME'):
         parser.error('Select the Java 21 build JDK with JAVA_HOME when using --java8-home')
     arguments.java8_home = arguments.java8_home.resolve()
@@ -128,6 +128,7 @@ try:
     if arguments.java8_home:
         client_environment['SMBJ_JAVA8_OUTPUT'] = str(output)
         client_environment['SMBJ_JAVA8_PUBLIC_BINDING'] = str(arguments.public_binding).lower()
+        client_environment['SMBJ_JAVA8_ASYNC_CANCEL'] = str(arguments.async_cancel).lower()
         command += ['-Porg.gradle.java.installations.paths=' + str(arguments.java8_home) + ',' + os.environ['JAVA_HOME'],
                     '-Porg.gradle.java.installations.auto-detect=false', '-Porg.gradle.java.installations.auto-download=false',
                     '--init-script', 'docs/full-gmac-multichannel/research/java8-runtime-profile.gradle', 'java8RuntimeTest']

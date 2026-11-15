@@ -249,6 +249,53 @@ sustained replacement/resource/catch-up measurements and the outstanding failure
 matrix. Windows testing remains deferred; further paper or private-service access
 is not required to continue this work.
 
+### Public multichannel cancellation and CHANGE_NOTIFY
+
+The existing four-profile native cancellation fixture now uses the current
+managed GMAC bootstrap and two bound channels. It captures notification/CANCEL
+inputs with their physical owners and independently verifies each with that
+owner's actual bound key, rather than using original K. Each profile carries
+notifications on both original channels and their replacement. Ordinary ECHO
+traffic moves round robin away from each pending watch before cancellation;
+the CANCEL and final response remain on that watch's owner. The other channel
+is closed and replaced while a pending reply is held before publication.
+
+Across two fresh watched directories, every profile checks eight unsigned
+interim replies, two synchronous and four asynchronous one-shot CANCELs,
+six cancelled finals, two successful finals and retirement of the outstanding
+request. Eight callers compete to cancel in each concurrent-cancel round.
+Every ordinary serialized request consumes its connection's lowest native MID
+range; CANCEL consumes no range. Independent default-JCE checks verify **22
+GMAC tags per profile**, merge nonce state by actual key, and reject the ordinary
+request nonce for each CANCEL tag.
+
+All **four Java 21 native profiles** pass (Direct/Async transport × BC/default
+JCE), as does the actual Java 8 profile's **28 cases** (four native and 24 selected
+local). There are zero failures/errors/skips, **88 independently verified GMAC
+tags per runtime**, and no observed key/nonce reuse among those inputs. License
+checks pass and the production JAR is unchanged. The preceding 927-test full
+check remains at its recorded production state; no new full local run is claimed.
+
+The first expanded run exposed a fixture mistake: reusing a watched directory
+after creating/deleting its event file legitimately completes the next watch
+immediately, rather than producing another STATUS_PENDING. Fresh directories
+isolate each four-watch group. Directory leases are disabled in this fixture so
+unrelated background lease ACKs cannot move the scheduler. This is CHANGE_NOTIFY
+acceptance, not evidence for unsolicited lease/oplock-break notifications.
+Timeout/owner-loss, encryption, Kerberos cancellation and sustained churn remain
+separate acceptance work. See
+[validation-public-cancellation.json](validation-public-cancellation.json).
+
+Reproduce from this worktree with the Java 21 build JDK selected:
+
+```sh
+python3 docs/full-gmac-multichannel/research/run-gmac-single-fixture.py \
+  --async-cancel --output /tmp/<fresh-java21-directory>
+python3 docs/full-gmac-multichannel/research/run-gmac-single-fixture.py \
+  --async-cancel --java8-home /tmp/smbj-java8-runtime/openjdk \
+  --output /tmp/<fresh-java8-directory>
+```
+
 ## Inputs and history
 
 - Branch: `feature/full-gmac-multichannel`.
@@ -808,13 +855,17 @@ guard removal remain unqualified.
 
 ## Remaining contract and release gates
 
+Results below cover each complete gate. `NOT_RUN` includes gates with partial
+passing evidence but an incomplete required matrix; it does not erase the scoped
+results above. Windows testing is deferred for the current Linux work.
+
 | Gate | Result | Missing authoritative evidence |
 |---|---|---|
-| G0 | IN_PROGRESS | Implemented construction and key/MID argument; finish current-public cancellation/notification lifetime variants, sustained churn/cost and remaining Linux failure/policy coverage |
-| G1 | IN_PROGRESS | Existing regressions and full local check pass; remaining combined operational qualification is recorded per scenario |
+| G0 | NOT_RUN | Implemented construction and key/MID argument; finish current-public cancellation/notification lifetime variants, sustained churn/cost and remaining Linux failure/policy coverage |
+| G1 | NOT_RUN | Existing regressions and full local check pass; remaining combined operational qualification is recorded per scenario |
 | G2 | NOT_RUN | Complete local matrix across providers/transports/runtimes; the 40-case Java 8 profile passes, but the complete Java 8 multichannel/authentication/failure matrix remains unqualified |
-| G3 | IN_PROGRESS | Public NTLM/Kerberos reauthentication passes; complete expiry/failure variants, notifications and replay/fencing/recovery cases |
-| G4 | IN_PROGRESS | Native Linux/Samba acceptance passes in recorded configurations; mandatory-global-encryption binding remains unqualified; Windows deferred and ONTAP-specific behavior untested |
+| G3 | NOT_RUN | Public NTLM/Kerberos reauthentication passes; complete expiry/failure variants, notifications and replay/fencing/recovery cases |
+| G4 | NOT_RUN | Native Linux/Samba acceptance passes in recorded configurations; mandatory-global-encryption binding remains unqualified; Windows deferred and ONTAP-specific behavior untested |
 | G5 | NOT_RUN | Sustained concurrent I/O and cancellation-churn memory (including transport queues), replacement/recovery and comparative measurements |
 | G6 | NOT_RUN | Complete source/provenance mapping, validated peer traces and complete reproducible review package |
 
