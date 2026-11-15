@@ -1,0 +1,223 @@
+{
+  "result": "PASS",
+  "scope": "Optional-GCM authenticated-abort cleanup and late-transform isolation on Linux; full G0 and feature gates remain open",
+  "recorded_at": "2026-11-15T10:02:04.189629+00:00",
+  "base_revision": "3d40ddf836759d4f0590b0d3f9ac89e524767fbb",
+  "source_sha256": {
+    "src/it/java/com/hierynomus/smbj/connection/GmacBindingWireObserver.java": "9110aec4e125f52fdad3baab76f19e362cbad3019f6ea346a2d741bd58a2cd71",
+    "src/it/java/com/hierynomus/smbj/connection/PublicGmacKerberosIT.java": "2b101f3ec57630d5a20c02d6d4d0a51452c20a60738f22d1e1715e6f13233c00",
+    "src/test/java/com/hierynomus/smbj/connection/ResponseAuthenticationTest.java": "51e11b4724b0e5a3acc472b17529b78baf357c733cfe6fe11920d7db21a78a51",
+    "docs/full-gmac-multichannel/research/run-gmac-kerberos-fixture.py": "376906159c01b96ba04b6edccb948dab143e27e0948f0e0992216503c1fd5127",
+    "src/main/java/com/hierynomus/smbj/connection/packet/SMB3DecryptingPacketHandler.java": "049137487fb27dea6d09149e01f057078598ac89afc7e11e95b34fac01cacf81"
+  },
+  "production_change": false,
+  "production_revision": "781831fc3620107ea989235641ff0ad6f856ff3f",
+  "implemented": [
+    "Extend real Kerberos public fixture to optional AES-128-GCM with 16/32-byte exported keys and owned/borrowed callers. Preserve confirmed and timed-out authenticated abort LOGOFFs, older-open continuity, same-candidate retry, concurrent binding, replacement and reauthentication.",
+    "Extend existing socket observer with independent JCE GCM verification, exact transform extent and inner-session checks, actual-key/nonce tracking across sessions/channels and an oracle-only ciphertext-tampering control. Native credit/MID accounting also covers decrypted frames.",
+    "Four new local BC/JCE cases show repeated valid/tampered transforms for a retired session cannot grant credits or affect another session's outstanding work. Production already discards unknown-session transforms before decryption; no tombstone key retention was added."
+  ],
+  "focused": {
+    "tests": 43,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "new_local_cases": 4,
+  "new_native_encrypted_cases": 4,
+  "native_cases_this_checkpoint": 19,
+  "profiles": {
+    "kerberos8": {
+      "image": "smbj/kerberos-dc:e097023",
+      "image_id": "sha256:9501aa40203bf661632ee44df2bf2a2b1642dd62c6a77f062e9780dc8a23ade9",
+      "command": [
+        "./gradlew",
+        "--offline",
+        "--no-daemon",
+        "--max-workers=1",
+        "-Dorg.gradle.jvmargs=-Xmx192m -XX:ActiveProcessorCount=2",
+        "--init-script",
+        "/workspace/smbj-worktrees/full-gmac-multichannel/docs/full-gmac-multichannel/research/kerberos-native/test-limits.gradle",
+        "integrationTest",
+        "--tests",
+        "*PublicGmacKerberosIT",
+        "-x",
+        "buildSambaImage",
+        "licenseIntegrationTest"
+      ],
+      "result": "PASS",
+      "returncode": 0,
+      "suite": {
+        "name": "com.hierynomus.smbj.connection.PublicGmacKerberosIT",
+        "tests": "8",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-15T09:54:33.177Z",
+        "hostname": "chribro-firefly",
+        "time": "184.193"
+      },
+      "profiles": [
+        "PUBLIC_KRB_COMPLETE mode=public-16-false-true rawKeyBytes=16 borrowed=false encrypt=true id=2fac94b61aa13847524e4876061d3c957fa111506ccf8d9c353fa14df3c1af6e image=sha256:9501aa40203bf661632ee44df2bf2a2b1642dd62c6a77f062e9780dc8a23ade9 removed=true java=21.0.12.1",
+        "PUBLIC_KRB_COMPLETE mode=public-16-true-true rawKeyBytes=16 borrowed=true encrypt=true id=9912097102e4a01e91159e5fe34e069c0e14b775cf6f68f25dfa967ceefcbe49 image=sha256:9501aa40203bf661632ee44df2bf2a2b1642dd62c6a77f062e9780dc8a23ade9 removed=true java=21.0.12.1",
+        "PUBLIC_KRB_COMPLETE mode=public-32-false-true rawKeyBytes=32 borrowed=false encrypt=true id=b6bc84089c8256c5efeab5ba7cfcd8c4cd89479b2b31c536a5500dbd3819c9d5 image=sha256:9501aa40203bf661632ee44df2bf2a2b1642dd62c6a77f062e9780dc8a23ade9 removed=true java=21.0.12.1",
+        "PUBLIC_KRB_COMPLETE mode=public-32-true-true rawKeyBytes=32 borrowed=true encrypt=true id=2c1923ae6165de4a5208e7e25f9029c2c452c5aa053f22c8d7da05b32560bb4e image=sha256:9501aa40203bf661632ee44df2bf2a2b1642dd62c6a77f062e9780dc8a23ade9 removed=true java=21.0.12.1",
+        "PUBLIC_KRB_COMPLETE mode=public-16-false-false rawKeyBytes=16 borrowed=false encrypt=false id=c7dab373395358f400beb5128eb439152e049fa74d581a9f9b03b6abc5d2aba0 image=sha256:9501aa40203bf661632ee44df2bf2a2b1642dd62c6a77f062e9780dc8a23ade9 removed=true java=21.0.12.1",
+        "PUBLIC_KRB_COMPLETE mode=public-16-true-false rawKeyBytes=16 borrowed=true encrypt=false id=a43f4827e1ee1e4804e7e6023a6df2e05ae95cc9faa757437fe85d404664934b image=sha256:9501aa40203bf661632ee44df2bf2a2b1642dd62c6a77f062e9780dc8a23ade9 removed=true java=21.0.12.1",
+        "PUBLIC_KRB_COMPLETE mode=public-32-false-false rawKeyBytes=32 borrowed=false encrypt=false id=013cc2dfd71fc2b5ea3b915e967959afaa907617015192370153465185cfe29c image=sha256:9501aa40203bf661632ee44df2bf2a2b1642dd62c6a77f062e9780dc8a23ade9 removed=true java=21.0.12.1",
+        "PUBLIC_KRB_COMPLETE mode=public-32-true-false rawKeyBytes=32 borrowed=true encrypt=false id=32c414ac2c41bfd5d2d7138d8bc31e07eab364e68cab51bd8f565816786ff413 image=sha256:9501aa40203bf661632ee44df2bf2a2b1642dd62c6a77f062e9780dc8a23ade9 removed=true java=21.0.12.1"
+      ],
+      "contexts": [
+        "KERBEROS_CONTEXTS mode=public-16-false-true established=22 rawKeyBytes=16 kerberos=true disposed=22 live=0",
+        "KERBEROS_CONTEXTS mode=public-16-true-true established=25 rawKeyBytes=16 kerberos=true disposed=25 live=0",
+        "KERBEROS_CONTEXTS mode=public-32-false-true established=22 rawKeyBytes=32 kerberos=true disposed=22 live=0",
+        "KERBEROS_CONTEXTS mode=public-32-true-true established=25 rawKeyBytes=32 kerberos=true disposed=25 live=0",
+        "KERBEROS_CONTEXTS mode=public-16-false-false established=22 rawKeyBytes=16 kerberos=true disposed=22 live=0",
+        "KERBEROS_CONTEXTS mode=public-16-true-false established=25 rawKeyBytes=16 kerberos=true disposed=25 live=0",
+        "KERBEROS_CONTEXTS mode=public-32-false-false established=22 rawKeyBytes=32 kerberos=true disposed=22 live=0",
+        "KERBEROS_CONTEXTS mode=public-32-true-false established=25 rawKeyBytes=32 kerberos=true disposed=25 live=0"
+      ],
+      "audits": [
+        "AUXWIRE_COMPLETE run=public-kerberos-16-false-true replacements=1 observedEvents=302 independentlyVerified=34 preparedOnly=0 operationalSignedMessages=17 actualKeyDomains=16 distinctMessageNonceReuses=0 transcriptFingerprint=6b4e6a1aa6f5433524089257ab940373b4bca607c5e38a6d972b81261ee393bb",
+        "AUXWIRE_COMPLETE run=public-kerberos-16-true-true replacements=1 observedEvents=316 independentlyVerified=38 preparedOnly=0 operationalSignedMessages=17 actualKeyDomains=19 distinctMessageNonceReuses=0 transcriptFingerprint=5daa02870e186a1a041d5fa99d7daf8caba23af84c68a8fd27d037e15fbe3741",
+        "AUXWIRE_COMPLETE run=public-kerberos-32-false-true replacements=1 observedEvents=302 independentlyVerified=34 preparedOnly=0 operationalSignedMessages=17 actualKeyDomains=16 distinctMessageNonceReuses=0 transcriptFingerprint=fbcd6c7a2c6d53ac7e104d8892545cf410dda2e248e911d588f2eeb7a09e8b3c",
+        "AUXWIRE_COMPLETE run=public-kerberos-32-true-true replacements=1 observedEvents=316 independentlyVerified=38 preparedOnly=0 operationalSignedMessages=17 actualKeyDomains=19 distinctMessageNonceReuses=0 transcriptFingerprint=f801afa25eb5d9befbdab766515a11370e88cae4558b94b06030a7fd88579f8d",
+        "AUXWIRE_COMPLETE run=public-kerberos-16-false-false replacements=1 observedEvents=302 independentlyVerified=130 preparedOnly=0 operationalSignedMessages=65 actualKeyDomains=16 distinctMessageNonceReuses=0 transcriptFingerprint=d6fff2330c389d4050ffcbd8b426a5989a08dae71757b22d094cb2da3050f6bf",
+        "AUXWIRE_COMPLETE run=public-kerberos-16-true-false replacements=1 observedEvents=317 independentlyVerified=140 preparedOnly=0 operationalSignedMessages=65 actualKeyDomains=19 distinctMessageNonceReuses=0 transcriptFingerprint=5770c3fc8bc57dfa408ad9398190eec7942c1c207608e042f658126e705ddee0",
+        "AUXWIRE_COMPLETE run=public-kerberos-32-false-false replacements=1 observedEvents=302 independentlyVerified=130 preparedOnly=0 operationalSignedMessages=65 actualKeyDomains=16 distinctMessageNonceReuses=0 transcriptFingerprint=e4baa01c93e4d6d6b1acf19814bf014fb975200ecc8e15e393261c10ed1a15e1",
+        "AUXWIRE_COMPLETE run=public-kerberos-32-true-false replacements=1 observedEvents=316 independentlyVerified=140 preparedOnly=0 operationalSignedMessages=65 actualKeyDomains=19 distinctMessageNonceReuses=0 transcriptFingerprint=5cd43ad8d7d00ee7f911d773dbe97c80e580c59f63a917994ceb2c1be3789bf6"
+      ],
+      "gcm_audits": [
+        "AUXWIRE_GCM run=public-kerberos-16-false-true verifiedTransforms=96 encryptedOperationalMessages=48 encryptedLogoffFrames=20 distinctMessageNonceReuses=0",
+        "AUXWIRE_GCM run=public-kerberos-16-true-true verifiedTransforms=102 encryptedOperationalMessages=48 encryptedLogoffFrames=24 distinctMessageNonceReuses=0",
+        "AUXWIRE_GCM run=public-kerberos-32-false-true verifiedTransforms=96 encryptedOperationalMessages=48 encryptedLogoffFrames=20 distinctMessageNonceReuses=0",
+        "AUXWIRE_GCM run=public-kerberos-32-true-true verifiedTransforms=102 encryptedOperationalMessages=48 encryptedLogoffFrames=24 distinctMessageNonceReuses=0"
+      ],
+      "disposal_aborts": [
+        "KERBEROS_DISPOSAL_ABORT rawKeyBytes=16 borrowed=false encrypt=true confirmedLogoffs=1 timedOutLogoffs=1 lateIgnored=true injectedAfterDispose=true",
+        "KERBEROS_DISPOSAL_ABORT rawKeyBytes=16 borrowed=true encrypt=true confirmedLogoffs=1 timedOutLogoffs=1 lateIgnored=true injectedAfterDispose=true",
+        "KERBEROS_DISPOSAL_ABORT rawKeyBytes=32 borrowed=false encrypt=true confirmedLogoffs=1 timedOutLogoffs=1 lateIgnored=true injectedAfterDispose=true",
+        "KERBEROS_DISPOSAL_ABORT rawKeyBytes=32 borrowed=true encrypt=true confirmedLogoffs=1 timedOutLogoffs=1 lateIgnored=true injectedAfterDispose=true",
+        "KERBEROS_DISPOSAL_ABORT rawKeyBytes=16 borrowed=false encrypt=false confirmedLogoffs=1 timedOutLogoffs=1 lateIgnored=true injectedAfterDispose=true",
+        "KERBEROS_DISPOSAL_ABORT rawKeyBytes=16 borrowed=true encrypt=false confirmedLogoffs=1 timedOutLogoffs=1 lateIgnored=true injectedAfterDispose=true",
+        "KERBEROS_DISPOSAL_ABORT rawKeyBytes=32 borrowed=false encrypt=false confirmedLogoffs=1 timedOutLogoffs=1 lateIgnored=true injectedAfterDispose=true",
+        "KERBEROS_DISPOSAL_ABORT rawKeyBytes=32 borrowed=true encrypt=false confirmedLogoffs=1 timedOutLogoffs=1 lateIgnored=true injectedAfterDispose=true"
+      ],
+      "containers": [
+        {
+          "id": "2fac94b61aa13847524e4876061d3c957fa111506ccf8d9c353fa14df3c1af6e",
+          "removed": true
+        },
+        {
+          "id": "9912097102e4a01e91159e5fe34e069c0e14b775cf6f68f25dfa967ceefcbe49",
+          "removed": true
+        },
+        {
+          "id": "b6bc84089c8256c5efeab5ba7cfcd8c4cd89479b2b31c536a5500dbd3819c9d5",
+          "removed": true
+        },
+        {
+          "id": "2c1923ae6165de4a5208e7e25f9029c2c452c5aa053f22c8d7da05b32560bb4e",
+          "removed": true
+        },
+        {
+          "id": "c7dab373395358f400beb5128eb439152e049fa74d581a9f9b03b6abc5d2aba0",
+          "removed": true
+        },
+        {
+          "id": "a43f4827e1ee1e4804e7e6023a6df2e05ae95cc9faa757437fe85d404664934b",
+          "removed": true
+        },
+        {
+          "id": "013cc2dfd71fc2b5ea3b915e967959afaa907617015192370153465185cfe29c",
+          "removed": true
+        },
+        {
+          "id": "32c414ac2c41bfd5d2d7138d8bc31e07eab364e68cab51bd8f565816786ff413",
+          "removed": true
+        }
+      ]
+    },
+    "public11": {
+      "image": "dockurr/samba@sha256:2a0452a12b7a244a22f18d0f233101bb8d4952b5500ae263905e3b9dad3bf2ae",
+      "owner": "smbj-late-response-323fb492-5c04-4806-87b1-34101cb610e9",
+      "config": "/workspace/smbj-worktrees/full-gmac-multichannel/docs/full-gmac-multichannel/research/smb-gmac-gcm.conf",
+      "config_sha256": "a92cdd46897f6bf16c0dba5e0e676dc0a58bf0082f20a6792e01d805c650595f",
+      "container_id": "6c81877e813d1392510fddb933f432e3ec9dd5fa0c7b8b0d60c2dc4fa6370d4e",
+      "port": 33293,
+      "version": "Version 4.23.10",
+      "image_id": "sha256:2a0452a12b7a244a22f18d0f233101bb8d4952b5500ae263905e3b9dad3bf2ae",
+      "suite": {
+        "name": "com.hierynomus.smbj.connection.PublicGmacBindingIT",
+        "tests": "11",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-15T09:59:08.284Z",
+        "hostname": "chribro-firefly",
+        "time": "63.499"
+      },
+      "profiles": [
+        "PUBLIC_GMAC_COMPLETE run=bootstrap-final-signature-failure signing=AES_GMAC cleanupLogoff=true privateRootClosed=true callerPreserved=true retry=true java=21.0.12.1",
+        "PUBLIC_GMAC_COMPLETE run=bootstrap-final-lost-failure signing=AES_GMAC cleanupLogoff=true privateRootClosed=true callerPreserved=true retry=true java=21.0.12.1",
+        "PUBLIC_GMAC_COMPLETE run=bootstrap-final-lost-root-failure signing=AES_GMAC cleanupLogoff=true privateRootClosed=true callerPreserved=true retry=true java=21.0.12.1",
+        "PUBLIC_GMAC_COMPLETE run=bootstrap-final-lost-root-cleanup-failure-failure signing=AES_GMAC cleanupLogoff=false privateRootClosed=true callerPreserved=true retry=true java=21.0.12.1",
+        "PUBLIC_GMAC_COMPLETE run=bootstrap-final-lost-root-auth-failure-failure signing=AES_GMAC cleanupLogoff=false privateRootClosed=true callerPreserved=true retry=true java=21.0.12.1",
+        "PUBLIC_GMAC_COMPLETE run=bootstrap-final-lost-root-bind-failure-failure signing=AES_GMAC cleanupLogoff=false privateRootClosed=true callerPreserved=true retry=true java=21.0.12.1",
+        "PUBLIC_GMAC_COMPLETE run=client-close-before-publication signing=AES_GMAC latePublication=false borrowedPreserved=true candidateTablesEmpty=true java=21.0.12.1",
+        "PUBLIC_GMAC_COMPLETE run=client-close-before-final signing=AES_GMAC latePublication=false borrowedPreserved=true candidateTablesEmpty=true java=21.0.12.1",
+        "PUBLIC_GMAC_COMPLETE run=owned signing=AES_GMAC replacement=true concurrentBindings=2 borrowedPreserved=false priorTraffic=0 applicationTraffic=0 collisionEchoes=16 java=21.0.12.1",
+        "PUBLIC_GMAC_COMPLETE run=borrowed signing=AES_GMAC replacement=true concurrentBindings=2 borrowedPreserved=true priorTraffic=1024 applicationTraffic=1024 collisionEchoes=14 java=21.0.12.1",
+        "PUBLIC_GMAC_COMPLETE run=auxiliary-auth-failure signing=AES_GMAC failedCandidatePublished=false borrowedPreserved=true retry=true java=21.0.12.1"
+      ],
+      "removed": true
+    }
+  },
+  "independently_verified_gmac_tags": 4983,
+  "independently_verified_gcm_transforms": 396,
+  "observed_actual_key_nonce_reuses": 0,
+  "kerberos_contexts": {
+    "disposed": 188,
+    "live": 0
+  },
+  "jar": {
+    "name": "smbj-0.15.1-feature-full-gmac-multichannel-SNAPSHOT.jar",
+    "sha256": "d26a189458a96dce0dc6a269f13ce02db5a7a4d8ed133359deb0b488190ca0e6",
+    "classes": 511,
+    "class_major": 52,
+    "unchanged_from": "validation-cleanup-event-identity.json"
+  },
+  "earlier_failed_fixture_attempts": [
+    {
+      "path": "first-native-attempt",
+      "tests": 8,
+      "failures": 4,
+      "signing_profiles_pass": 4,
+      "cause": "Held encrypted reply oracle received getCompactData() after header parsing, so the transform header was missing. Cleanup obscured the first error."
+    },
+    {
+      "path": "observer-diagnostic",
+      "tests": 4,
+      "failures": 4,
+      "cause": "Failure visibility preserved missing held reply; full-frame array/wpos copy corrects the observer without changing production."
+    }
+  ],
+  "validation_not_repeated": [
+    "Full 991-case local suite and 46-case actual-Java8 profile from validation-cleanup-event-identity.json; production source and JAR remain unchanged. New response cases run on Java21 with both providers."
+  ],
+  "limits": [
+    "Native encrypted cleanup covers BC/Direct/Java21 with optional session encryption, not the complete provider/transport/runtime or mandatory-global/share-encryption policy matrices.",
+    "Fault injection throws after successful actual GSS disposal. It does not reproduce a provider failure to release resources. Binding-phase disposal faults, expiry/invalid credentials/cancellation during authentication, unsolicited notification and recovery matrices remain incomplete.",
+    "Windows remains deferred and ONTAP-specific behavior untested. This closes one Linux cleanup coverage gap, not complete G0 or full feature acceptance."
+  ],
+  "checks_unavailable": {
+    "jdtls": "STOPPED; user authorized available checks; no shared-instance restart.",
+    "authenticated_sonarqube": "Secrets wrapper found no secrets but reports authentication warning; no authenticated server analysis claimed."
+  },
+  "artifact_root_name": "smbj-encrypted-cleanup-781831f",
+  "artifact_files": 29,
+  "artifact_manifest_sha256": "6e22397485bbe7a1974891347647891e389db375d300a10d8cd3e50a8280acf2",
+  "artifact_archive": "/tmp/smbj-retained-evidence/smbj-encrypted-cleanup-781831f.tar.gz",
+  "artifact_archive_sha256": "c31bb8502e51b32e676d30258483bb46cc0afffaba91d53b026232f91389e93a",
+  "artifact_archive_bytes": 601250
+}

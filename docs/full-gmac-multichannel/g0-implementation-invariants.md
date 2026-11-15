@@ -107,10 +107,17 @@ the abandoned promise before close removes session verification state. Late plai
 SMB2 replies cannot grant credits or complete that retired request. Native
 Kerberos tests inject a failure after real GSS disposal, verify successful abort
 LOGOFF and a held-reply timeout, then deliver the late response and retry binding
-on the borrowed connection while an older open remains usable. Actual provider
-disposal failure, encrypted late-transform cleanup and the full expiry/failure
-matrix remain unqualified. See
-[validation-disposal-logoff.json](validation-disposal-logoff.json).
+on the borrowed connection while an older open remains usable. These real
+Kerberos cleanup/late-delivery/retry profiles now pass with signing-only and
+optional AES-128-GCM encryption, for 16/32-byte exported keys and owned/borrowed
+callers. An independent JCE oracle authenticates the held transform before its
+later delivery. The normal receiver discards it using the missing session-table
+entry before key lookup/decryption; no tombstone keys are retained and no credits
+are granted. Both providers' local tests also discard valid and tampered stale
+transforms while unrelated outstanding work completes normally. Actual provider
+disposal failure and the full expiry/failure matrix remain unqualified. See
+[validation-disposal-logoff.json](validation-disposal-logoff.json) and
+[validation-encrypted-cleanup.json](validation-encrypted-cleanup.json).
 
 On a live channel, native allocation does not repeat an ordinary request MID.
 CANCEL retains its request's owner/MID and uses the existing one-shot cancellation

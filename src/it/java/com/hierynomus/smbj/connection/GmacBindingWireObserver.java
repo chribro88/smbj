@@ -20,6 +20,7 @@ import com.hierynomus.mssmb2.messages.SMB2Echo;
 import com.hierynomus.smbj.session.Session;
 
 import javax.crypto.Cipher;
+import javax.crypto.AEADBadTagException;
 import javax.crypto.Mac;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
@@ -46,6 +47,9 @@ final class GmacBindingWireObserver extends SocketFactory {
     private final Map<Integer, Map<Long, byte[]>> auxiliaryKeys = new HashMap<>();
     private final Map<Integer, byte[]> channelKeys = new HashMap<>();
     private final Map<Long, byte[]> originalSessionKeys = new HashMap<>();
+    private final Map<Long, byte[][]> encryptionKeys = new HashMap<>();
+    private final Set<String> encryptionNonces = new HashSet<>();
+    private int verifiedTransforms, encryptedLogoffs;
     private final byte[] fingerprintKey = new byte[32];
     private final String hostname;
     private final int port;
@@ -103,6 +107,33 @@ final class GmacBindingWireObserver extends SocketFactory {
         channelKeys.put(owners.get(connection).id, key);
     }
 
+    synchronized void encryption(Session session) {
+        assertNotNull(session);
+        byte[][] keys = {session.getSessionContext().getEncryptionKey().getEncoded().clone(),
+                session.getSessionContext().getDecryptionKey().getEncoded().clone()};
+        byte[][] previous = encryptionKeys.putIfAbsent(session.getSessionId(), keys);
+        if (previous != null) {
+            assertArrayEquals(previous[0], keys[0]); assertArrayEquals(previous[1], keys[1]);
+        }
+    }
+
+    synchronized byte[] decryptTransform(byte[] wire, boolean server) throws GeneralSecurityException {
+        ByteBuffer header = ByteBuffer.wrap(wire).order(ByteOrder.LITTLE_ENDIAN);
+        assertEquals(wire.length - 52, header.getInt(36));
+        assertEquals(0, header.getShort(40)); assertEquals(1, header.getShort(42));
+        long sessionId = header.getLong(44);
+        byte[][] keys = encryptionKeys.get(sessionId); assertNotNull(keys);
+        byte[] ciphertextAndTag = Arrays.copyOfRange(wire, 52, wire.length + 16);
+        System.arraycopy(wire, 4, ciphertextAndTag, wire.length - 52, 16);
+        Cipher oracle = Cipher.getInstance("AES/GCM/NoPadding");
+        oracle.init(Cipher.DECRYPT_MODE, new SecretKeySpec(keys[server ? 1 : 0], "AES"),
+                new GCMParameterSpec(128, Arrays.copyOfRange(wire, 20, 32)));
+        oracle.updateAAD(wire, 20, 32);
+        byte[] plaintext = oracle.doFinal(ciphertextAndTag);
+        assertEquals(sessionId, ByteBuffer.wrap(plaintext).order(ByteOrder.LITTLE_ENDIAN).getLong(40));
+        return plaintext;
+    }
+
     synchronized void failNextBinding(Connection connection) { owners.get(connection).failBinding = true; }
     synchronized boolean faultTriggered(Connection connection) { return owners.get(connection).injectedClose; }
 
@@ -134,9 +165,14 @@ final class GmacBindingWireObserver extends SocketFactory {
         }
         int verified = 0;
         int operational = 0;
+        int encryptedOperational = 0;
         int preparedOnly = 0;
         MessageDigest transcript = MessageDigest.getInstance("SHA-256");
         for (Event event : events) {
+            if (event.encrypted) {
+                if (event.sessionId == mainSessionId && event.command != 1) encryptedOperational++;
+                continue;
+            }
             Map<Long, byte[]> auxiliary = auxiliaryKeys.get(event.connection);
             boolean isAuxiliary = auxiliary != null && auxiliary.containsKey(event.sessionId);
             if (!event.signed) {
@@ -198,7 +234,7 @@ final class GmacBindingWireObserver extends SocketFactory {
                         event.preparedOnly ? "write-attempt" : "complete-frame");
             }
         }
-        assertTrue(operational >= minimumOperational, "Expected application traffic must be included in the independent verification");
+        assertTrue(operational + encryptedOperational >= minimumOperational, "Expected application traffic must be included in the independent verification");
         for (ObservedSocket socket : sockets) {
             assertTrue(socket.isClosed());
             if (socket.injectedClose) {
@@ -212,6 +248,12 @@ final class GmacBindingWireObserver extends SocketFactory {
         }
         System.out.printf("AUXWIRE_COMPLETE run=%s replacements=%d observedEvents=%d independentlyVerified=%d preparedOnly=%d operationalSignedMessages=%d actualKeyDomains=%d distinctMessageNonceReuses=0 transcriptFingerprint=%s%n",
                 run, replacements, events.size(), verified, preparedOnly, operational, actualKeys.size(), hex(transcript.digest()));
+        if (!encryptionKeys.isEmpty()) {
+            assertTrue(verifiedTransforms >= 32); assertTrue(encryptedOperational >= minimumOperational);
+            assertTrue(encryptedLogoffs >= 4, "Abort LOGOFF requests and their real replies must be encrypted");
+            System.out.printf("AUXWIRE_GCM run=%s verifiedTransforms=%d encryptedOperationalMessages=%d encryptedLogoffFrames=%d distinctMessageNonceReuses=0%n",
+                    run, verifiedTransforms, encryptedOperational, encryptedLogoffs);
+        }
     }
 
     private String fingerprint(byte[] bytes) throws GeneralSecurityException {
@@ -340,8 +382,26 @@ final class GmacBindingWireObserver extends SocketFactory {
                     int size = ByteBuffer.wrap(buffered, consumed, 4).getInt();
                     if (size < 64 || size > 1024 * 1024) throw new IOException("Invalid or oversized diagnostic frame");
                     if (buffered.length - consumed < size + 4) break;
-                    Event event = new Event(events.size() + 1, id, direction == 1,
-                            Arrays.copyOfRange(buffered, consumed + 4, consumed + 4 + size));
+                    byte[] wire = Arrays.copyOfRange(buffered, consumed + 4, consumed + 4 + size);
+                    boolean encrypted = wire[0] == (byte) 0xfd;
+                    byte[] plaintext = wire;
+                    if (encrypted) {
+                        try {
+                            plaintext = decryptTransform(wire, direction == 1);
+                            long sessionId = ByteBuffer.wrap(wire).order(ByteOrder.LITTLE_ENDIAN).getLong(44);
+                            byte[] key = encryptionKeys.get(sessionId)[direction];
+                            assertTrue(encryptionNonces.add(fingerprint(key) + ":" + hex(Arrays.copyOfRange(wire, 20, 32))),
+                                    "Every transform must have a unique actual key/nonce across all sessions/channels");
+                            if (verifiedTransforms == 0) {
+                                byte[] tampered = wire.clone(); tampered[52] ^= 1;
+                                assertThrows(AEADBadTagException.class, () -> decryptTransform(tampered, direction == 1));
+                            }
+                            assertTrue(++verifiedTransforms < 4096, "Bounded transform observation");
+                        } catch (GeneralSecurityException failure) { throw new IOException("Independent GCM verification failed", failure); }
+                    }
+                    Event event = new Event(events.size() + 1, id, direction == 1, plaintext);
+                    event.encrypted = encrypted;
+                    if (encrypted && event.command == 2) encryptedLogoffs++;
                     if (!event.server && event.command == 1 && event.sessionId == mainSessionId
                             && (event.wire[66] & 1) != 0) originalKeyBindingRequests++;
                     if (!event.server && event.command == 13 && event.sessionId == 0) unsignedEchoRequests++;
@@ -383,6 +443,7 @@ final class GmacBindingWireObserver extends SocketFactory {
         final long sessionId, mid, status;
         final byte[] wire;
         boolean preparedOnly;
+        boolean encrypted;
 
         Event(int id, int connection, boolean server, byte[] wire) {
             this.id = id; this.connection = connection; this.server = server; this.wire = wire;

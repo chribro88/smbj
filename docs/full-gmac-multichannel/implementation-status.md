@@ -575,6 +575,38 @@ remain. All seven task-owned fixture containers are removed. Complete G0 remains
 open for the previously listed lifecycle, expiry, cancellation, notification and
 recovery variants; this checkpoint adds cleanup identity safety.
 
+### Encrypted authenticated-abort cleanup and late replies
+
+The real-Kerberos fixture now covers optional AES-128-GCM as well as signing-only,
+with 16/32-byte exported keys and owned/borrowed callers: **eight native cases
+pass**. Each verifies one confirmed abort LOGOFF and one held real success reply
+past cleanup timeout, then late delivery, older-file continuity and binding retry
+on the same shared candidate. Concurrent binding, replacement and six
+reauthentications retain their existing assertions. All **188 actual GSS contexts**
+are disposed before fixture fallback cleanup; none remains live.
+
+The socket observer independently verifies **684 GMAC tags** and **396 GCM
+transforms**, including auxiliary cleanup, while preserving its per-connection
+native credit/MID checks. No actual-key/nonce reuse is observed. An oracle-only
+ciphertext mutation is rejected. All eight owned domain containers are removed.
+The first expanded run exposed a fixture error: `getCompactData()` omitted an
+already-parsed transform header. Copying the complete buffer fixes the oracle;
+failed attempts and exact source are retained with the passing evidence.
+
+**43 focused response cases pass**, including four new BC/JCE combinations of
+valid/tampered stale transforms. After retirement and session-key removal, repeated
+late delivery grants no credits, cannot complete another session's outstanding
+request, and does not prevent that healthy request from completing. Production
+already discards unknown-session transforms before decryption, so no production
+change or retained-key tombstone is needed. The production JAR remains identical
+to the cleanup-identity checkpoint; broader local/Java8 suites were not repeated.
+The shared observer also passes all **11 public NTLM compatibility cases**,
+independently verifying 4,299 additional GMAC tags (4,983 across this checkpoint).
+Real encrypted cleanup coverage remains BC/Direct/Java21. Actual provider disposal
+failure, binding-phase faults, expiry/cancellation/notification/recovery and the
+remaining complete matrices stay open. See
+[validation-encrypted-cleanup.json](validation-encrypted-cleanup.json).
+
 ## Inputs and history
 
 - Branch: `feature/full-gmac-multichannel`.
@@ -1142,7 +1174,7 @@ results above. Windows testing is deferred for the current Linux work.
 |---|---|---|
 | G0 | NOT_RUN | Implemented construction and key/MID argument; finish current-public cancellation/notification lifetime variants, sustained churn/cost and remaining Linux failure/policy coverage |
 | G1 | NOT_RUN | Existing regressions and full local check pass; remaining combined operational qualification is recorded per scenario |
-| G2 | NOT_RUN | Complete local matrix across providers/transports/runtimes; the 40-case Java 8 profile passes, but the complete Java 8 multichannel/authentication/failure matrix remains unqualified |
+| G2 | NOT_RUN | Complete local matrix across providers/transports/runtimes; the 46-case Java 8 profile passes, but the complete Java 8 multichannel/authentication/failure matrix remains unqualified |
 | G3 | NOT_RUN | Public NTLM/Kerberos reauthentication passes; complete expiry/failure variants, notifications and replay/fencing/recovery cases |
 | G4 | NOT_RUN | Native Linux/Samba acceptance passes in recorded configurations; mandatory-global-encryption binding remains unqualified; Windows deferred and ONTAP-specific behavior untested |
 | G5 | NOT_RUN | Sustained concurrent I/O and cancellation-churn memory (including transport queues), replacement/recovery and comparative measurements |

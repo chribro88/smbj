@@ -36,26 +36,39 @@ try:
     assert result.returncode == 0, result.returncode
     root = ET.parse(report).getroot()
     metadata['suite'] = dict(root.attrib)
-    assert int(root.get('tests')) == 4, root.attrib
+    assert int(root.get('tests')) == 8, root.attrib
     assert all(int(root.get(key)) == 0 for key in ('failures', 'errors', 'skipped')), root.attrib
     lines = (root.findtext('system-out') or '').splitlines()
     metadata['profiles'] = [line for line in lines if line.startswith('PUBLIC_KRB_COMPLETE ')]
     metadata['contexts'] = [line for line in lines if line.startswith('KERBEROS_CONTEXTS ')]
     metadata['audits'] = [line for line in lines if line.startswith('AUXWIRE_COMPLETE ')]
+    metadata['gcm_audits'] = [line for line in lines if line.startswith('AUXWIRE_GCM ')]
     metadata['disposal_aborts'] = [line for line in lines if line.startswith('KERBEROS_DISPOSAL_ABORT ')]
-    assert all(len(metadata[key]) == 4 for key in ('profiles', 'contexts', 'audits', 'disposal_aborts'))
+    assert all(len(metadata[key]) == 8 for key in ('profiles', 'contexts', 'audits', 'disposal_aborts'))
+    assert len(metadata['gcm_audits']) == 4
+    assert all('distinctMessageNonceReuses=0' in line for line in metadata['gcm_audits'])
     assert all('distinctMessageNonceReuses=0' in line for line in metadata['audits'])
-    expected = {(str(size), str(borrowed).lower()) for size in (16, 32) for borrowed in (False, True)}
+    expected = {(str(size), str(borrowed).lower(), str(encrypted).lower())
+                for size in (16, 32) for borrowed in (False, True) for encrypted in (False, True)}
     aborts = [dict(word.split('=', 1) for word in line.split()[1:]) for line in metadata['disposal_aborts']]
-    assert {(entry['rawKeyBytes'], entry['borrowed']) for entry in aborts} == expected
+    assert {(entry['rawKeyBytes'], entry['borrowed'], entry['encrypt']) for entry in aborts} == expected
     assert all(entry['confirmedLogoffs'] == '1' and entry['timedOutLogoffs'] == '1'
                and entry['lateIgnored'] == 'true' and entry['injectedAfterDispose'] == 'true' for entry in aborts)
+    gcm = [dict(word.split('=', 1) for word in line.split()[1:]) for line in metadata['gcm_audits']]
+    assert {entry['run'] for entry in gcm} == {
+        'public-kerberos-' + size + '-' + borrowed + '-true'
+        for size, borrowed, encrypted in expected if encrypted == 'true'}
+    assert all(int(entry['verifiedTransforms']) >= 32 and int(entry['encryptedOperationalMessages']) >= 8
+               and int(entry['encryptedLogoffFrames']) >= 4 for entry in gcm)
+    contexts = [dict(word.split('=', 1) for word in line.split()[1:]) for line in metadata['contexts']]
+    assert all(int(entry['established']) > 0 and entry['established'] == entry['disposed']
+               and entry['live'] == '0' for entry in contexts)
     seen = set()
     metadata['containers'] = []
     for line in metadata['profiles']:
         fields = dict(word.split('=', 1) for word in line.split()[1:])
         assert fields['image'] == image_id
-        seen.add((fields['rawKeyBytes'], fields['borrowed']))
+        seen.add((fields['rawKeyBytes'], fields['borrowed'], fields['encrypt']))
         cid = fields['id']
         assert re.fullmatch('[0-9a-f]{64}', cid), cid
         assert not subprocess.check_output(['docker', 'ps', '-a', '-q', '--filter', 'id=' + cid], text=True).strip()
@@ -63,6 +76,6 @@ try:
     assert seen == expected, seen
     (output / report.name).write_bytes(report.read_bytes())
     metadata['result'] = 'PASS'
-    print('4 public GMAC Kerberos cases passed; all four owned domain containers removed.')
+    print('8 public GMAC Kerberos cases passed; all eight owned domain containers removed.')
 finally:
     (output / 'metadata.json').write_text(json.dumps(metadata, indent=2) + '\n')

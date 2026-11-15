@@ -34,6 +34,7 @@ import com.hierynomus.smbj.session.SessionContext;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
@@ -137,6 +138,36 @@ class ResponseAuthenticationTest {
         try (Fixture f = new Fixture(true, jce)) {
             f.connection.handle(new SMB3EncryptedPacketData(encrypted(response(47, null), 47)));
             assertTrue(f.request.getPromise().isFulfilled());
+            assertEquals(8, f.connection.sequenceWindow.available());
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource({"false,false", "false,true", "true,false", "true,true"})
+    void retiredSessionTransformCannotAffectAnotherSessionsOutstandingWork(boolean jce, boolean tampered) throws Exception {
+        try (Fixture f = new Fixture(true, jce)) {
+            byte[] late = encrypted(response(47, null), 47);
+            if (tampered) late[4] ^= 1;
+            f.connection.abandonRequest(123, new TransportException("Authentication cleanup timed out"));
+            Session retired = f.connection.getSessionTable().find(47L);
+            f.connection.getSessionTable().removeSession(47L, retired);
+            retired.getSessionContext().setDecryptionKey(null);
+            Request healthy = f.register(124, 48);
+
+            for (int delivery = 0; delivery < 2; delivery++) {
+                f.connection.handle(new SMB3EncryptedPacketData(late));
+                assertEquals(1, f.connection.sequenceWindow.available());
+                assertTrue(f.request.getPromise().isFulfilled());
+                assertNull(f.connection.outstandingRequests.getRequestByMessageId(123L));
+                assertNull(f.connection.outstandingRequests.getRequestByCancelId(f.request.getCancelId()));
+                assertFalse(healthy.getPromise().isFulfilled());
+                assertSame(healthy, f.connection.outstandingRequests.getRequestByMessageId(124L));
+            }
+
+            byte[] reply = response(48, null);
+            ByteBuffer.wrap(reply).order(ByteOrder.LITTLE_ENDIAN).putLong(24, 124);
+            f.connection.handle(new SMB3EncryptedPacketData(encrypted(reply, 48)));
+            assertTrue(healthy.getPromise().isFulfilled());
             assertEquals(8, f.connection.sequenceWindow.available());
         }
     }
