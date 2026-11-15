@@ -21,6 +21,21 @@ an older validation record's temporary artifact directory.
 
 ## Current production integration
 
+The feature is rebased onto development `814feab`, including its whole-frame
+response validation, share-required encryption, stronger teardown and leasing
+configuration fixes. Integration checkpoint `bbad850` passes 1,167 local cases in
+118 suites with no failures/errors/skips (`check -x integrationTest`). All 27
+failures from the first full rebase run are resolved. That run does not renew the
+earlier native or actual Java 8 evidence. The root ParentLeaseKey defect and the
+next upstream donors are documented in the
+[pinned PR review](research/upstream-pr-review-2026-11-15.md).
+Upstream-first integration is the selected approach: preserve donor commits and
+place required G0 adaptations in separate follow-up commits. No PR reviewed in
+that document has been imported by the review. The rebase results, protected
+bundles and compact evidence archive are recorded in
+[validation-development-rebases.json](validation-development-rebases.json).
+G0 remains incomplete.
+
 Directory lease keys, parent-key lookups and cached listings now use the exact
 TreeConnect identity and normalized path. Two sessions, two shares or a reused
 numeric TreeId cannot borrow another tree's cache. Scoped entries keep an
@@ -33,7 +48,7 @@ keeps their shared canonical manager alive.
 
 The focused and native isolation evidence, runtime/provider coverage and remaining
 limits are recorded in [validation-lease-isolation.json](validation-lease-isolation.json).
-The final source passes 1,018 local tests in 110 suites and 16 native cases across
+Pre-rebase source `31b25da` passed 1,018 local tests in 110 suites and 16 native cases across
 Java 21 and actual Java 8, BC/JCE and signing/optional GCM. Each Java 8 run also
 passes thirty local compatibility cases. Independent audits verify 1,072 GMAC tags
 and 815 GCM transforms with no observed actual-key/nonce reuse. Evidence is
