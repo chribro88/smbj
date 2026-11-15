@@ -5,7 +5,8 @@ tested Samba configurations: concurrent binding, replacement channels and
 existing-open file I/O pass with independent wire/tag checks on the audited
 profiles. The requested full feature is **incomplete**. G0 remains open against
 the complete lifetime and interoperability requirements in [plan.md](plan.md);
-this does not mean that GMAC or multichannel is disabled.
+this does not mean that GMAC or multichannel is disabled. Windows testing is
+explicitly deferred by the user; implementation and acceptance continue on Linux.
 
 Earlier diagnostic and prototype records are historical evidence. The live
 Go/Samba collision trace and the auxiliary/concurrent experiments explain the
@@ -41,7 +42,7 @@ connections.
 Validation records below identify their exact source states and scope. The
 latest lifecycle record is
 [validation-bootstrap-lifecycle.json](validation-bootstrap-lifecycle.json).
-Remaining engineering work includes the public Kerberos/reauthentication paths,
+Remaining engineering work includes public reauthentication and Kerberos failure/expiry paths,
 complete failure/key-lifetime coverage, sustained binding-history/resource cost
 and target-server qualification. These are tracked implementation and test tasks;
 no further cryptographic-library change or paper search is required to proceed.
@@ -172,6 +173,36 @@ profiles: **35 cases** (11 public, 24 focused local) and **40 cases** (16 matrix
 24 focused local). All have zero failures/errors/skips. The production JAR is
 identical across the runtime runs and all 511 classes target Java 8. The prior
 905-test full-check result remains recorded at its earlier source state.
+
+### Public Kerberos multichannel
+
+The existing Samba AD fixture now tests the production public APIs directly.
+Four native cases pass on Linux/Samba AD 4.23.10, Direct TCP, BC and Java 21:
+16-byte and 32-byte real Kerberos context keys, each with/without an older session
+on the caller. SMB signing remains AES-128-GMAC in every case; the peer disables
+NTLM. Two public binds pause before first socket write while the existing open
+continues I/O. Replacement and same-open readback then succeed across channels.
+
+The reused independent JCE observer verifies **256 signed inputs** across all
+four traces with zero observed distinct-message actual-key/nonce reuse. Extended
+GSS inquiry checks **42 established contexts**. All four owned domain containers
+are confirmed removed; Subject login, contexts and private Kerberos configuration
+are released. The production JAR remains identical to the preceding lifecycle
+milestone. The shared observer passes all 11 NTLM public cases on Java 21 and the
+35-case Java 8 profile (11 native, 24 focused local).
+
+Run the existing pinned local fixture from this worktree with the Java 21 build
+JDK selected:
+
+```sh
+python3 docs/full-gmac-multichannel/research/run-gmac-kerberos-fixture.py \
+  --output /tmp/<fresh-private-directory>
+```
+
+See
+[validation-public-kerberos.json](validation-public-kerberos.json) for source,
+image, runtime and audit scope. Public reauthentication, failure/expiry variants,
+remaining transports/providers and sustained churn remain engineering tasks.
 
 ## Inputs and history
 

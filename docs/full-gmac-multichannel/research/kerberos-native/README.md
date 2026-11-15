@@ -1,5 +1,13 @@
 # Native Kerberos SMB/GMAC research
 
+**Historical detached-source record.** The current feature branch now runs this
+fixture through production public APIs. Use
+`python3 docs/full-gmac-multichannel/research/run-gmac-kerberos-fixture.py --output /tmp/<fresh-directory>`
+from the feature worktree with the existing Java 21 build JDK selected. The four
+public cases and independent wire audit are recorded in
+[validation-public-kerberos.json](../../validation-public-kerberos.json).
+The guard and API limitations described below belong to the older source state.
+
 Six native cases pass on Samba AD DC 4.23.10: original channel, auxiliary-bound
 channels and an original-signing-key negative control, each with actual
 AES-128 or AES-256 Kerberos GSS context keys. SMB signing is **AES-128-GMAC**

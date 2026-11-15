@@ -47,13 +47,21 @@ final class GmacBindingWireObserver extends SocketFactory {
     private final Map<Integer, byte[]> channelKeys = new HashMap<>();
     private final Map<Long, byte[]> originalSessionKeys = new HashMap<>();
     private final byte[] fingerprintKey = new byte[32];
+    private final String hostname;
+    private final int port;
     private long mainSessionId;
     private int originalSocket;
     private byte[] originalKey;
     private int originalKeyBindingRequests, unsignedEchoRequests;
     private boolean originalApplicationTraffic;
 
-    GmacBindingWireObserver() { new SecureRandom().nextBytes(fingerprintKey); }
+    GmacBindingWireObserver() { this("127.0.0.1", Integer.parseInt(System.getenv("SMB_TEST_PORTS"))); }
+
+    GmacBindingWireObserver(String hostname, int port) {
+        this.hostname = hostname;
+        this.port = port;
+        new SecureRandom().nextBytes(fingerprintKey);
+    }
 
     synchronized void register(Connection connection) {
         ObservedSocket socket = openedByThread.get(Thread.currentThread());
@@ -218,13 +226,13 @@ final class GmacBindingWireObserver extends SocketFactory {
     @Override public Socket createSocket(InetAddress host, int port, InetAddress local, int localPort) throws IOException { return open(host.getHostAddress(), port, local, localPort); }
 
     private synchronized Socket open(String host, int port, InetAddress local, int localPort) throws IOException {
-        if (!"127.0.0.1".equals(host) || port != Integer.parseInt(System.getenv("SMB_TEST_PORTS"))) throw new IOException("Only the owned loopback research fixture is permitted");
+        if (!(hostname.equals(host) || "127.0.0.1".equals(host)) || port != this.port) throw new IOException("Only the owned loopback fixture is permitted");
         ObservedSocket socket = new ObservedSocket(sockets.size());
         sockets.add(socket);
         openedByThread.put(Thread.currentThread(), socket);
         try {
             if (local != null) socket.bind(new InetSocketAddress(local, localPort));
-            socket.connect(new InetSocketAddress(host, port), 5000);
+            socket.connect(new InetSocketAddress("127.0.0.1", port), 5000);
             return socket;
         } catch (IOException failure) {
             try { socket.close(); } catch (IOException close) { failure.addSuppressed(close); }
