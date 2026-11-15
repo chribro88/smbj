@@ -30,6 +30,7 @@ import com.hierynomus.protocol.transport.PacketReceiver;
 import com.hierynomus.protocol.transport.TransportLayer;
 import com.hierynomus.protocol.transport.TransportException;
 import com.hierynomus.protocol.commons.buffer.Buffer;
+import com.hierynomus.protocol.commons.buffer.Endian;
 import com.hierynomus.spnego.RawToken;
 import com.hierynomus.spnego.SpnegoException;
 import com.hierynomus.smbj.transport.tcp.direct.DirectTcpTransport;
@@ -213,7 +214,7 @@ class PublicGmacKerberosIT {
                             @Override public AuthenticateResponse authenticate(AuthenticationContext auth, byte[] token, ConnectionContext connection) throws IOException {
                                 AuthenticateResponse response = super.authenticate(auth, token, connection);
                                 if (damageNextToken.compareAndSet(true, false)) {
-                                    Buffer.PlainBuffer encoded = new Buffer.PlainBuffer();
+                                    Buffer.PlainBuffer encoded = new Buffer.PlainBuffer(Endian.LE);
                                     try { response.getNegToken().write(encoded); }
                                     catch (SpnegoException failure) { throw new IOException(failure); }
                                     byte[] damaged = Arrays.copyOf(encoded.array(), encoded.wpos());
