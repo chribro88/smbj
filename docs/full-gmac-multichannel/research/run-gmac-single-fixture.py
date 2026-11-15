@@ -185,7 +185,8 @@ try:
     if arguments.java8_home:
         assert all('java=1.8.' in line for line in metadata['profiles'])
         expected = {'PromiseBackedFutureTest': 5, 'RequestCancellationTest': 9,
-                    'PacketSignatoryTest': 2, 'SequenceWindowExhaustionTest': 8}
+                    'PacketSignatoryTest': 2, 'SequenceWindowExhaustionTest': 8,
+                    'SessionLoggedOffEventTest': 3, 'TreeDisconnectedEventTest': 3}
         metadata['java8_local_suites'] = []
         for name, count in expected.items():
             local = list(reports.glob('TEST-*.' + name + '.xml'))

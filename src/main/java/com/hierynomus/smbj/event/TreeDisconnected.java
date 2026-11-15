@@ -15,16 +15,41 @@
  */
 package com.hierynomus.smbj.event;
 
+import com.hierynomus.smbj.session.Session;
+import com.hierynomus.smbj.share.TreeConnect;
+import java.lang.ref.WeakReference;
+
 public class TreeDisconnected extends SessionEvent {
 
     private long treeId;
+    private final WeakReference<TreeConnect> owner;
 
+    /** Legacy notification matching numeric session/tree IDs. */
     public TreeDisconnected(long sessionId, long treeId) {
         super(sessionId);
         this.treeId = treeId;
+        owner = null;
+    }
+
+    /** Stored notifications must not retain the tree's session keys and credentials. */
+    public TreeDisconnected(TreeConnect tree) {
+        super(tree.getSession().getSessionId());
+        treeId = tree.getTreeId();
+        owner = new WeakReference<>(tree);
     }
 
     public long getTreeId() {
         return treeId;
+    }
+
+    public boolean matchesSession(Session session) {
+        TreeConnect tree = owner == null ? null : owner.get();
+        return session != null && session.getSessionId() == getSessionId()
+                && (owner == null || tree != null && tree.getSession() == session);
+    }
+
+    public boolean matchesTree(TreeConnect tree) {
+        return tree != null && tree.getTreeId() == treeId && matchesSession(tree.getSession())
+                && (owner == null || owner.get() == tree);
     }
 }

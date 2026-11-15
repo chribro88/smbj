@@ -534,6 +534,43 @@ verify **4,839 GMAC tags** with zero observed distinct-message actual-key/nonce
 reuse. All 511 production classes retain Java 8 bytecode, and all task-owned
 Samba/AD fixtures are removed. G0 and the full feature gates remain open.
 
+### Cleanup notification ownership and share-cache generations
+
+LOGOFF notifications now identify their originating logical Session, and
+TREE_DISCONNECT notifications identify their TreeConnect. Connection/session
+subscribers use exact instance matching and conditional table removal. A
+different peer's session with the same numeric ID survives; delayed notifications
+and replacement races cannot remove a newer session or tree. Share-cache removal
+also preserves a newer mapping under the same name, and registering a reused
+tree ID clears only its obsolete name alias. Other live tree IDs remain tracked.
+
+Notification owners are weak references so retained events do not keep session,
+tree, key or credential objects alive. A collected scoped owner never falls back
+to numeric broadcast. The original numeric constructors and inherited event
+value equality remain compatible. New pure event tests are included in the
+actual-Java-8 profile, which now selects 30 local runtime cases.
+
+The first seven-case connection run reproduces two failures: cross-peer SessionId
+collision and delayed LOGOFF deletion of a replacement. After LOGOFF ownership
+is fixed, a ten-case run exposes one separate cached-share loss during close
+when session/tree IDs coincide. These use controlled negotiated peers with
+distinct server GUIDs. The final **86 focused checks pass**, covering public
+Session.close/share reuse, all-channel table removal, a replacement between
+lookup/removal, legacy behavior, weak collectability and tree-table indexes.
+Full `check` passes **991 tests in 108 suites**, zero failures/errors/skips, plus
+license and JaCoCo. Native rows retain their real GMAC/key/nonce checks; the
+colliding-ID assertions use the deterministic peer fixtures. See
+[validation-cleanup-event-identity.json](validation-cleanup-event-identity.json).
+
+The frozen Java-8-targeted JAR also passes **31 Java 21 native cases** (11 public
+NTLM multichannel, four Kerberos, 16 provider/transport/encryption matrix cases)
+and **46 actual Java 8 cases** (16 native plus 30 local). Native NTLM/Kerberos
+traces independently verify **4,839 GMAC tags**, with zero observed distinct-message
+actual-key/nonce reuse; all 94 real GSS contexts are disposed and no live contexts
+remain. All seven task-owned fixture containers are removed. Complete G0 remains
+open for the previously listed lifecycle, expiry, cancellation, notification and
+recovery variants; this checkpoint adds cleanup identity safety.
+
 ## Inputs and history
 
 - Branch: `feature/full-gmac-multichannel`.

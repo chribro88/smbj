@@ -36,7 +36,11 @@ class TreeConnectTable {
     void register(Share share) {
         lock.writeLock().lock();
         try {
-            lookupById.put(share.getTreeConnect().getTreeId(), share);
+            Share previous = lookupById.put(share.getTreeConnect().getTreeId(), share);
+            if (previous != null && previous != share) {
+                String name = previous.getTreeConnect().getShareName();
+                if (lookupByShareName.get(name) == previous) lookupByShareName.remove(name);
+            }
             lookupByShareName.put(share.getTreeConnect().getShareName(), share);
         } finally {
             lock.writeLock().unlock();
@@ -70,12 +74,14 @@ class TreeConnectTable {
         }
     }
 
-    void closed(long treeConnectId) {
+    void closed(long treeConnectId, Share expected) {
         lock.writeLock().lock();
         try {
-            Share share = lookupById.remove(treeConnectId);
-            if (share != null) {
-                lookupByShareName.remove(share.getTreeConnect().getShareName());
+            Share share = lookupById.get(treeConnectId);
+            if (share != null && share == expected) {
+                lookupById.remove(treeConnectId);
+                String name = share.getTreeConnect().getShareName();
+                if (lookupByShareName.get(name) == share) lookupByShareName.remove(name);
             }
         } finally {
             lock.writeLock().unlock();

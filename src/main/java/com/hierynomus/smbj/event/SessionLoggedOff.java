@@ -15,9 +15,26 @@
  */
 package com.hierynomus.smbj.event;
 
-public class SessionLoggedOff extends SessionEvent {
+import com.hierynomus.smbj.session.Session;
+import java.lang.ref.WeakReference;
 
+public class SessionLoggedOff extends SessionEvent {
+    private final WeakReference<Session> owner;
+
+    /** Legacy notification matching sessions by their numeric ID. */
     public SessionLoggedOff(long sessionId) {
         super(sessionId);
+        owner = null;
+    }
+
+    /** Retain ownership weakly so stored notifications do not retain closed session keys. */
+    public SessionLoggedOff(Session session) {
+        super(session.getSessionId());
+        owner = new WeakReference<>(session);
+    }
+
+    public boolean matchesSession(Session session) {
+        return session != null && session.getSessionId() == getSessionId()
+                && (owner == null || owner.get() == session);
     }
 }

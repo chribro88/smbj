@@ -26,6 +26,9 @@ import static com.hierynomus.smbj.testing.Utils.*;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicInteger;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import org.junit.jupiter.api.Test;
 
@@ -41,9 +44,128 @@ import com.hierynomus.smbj.SmbConfig;
 import com.hierynomus.smbj.event.ConnectionClosed;
 import com.hierynomus.smbj.event.SMBEvent;
 import com.hierynomus.smbj.event.SMBEventBus;
+import com.hierynomus.smbj.event.SessionLoggedOff;
+import com.hierynomus.smbj.auth.AuthenticationContext;
+import com.hierynomus.smbj.session.Session;
+import com.hierynomus.smbj.share.Share;
 import com.hierynomus.smbj.testing.PacketProcessor.NoOpPacketProcessor;;
 
 public class ConnectionTest {
+
+    @Test
+    public void shouldPreserveAnotherPeersSessionWhenItsNumericIdMatchesTheLoggedOffSession() throws Exception {
+        SmbConfig config = distinctPeerConfig();
+        SMBEventBus bus = new SMBEventBus();
+        AuthenticationContext identity = new AuthenticationContext("user", new char[0], "domain");
+        try (SMBClient client = new SMBClient(config, bus);
+             Connection one = client.connect("one"); Connection two = client.connect("two");
+             Session closing = one.authenticate(identity); Session other = two.authenticate(identity)) {
+            assertEquals(closing.getSessionId(), other.getSessionId());
+            assertNotSame(closing, other);
+            closing.close();
+            assertNull(one.getSessionTable().find(closing.getSessionId()));
+            assertSame(other, two.getSessionTable().find(other.getSessionId()));
+            try (Share share = other.connectShare("share")) { assertNotNull(share); }
+        }
+    }
+
+    @Test
+    public void shouldPreserveAnotherPeersCachedShareWhenSessionAndTreeIdsMatch() throws Exception {
+        SMBEventBus bus = new SMBEventBus();
+        AuthenticationContext identity = new AuthenticationContext("user", new char[0], "domain");
+        try (SMBClient client = new SMBClient(distinctPeerConfig(), bus);
+             Connection one = client.connect("one"); Connection two = client.connect("two");
+             Session closing = one.authenticate(identity); Session other = two.authenticate(identity);
+             Share closingShare = closing.connectShare("share"); Share otherShare = other.connectShare("share")) {
+            assertEquals(closing.getSessionId(), other.getSessionId());
+            assertEquals(closingShare.getTreeConnect().getTreeId(), otherShare.getTreeConnect().getTreeId());
+            closing.close();
+            assertSame(other, two.getSessionTable().find(other.getSessionId()));
+            assertSame(otherShare, other.connectShare("share"));
+        }
+    }
+
+    private static SmbConfig distinctPeerConfig() {
+        AtomicInteger peers = new AtomicInteger();
+        return configBuilder(request -> {
+            if (request.getPacket() instanceof SMB2NegotiateRequest) {
+                SMB2NegotiateResponse response = new SMB2NegotiateResponse();
+                response.getHeader().setStatusCode(NtStatus.STATUS_SUCCESS.getValue());
+                response.setDialect(SMB2Dialect.SMB_2_1);
+                response.setSystemTime(FileTime.now());
+                response.setServerGuid(new UUID(0, peers.incrementAndGet()));
+                return response;
+            }
+            return null;
+        }).withTimeout(1, java.util.concurrent.TimeUnit.SECONDS).build();
+    }
+
+    @Test
+    public void shouldPreserveReplacementWhenAnOldSessionsDelayedLogoffEventArrives() throws Exception {
+        AtomicReference<SessionLoggedOff> delayed = new AtomicReference<>();
+        SMBEventBus bus = new SMBEventBus() {
+            @Override public void publish(SMBEvent event) {
+                if (event instanceof SessionLoggedOff && delayed.compareAndSet(null, (SessionLoggedOff) event)) return;
+                super.publish(event);
+            }
+        };
+        try (SMBClient client = new SMBClient(config(new NoOpPacketProcessor()), bus);
+             Connection connection = client.connect("one")) {
+            Session old = connection.authenticate(new AuthenticationContext("user", new char[0], "domain"));
+            old.close(); assertNotNull(delayed.get());
+            Session replacement = mock(Session.class);
+            when(replacement.getSessionId()).thenReturn(old.getSessionId());
+            connection.getSessionTable().registerSession(old.getSessionId(), replacement);
+            bus.publish(delayed.get());
+            assertSame(replacement, connection.getSessionTable().find(old.getSessionId()));
+        }
+    }
+
+    @Test
+    public void shouldRemoveTheSameLogicalSessionFromAllChannelTables() throws Exception {
+        SMBEventBus bus = new SMBEventBus();
+        try (SMBClient client = new SMBClient(config(new NoOpPacketProcessor()), bus);
+             Connection primary = client.connect("one"); Connection channel = client.connect("one-channel");
+             Session session = primary.authenticate(new AuthenticationContext("user", new char[0], "domain"))) {
+            // Model the same logical session registered on two physical channel tables.
+            channel.getSessionTable().registerSession(session.getSessionId(), session);
+            session.close();
+            assertNull(primary.getSessionTable().find(session.getSessionId()));
+            assertNull(channel.getSessionTable().find(session.getSessionId()));
+            assertFalse(channel.isClosed());
+        }
+    }
+
+    @Test
+    public void shouldPreserveReplacementInsertedBetweenLogoffLookupAndRemoval() throws Exception {
+        AtomicReference<SessionLoggedOff> delayed = new AtomicReference<>();
+        SMBEventBus bus = new SMBEventBus() {
+            @Override public void publish(SMBEvent event) {
+                if (event instanceof SessionLoggedOff && delayed.compareAndSet(null, (SessionLoggedOff) event)) return;
+                super.publish(event);
+            }
+        };
+        try (SMBClient client = new SMBClient(config(new NoOpPacketProcessor()), bus);
+             Connection connection = client.connect("one")) {
+            Session old = connection.authenticate(new AuthenticationContext("user", new char[0], "domain"));
+            old.close();
+            Session replacement = mock(Session.class);
+            when(replacement.getSessionId()).thenReturn(old.getSessionId());
+            AtomicBoolean replaced = new AtomicBoolean();
+            SessionTable table = new SessionTable() {
+                @Override public Session find(Long id) {
+                    Session found = super.find(id);
+                    if (replaced.compareAndSet(false, true)) registerSession(id, replacement);
+                    return found;
+                }
+            };
+            table.registerSession(old.getSessionId(), old);
+            java.lang.reflect.Field field = Connection.class.getDeclaredField("sessionTable");
+            field.setAccessible(true); field.set(connection, table);
+            bus.publish(delayed.get());
+            assertSame(replacement, table.find(old.getSessionId()));
+        }
+    }
 
     @Test
     public void shouldRetainReconnectedConnectionWhenOldCloseEventArrives() throws Exception {

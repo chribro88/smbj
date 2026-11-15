@@ -693,10 +693,9 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
     @SuppressWarnings("unused")
     private void sessionLogoff(SessionLoggedOff loggedOff) {
         Session session = sessionTable.find(loggedOff.getSessionId());
-        if (session != null && session.isBindingInProgress(this)) {
-            return;
+        if (loggedOff.matchesSession(session)) {
+            sessionTable.removeSession(loggedOff.getSessionId(), session);
         }
-        sessionTable.removeSession(loggedOff.getSessionId());
         logger.debug("Session << {} >> logged off", loggedOff.getSessionId());
     }
 

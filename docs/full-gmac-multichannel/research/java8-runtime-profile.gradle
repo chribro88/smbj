@@ -30,7 +30,9 @@ allprojects { project ->
                     'src/test/java/com/hierynomus/protocol/commons/concurrent/PromiseBackedFutureTest.java',
                     'src/test/java/com/hierynomus/smbj/connection/RequestCancellationTest.java',
                     'src/test/java/com/hierynomus/smbj/connection/PacketSignatoryTest.java',
-                    'src/test/java/com/hierynomus/smbj/connection/SequenceWindowExhaustionTest.java')
+                    'src/test/java/com/hierynomus/smbj/connection/SequenceWindowExhaustionTest.java',
+                    'src/test/java/com/hierynomus/smbj/event/SessionLoggedOffEventTest.java',
+                    'src/test/java/com/hierynomus/smbj/connection/TreeDisconnectedEventTest.java')
             classpath = runtime
             destinationDirectory.set(classes)
             javaCompiler.set(toolchains.compilerFor { languageVersion.set(JavaLanguageVersion.of(21)) })
@@ -46,11 +48,13 @@ allprojects { project ->
                             : churn ? '**/MultichannelPerformanceIT.class'
                             : asyncCancel ? '**/GmacAsyncCancellationIT.class' : '**/SingleChannelSigningIT.class',
                     '**/PromiseBackedFutureTest.class', '**/RequestCancellationTest.class',
-                    '**/PacketSignatoryTest.class', '**/SequenceWindowExhaustionTest.class')
+                    '**/PacketSignatoryTest.class', '**/SequenceWindowExhaustionTest.class',
+                    '**/SessionLoggedOffEventTest.class', '**/TreeDisconnectedEventTest.class')
             if (churn) {
                 filter {
                     includeTestsMatching '*.MultichannelPerformanceIT.sustainedBindingChurnKeepsResourcesBounded'
-                    ['PromiseBackedFutureTest', 'RequestCancellationTest', 'PacketSignatoryTest', 'SequenceWindowExhaustionTest'].each {
+                    ['PromiseBackedFutureTest', 'RequestCancellationTest', 'PacketSignatoryTest', 'SequenceWindowExhaustionTest',
+                     'SessionLoggedOffEventTest', 'TreeDisconnectedEventTest'].each {
                         includeTestsMatching '*.' + it
                     }
                 }

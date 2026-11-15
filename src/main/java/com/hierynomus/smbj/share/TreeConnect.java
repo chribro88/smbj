@@ -82,7 +82,7 @@ public class TreeConnect {
                 throw new SMBApiException(smb2Packet.getHeader(), "Error closing connection to " + smbPath);
             }
         } finally {
-            bus.publish(new TreeDisconnected(session.getSessionId(), treeId));
+            bus.publish(new TreeDisconnected(this));
         }
     }
 

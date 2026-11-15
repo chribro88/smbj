@@ -121,6 +121,21 @@ frame included in a trace, including server responses.
 
 ## Failure and shutdown
 
+SDK LOGOFF notifications identify the exact logical Session, and tree-disconnect
+notifications identify the exact TreeConnect. Numeric SessionId/TreeId values
+alone cannot authorize removal of another resource. Cleanup snapshots the current
+table value and conditionally removes only that same instance. Share-name aliases
+are removed only while they still point to the closing share; a reused tree ID
+evicts its obsolete name alias without discarding a newer mapping. Other live
+tree IDs remain tracked when a share-name cache entry changes.
+
+Ownership references in notifications are weak. A table still requiring removal
+holds its resource strongly, so the owner remains available during matching.
+After the old resource is collected, its scoped notification is a no-op and
+cannot become a numeric broadcast. Existing numeric constructors and event value
+equality remain compatible; SDK emitters use the scoped constructors. See
+[validation-cleanup-event-identity.json](validation-cleanup-event-identity.json).
+
 An unmanaged direct Session can retain its original connection. Its original-key
 sends, including reauthentication, use the same monotonic reservation callback
 as binding. This preserves uniqueness while allowing original traffic to raise H;
@@ -190,3 +205,4 @@ profiles. Binding remains signed and unencrypted.
 - [Bounded collision-probe pipelining](validation-batched-probes.json)
 - [Authentication context disposal](validation-authentication-disposal.json)
 - [Authenticated abort and LOGOFF request retirement](validation-disposal-logoff.json)
+- [Cleanup notification ownership and tree-cache generations](validation-cleanup-event-identity.json)

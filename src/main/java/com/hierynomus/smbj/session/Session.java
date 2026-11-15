@@ -298,9 +298,12 @@ public class Session implements AutoCloseable {
     @Handler
     @SuppressWarnings("unused")
     private void disconnectTree(TreeDisconnected disconnectEvent) {
-        if (disconnectEvent.getSessionId() == sessionId) {
+        if (disconnectEvent.matchesSession(this)) {
             logger.debug("Notified of TreeDisconnected <<{}>>", disconnectEvent.getTreeId());
-            treeConnectTable.closed(disconnectEvent.getTreeId());
+            Share share = treeConnectTable.getTreeConnect(disconnectEvent.getTreeId());
+            if (share != null && disconnectEvent.matchesTree(share.getTreeConnect())) {
+                treeConnectTable.closed(disconnectEvent.getTreeId(), share);
+            }
         }
     }
 
@@ -362,7 +365,7 @@ public class Session implements AutoCloseable {
                 throw new SMBApiException(response.getHeader(), "Could not logoff session <<" + sessionId + ">>");
             }
         } finally {
-            bus.publish(new SessionLoggedOff(sessionId));
+            bus.publish(new SessionLoggedOff(this));
         }
     }
 
