@@ -16,7 +16,7 @@ import xml.etree.ElementTree as ET
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--output', type=Path, required=True)
 profile = parser.add_mutually_exclusive_group()
-profile.add_argument('--java8-home', type=Path)
+parser.add_argument('--java8-home', type=Path)
 profile.add_argument('--async-cancel', action='store_true')
 profile.add_argument('--public-binding', action='store_true')
 profile.add_argument('--public-anchor-research', action='store_true')
@@ -27,6 +27,9 @@ arguments = parser.parse_args()
 if not Path('gradlew').is_file():
     parser.error('Run from the SMBJ feature worktree')
 if arguments.java8_home:
+    if any((arguments.async_cancel, arguments.public_anchor_research, arguments.bootstrap_abort_research,
+            arguments.unsigned_echo_research, arguments.per_request_research)):
+        parser.error('--java8-home supports the default matrix or --public-binding')
     if not os.environ.get('JAVA_HOME'):
         parser.error('Select the Java 21 build JDK with JAVA_HOME when using --java8-home')
     arguments.java8_home = arguments.java8_home.resolve()
@@ -45,7 +48,7 @@ if arguments.per_request_research:
     if os.environ.get('SMBJ_GMAC_AUX_RESEARCH') != 'true' or not Path('src/it/java/com/hierynomus/smbj/connection/GmacConcurrentBootstrapIT.java').is_file():
         parser.error('--per-request-research requires the detached research checkout and explicit opt-in')
 if arguments.public_binding:
-    test_class, expected_count, marker, label = ('com.hierynomus.smbj.connection.PublicGmacBindingIT', 7,
+    test_class, expected_count, marker, label = ('com.hierynomus.smbj.connection.PublicGmacBindingIT', 11,
                                                'PUBLIC_GMAC_COMPLETE ', 'public multichannel')
 elif arguments.per_request_research:
     test_class, expected_count, marker, label = ('com.hierynomus.smbj.connection.GmacConcurrentBootstrapIT', 7,
@@ -123,6 +126,7 @@ try:
                '-Dorg.gradle.jvmargs=-Xmx192m -XX:ActiveProcessorCount=2', '--init-script', str(init)]
     if arguments.java8_home:
         client_environment['SMBJ_JAVA8_OUTPUT'] = str(output)
+        client_environment['SMBJ_JAVA8_PUBLIC_BINDING'] = str(arguments.public_binding).lower()
         command += ['-Porg.gradle.java.installations.paths=' + str(arguments.java8_home) + ',' + os.environ['JAVA_HOME'],
                     '-Porg.gradle.java.installations.auto-detect=false', '-Porg.gradle.java.installations.auto-download=false',
                     '--init-script', 'docs/full-gmac-multichannel/research/java8-runtime-profile.gradle', 'java8RuntimeTest']

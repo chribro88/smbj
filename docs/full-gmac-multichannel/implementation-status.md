@@ -1,63 +1,50 @@
 # Full GMAC multichannel implementation status
 
-The requested full feature is **incomplete**. The completion contract in
-[plan.md](plan.md) remains unchanged. G0 is open: this branch does not yet have a
-fully qualified binding key/nonce lifetime mechanism. The public API now uses
-auxiliary authentication and per-request original-key reservations for GMAC
-binding; full lifetime, failure, cost and interoperability qualification remain open.
-An independent live Go/Samba trace now confirms the ordinary legitimate-binding
-collision in both directions; see [research evidence](research/README.md).
+GMAC signing and the public multichannel APIs are implemented and work in the
+tested Samba configurations: concurrent binding, replacement channels and
+existing-open file I/O pass with independent wire/tag checks on the audited
+profiles. The requested full feature is **incomplete**. G0 remains open against
+the complete lifetime and interoperability requirements in [plan.md](plan.md);
+this does not mean that GMAC or multichannel is disabled.
 
-A bounded auxiliary-session candidate now passes four independently observed
-bootstrap/replacement cases and an unsafe-flow negative control. It is isolated
-research, not a selected production construction; see
-[validation-auxiliary.json](validation-auxiliary.json) and
-[its design limits](research/auxiliary-candidate.md).
-
-The separate concurrent extension passes seven research cases: three
-application/fault cases, two bootstrap-abort cases and two unsafe-flow controls.
-It uses one atomic high-water reservation value without holding a global lock
-across network I/O. Complete and partial first-binding losses retain their full
-reservations; an open file survives concurrent binding and a fresh retry. A
-negative control also demonstrates why an unpublished bootstrap abort must
-force-close without original-key LOGOFF. This remains an unselected bounded
-NTLM/direct-TCP/BC construction with quadratic padding cost; see
-[validation-auxiliary-concurrent.json](validation-auxiliary-concurrent.json) and
-[the concurrent record](research/concurrent/README.md).
+Earlier diagnostic and prototype records are historical evidence. The live
+Go/Samba collision trace and the auxiliary/concurrent experiments explain the
+implemented construction; their earlier “unselected” labels describe those
+source states. See [research history](research/README.md),
+[the auxiliary record](validation-auxiliary.json) and
+[the concurrent record](validation-auxiliary-concurrent.json).
 
 ## Current production integration
 
-The public `SMBClient.openChannel` and `Connection.bind` paths now prepare a GMAC
-candidate with an independently authenticated auxiliary session. Policy and
-operation limits are checked before that authentication. The auxiliary signing
-key must differ in actual bytes from the target session's original key. Each
-binding round uses the existing session reservation callback and consumes
-colliding native MIDs with unsigned connection ECHOs. The auxiliary session is
-logged off before the verified channel is published. Cleanup failure removes
-the provisional target entry and cannot publish the channel.
+Client-managed GMAC authentication establishes the target session on a private
+root, reserves its next MID for abort LOGOFF, and binds back onto the caller
+before returning. The caller's verified channel key carries application I/O;
+file traffic does not advance the original-key reservation cursor. Initial
+binding MIDs on a busy caller are retained as at most 16 sparse exclusions.
 
-`openChannel` owns its new transport; direct `Connection.bind` borrows the
-caller's transport. Session close disposes owned active/pending channels and
-prevents late publication on borrowed candidates without closing their transports.
-The underlying signing, KDF, encryption and native credit/MID implementations
-remain the existing ones.
+`SMBClient.openChannel` and `Connection.bind` authenticate an independent
+auxiliary session before GMAC binding. Its actual key bytes must differ from
+the target's original key. Every binding round reserves its actual native MID;
+unsigned connection ECHOs consume collisions through native credit allocation.
+Reservations remain burned after uncertain outcomes. No arbitrary sequence jump
+or alternate GMAC nonce is used. The auxiliary session is closed before the
+verified target channel is published.
 
-Two native public-API cases pass on Samba 4.23.10, NTLM, Direct TCP and BC. They
-hold two concurrent binding attempts before their first socket write, preserve
-one open across channel loss/replacement, and verify borrowed-session continuity
-after target-session close. The reused independent JCE wire audit verifies 116
-signed inputs with zero observed distinct-message actual-key/nonce reuses. These
-run the production source directly, without a detached guard-removal patch.
-The combined `check` milestone passes **893 tests in 102 suites**, zero
-failures/errors/skips, with license and JaCoCo checks. The final native matrix
-also passes 16 cases across Direct/Async, BC/default JCE, GCM off/on and
-write-through off/on, with successful public GMAC binding and existing-open I/O.
-See [validation-public-binding.json](validation-public-binding.json).
+`openChannel` owns its candidate; direct `bind` borrows the caller's transport.
+Private bootstrap and cleanup candidates inherit the caller's configuration,
+event bus, authentication hostname and endpoint, including callers whose
+settings differ from the client's defaults. They are registered before connect
+and explicitly released. Client closure and session state gate publication.
+A failed attempt preserves unrelated sessions and their open files on borrowed
+connections.
 
-The general lifetime proof, bounded late-binding cost, public failure matrix,
-actual Java 8 multichannel run, Kerberos under this public orchestration and
-Windows/target ONTAP acceptance remain open. Earlier entries below describe their
-recorded historical source states, including the earlier unconditional GMAC guard.
+Validation records below identify their exact source states and scope. The
+latest lifecycle record is
+[validation-bootstrap-lifecycle.json](validation-bootstrap-lifecycle.json).
+Remaining engineering work includes the public Kerberos/reauthentication paths,
+complete failure/key-lifetime coverage, sustained binding-history/resource cost
+and target-server qualification. These are tracked implementation and test tasks;
+no further cryptographic-library change or paper search is required to proceed.
 
 ### Authentication attempt ownership
 
@@ -156,6 +143,35 @@ Java 8 profile's **40 cases** (16 native, 24 selected local). There are no
 failures/errors/skips. The identical production JAR is used before and after
 Java 8 validation, with all 511 production classes targeting Java 8. These totals
 do not close the outstanding G0 scenarios above.
+
+### Candidate disposal and client-close publication
+
+Private roots and owned cleanup candidates now explicitly remove the exact
+attempt's session-table entry during disposal. A root that has unsubscribed from
+the event bus cannot otherwise receive later LOGOFF events. Removal uses the
+existing identity check, so it cannot erase a replacement entry.
+
+If binding has already verified the borrowed caller but client closure rejects
+canonical handoff, cleanup uses that verified channel. It does not create a
+second candidate. Native barriers exercise closure before final verification and
+immediately before handoff publication, while older-session file I/O proceeds.
+The client rejects late handoff, target/provisional entries are removed and the
+borrowed connection remains usable. Additional native cases fail cleanup NTLM
+continuation and corrupt its final binding input; neither retries cleanup or
+claims that the remote failed session was successfully logged off.
+
+The existing Java 8 profile can now select this same public acceptance suite.
+The default transport/provider matrix remains selectable. Runtime markers and
+the selected Java launcher record the actual test JVM; the production JAR is
+shared with Java 21 acceptance. See
+[validation-bootstrap-lifecycle.json](validation-bootstrap-lifecycle.json).
+
+This milestone passes **85 focused local tests in nine suites** plus license
+checks; **27 Java 21 native cases** (11 public, 16 matrix); and both actual Java 8
+profiles: **35 cases** (11 public, 24 focused local) and **40 cases** (16 matrix,
+24 focused local). All have zero failures/errors/skips. The production JAR is
+identical across the runtime runs and all 511 classes target Java 8. The prior
+905-test full-check result remains recorded at its earlier source state.
 
 ## Inputs and history
 

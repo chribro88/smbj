@@ -7,6 +7,7 @@ import org.gradle.jvm.toolchain.JavaToolchainService
 allprojects { project ->
     afterEvaluate {
         def output = new File(System.getenv('SMBJ_JAVA8_OUTPUT'))
+        def publicBinding = System.getenv('SMBJ_JAVA8_PUBLIC_BINDING') == 'true'
         def toolchains = project.extensions.getByType(JavaToolchainService)
         def junit = (project.configurations.integrationTestRuntimeClasspath.resolvedConfiguration.resolvedArtifacts
                 + project.configurations.integrationTestCompileClasspath.resolvedConfiguration.resolvedArtifacts)
@@ -17,9 +18,11 @@ allprojects { project ->
         def classes = new File(output, 'java8-classes')
         def compile = project.tasks.register('compileJava8RuntimeTest', JavaCompile) {
             dependsOn project.tasks.named('jar')
-            source = project.files(
+            source = project.files(publicBinding ? [
+                    'src/it/java/com/hierynomus/smbj/connection/PublicGmacBindingIT.java',
+                    'src/it/java/com/hierynomus/smbj/connection/GmacBindingWireObserver.java'] : [
                     'src/it/java/com/hierynomus/smbj/SingleChannelSigningIT.java',
-                    'src/it/java/com/hierynomus/smbj/testing/MultichannelTestSupport.java',
+                    'src/it/java/com/hierynomus/smbj/testing/MultichannelTestSupport.java'],
                     'src/test/java/com/hierynomus/protocol/commons/concurrent/PromiseBackedFutureTest.java',
                     'src/test/java/com/hierynomus/smbj/connection/RequestCancellationTest.java',
                     'src/test/java/com/hierynomus/smbj/connection/PacketSignatoryTest.java',
@@ -35,8 +38,9 @@ allprojects { project ->
             classpath = project.files(classes, runtime)
             javaLauncher.set(toolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(8)) })
             useJUnitPlatform()
-            include '**/SingleChannelSigningIT.class', '**/PromiseBackedFutureTest.class',
-                    '**/RequestCancellationTest.class', '**/PacketSignatoryTest.class', '**/SequenceWindowExhaustionTest.class'
+            include(publicBinding ? '**/PublicGmacBindingIT.class' : '**/SingleChannelSigningIT.class',
+                    '**/PromiseBackedFutureTest.class', '**/RequestCancellationTest.class',
+                    '**/PacketSignatoryTest.class', '**/SequenceWindowExhaustionTest.class')
             reports.junitXml.outputLocation.set(new File(output, 'java8-reports'))
             reports.html.outputLocation.set(new File(output, 'java8-html'))
             doFirst {

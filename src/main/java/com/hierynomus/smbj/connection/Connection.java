@@ -306,6 +306,7 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
                 if (primary == null) throw cleanup;
                 if (cleanup != primary) primary.addSuppressed(cleanup);
             } finally {
+                if (session != null) bootstrap.sessionTable.removeSession(session.getSessionId(), session);
                 client.releaseBootstrapConnection(bootstrap);
             }
         }
@@ -314,10 +315,10 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
     private void cleanupFailedBootstrap(Session session, Connection bootstrap, Throwable failure) {
         Connection cleanupChannel = null;
         try {
-            // A lost final reply can leave the session bound at the peer. If its root
-            // died, obtain one verified channel key before attempting session LOGOFF.
+            // After bind() unwinds, the caller retains the target only if its channel
+            // was verified. Otherwise recover once if the private root died.
             if (!(failure instanceof Error) && session.getConnection() == bootstrap
-                    && bootstrap.isClosed() && isConnected()) {
+                    && bootstrap.isClosed() && !isSessionEstablished(session) && isConnected()) {
                 cleanupChannel = new Connection(config, client, bus, serverList);
                 client.registerBootstrapConnection(cleanupChannel);
                 cleanupChannel.connect(getRemoteHostname(), remoteAddress);
@@ -333,7 +334,10 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
                 if (cleanupChannel != null) {
                     try { cleanupChannel.close(true); }
                     catch (IOException | RuntimeException cleanup) { if (cleanup != failure) failure.addSuppressed(cleanup); }
-                    finally { client.releaseBootstrapConnection(cleanupChannel); }
+                    finally {
+                        cleanupChannel.sessionTable.removeSession(session.getSessionId(), session);
+                        client.releaseBootstrapConnection(cleanupChannel);
+                    }
                 }
             }
         }

@@ -178,8 +178,8 @@ class PublicGmacBindingIT {
                 }
                 int catchUp = observer.unsignedEchoRequests() - initialCatchUp;
                 assertTrue(catchUp <= 32, "Application traffic and the busy initial caller cannot drive later catch-up: " + catchUp);
-                System.out.printf("PUBLIC_GMAC_COMPLETE run=%s signing=AES_GMAC replacement=true concurrentBindings=2 borrowedPreserved=%s priorTraffic=%d applicationTraffic=%d collisionEchoes=%d%n",
-                        run, borrowed, borrowed ? 1024 : 0, borrowed ? 1024 : 0, catchUp);
+                System.out.printf("PUBLIC_GMAC_COMPLETE run=%s signing=AES_GMAC replacement=true concurrentBindings=2 borrowedPreserved=%s priorTraffic=%d applicationTraffic=%d collisionEchoes=%d java=%s%n",
+                        run, borrowed, borrowed ? 1024 : 0, borrowed ? 1024 : 0, catchUp, System.getProperty("java.version"));
             }
             }
         } finally {
@@ -258,11 +258,12 @@ class PublicGmacBindingIT {
             } finally { shared.close(true); }
         }
         assertEquals(0, subscribers.get());
-        System.out.println("PUBLIC_GMAC_COMPLETE run=auxiliary-auth-failure signing=AES_GMAC failedCandidatePublished=false borrowedPreserved=true retry=true");
+        System.out.println("PUBLIC_GMAC_COMPLETE run=auxiliary-auth-failure signing=AES_GMAC failedCandidatePublished=false borrowedPreserved=true retry=true java=" + System.getProperty("java.version"));
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"signature", "lost", "lost-root", "lost-root-cleanup-failure"})
+    @ValueSource(strings = {"signature", "lost", "lost-root", "lost-root-cleanup-failure",
+            "lost-root-auth-failure", "lost-root-bind-failure"})
     void rejectedBootstrapFinalCleansUpWithoutClosingTheCaller(String fault) throws Exception {
         String portValue = System.getenv("SMB_TEST_PORTS");
         assumeTrue(portValue != null, "Dedicated GMAC fixture required");
@@ -270,6 +271,8 @@ class PublicGmacBindingIT {
         AtomicBoolean rejecting = new AtomicBoolean();
         boolean rootLost = fault.startsWith("lost-root");
         AtomicBoolean cleanupUnavailable = new AtomicBoolean();
+        AtomicBoolean cleanupStarted = new AtomicBoolean();
+        boolean cleanupFails = rootLost && fault.endsWith("failure");
         AtomicLong failedSession = new AtomicLong();
         AtomicReference<byte[]> originalKey = new AtomicReference<>();
         List<Long> bindingMids = new ArrayList<>(), abortMids = new ArrayList<>();
@@ -281,7 +284,19 @@ class PublicGmacBindingIT {
         SmbConfig config = SmbConfig.builder().withDialects(SMB2Dialect.SMB_3_1_1)
                 .withSigningAlgorithms(SMB3SigningAlgorithm.AES_GMAC).withSigningRequired(true)
                 .withSecurityProvider(new BCSecurityProvider()).withTimeout(10, TimeUnit.SECONDS)
-                .withAuthenticators(new NtlmAuthenticator.Factory()).withTransportLayerFactory((handlers, settings) -> {
+                .withAuthenticators(new NtlmAuthenticator.Factory() {
+                    @Override public NtlmAuthenticator create() {
+                        boolean reject = cleanupStarted.get() && fault.equals("lost-root-auth-failure");
+                        return new NtlmAuthenticator() {
+                            private int calls;
+                            @Override public com.hierynomus.smbj.auth.AuthenticateResponse authenticate(
+                                    AuthenticationContext auth, byte[] token, ConnectionContext context) throws IOException {
+                                if (++calls == 2 && reject) throw new IOException("Injected cleanup authentication failure");
+                                return super.authenticate(auth, token, context);
+                            }
+                        };
+                    }
+                }).withTransportLayerFactory((handlers, settings) -> {
                     transportOwners.add((Connection) handlers.getReceiver());
                     PacketHandlers<SMBPacketData<?>, SMBPacket<?, ?>> filtered =
                             new PacketHandlers<>(handlers.getSerializer(), new PacketReceiver<SMBPacketData<?>>() {
@@ -292,6 +307,17 @@ class PublicGmacBindingIT {
                                                         && reply.getHeader().getSessionId() == failedSession.get()
                                                         && reply.getHeader().getStatusCode() == 0 && dropFinal.compareAndSet(true, false)) {
                                                     finalDropped.countDown();
+                                                    return;
+                                                }
+                                                if (cleanupStarted.get() && fault.equals("lost-root-bind-failure")
+                                                        && reply.getHeader().getMessage() == SMB2MessageCommandCode.SMB2_SESSION_SETUP
+                                                        && reply.getHeader().getSessionId() == failedSession.get()
+                                                        && reply.getHeader().getStatusCode() == 0) {
+                                                    byte[] corrupted = Arrays.copyOfRange(reply.getDataBuffer().array(),
+                                                            reply.getHeader().getHeaderStartPosition(), reply.getHeader().getMessageEndPosition());
+                                                    corrupted[48] ^= 1;
+                                                    try { handlers.getReceiver().handle(new SMB2PacketData(corrupted)); }
+                                                    catch (com.hierynomus.protocol.commons.buffer.Buffer.BufferException failure) { throw new AssertionError(failure); }
                                                     return;
                                                 }
                                             }
@@ -366,6 +392,7 @@ class PublicGmacBindingIT {
                     if (!fault.equals("signature")) {
                         assertTrue(finalDropped.await(5, TimeUnit.SECONDS), "Peer completed the binding before final input was dropped");
                         if (fault.equals("lost-root-cleanup-failure")) cleanupUnavailable.set(true);
+                        if (rootLost) cleanupStarted.set(true);
                         if (rootLost) transportOwners.get(before).close(true);
                         expected[2] ^= 1; verifyContents(file, expected);
                         assertFalse(attempt.isDone(), "Older session I/O must proceed while authentication waits");
@@ -383,23 +410,30 @@ class PublicGmacBindingIT {
                 assertEquals(before + (rootLost ? 2 : 1), transports.size());
                 assertFalse(transports.get(before).isConnected());
                 if (rootLost) {
-                    assertEquals(cleanupUnavailable.get() ? 0 : 1, abortMids.size());
+                    assertEquals(cleanupFails ? 0 : 1, abortMids.size());
                     assertFalse(transports.get(before + 1).isConnected());
                 } else assertEquals(Arrays.asList(3L), abortMids);
-                if (cleanupUnavailable.get()) {
+                if (cleanupFails) {
+                    String expectedFailure = fault.equals("lost-root-auth-failure") ? "SMB auxiliary authentication failed"
+                            : fault.equals("lost-root-bind-failure") ? "response signature is invalid" : "Injected cleanup connect failure";
                     assertTrue(Arrays.stream(failure.getCause().getSuppressed()).anyMatch(
-                            suppressed -> "Injected cleanup connect failure".equals(suppressed.getMessage())),
+                            suppressed -> suppressed.getMessage().contains(expectedFailure)),
                             () -> Arrays.toString(failure.getCause().getSuppressed()));
                 } else assertEquals(0, failure.getCause().getSuppressed().length, "Cleanup must receive a successful LOGOFF response");
-                assertEquals(rootLost && !cleanupUnavailable.get() ? 4 : 2, bindingMids.size());
+                assertEquals(rootLost && (!cleanupFails || fault.equals("lost-root-bind-failure")) ? 4 : 2, bindingMids.size());
                 assertEquals(bindingMids.size(), new java.util.HashSet<>(bindingMids).size());
                 assertFalse(bindingMids.contains(3L));
                 assertTrue(caller.getPreauthSessionTable().activeSessions().isEmpty());
+                for (Connection owner : transportOwners) {
+                    assertTrue(owner.getPreauthSessionTable().activeSessions().isEmpty());
+                    assertNull(owner.getSessionTable().find(failedSession.get()), "Failed target must be removed from every candidate table");
+                }
                 assertTrue(caller.isConnected()); assertEquals(1, caller.getSessionTable().activeSessions().size());
                 assertSame(older, caller.getSessionTable().find(older.getSessionId()));
                 expected[0] ^= 1; verifyContents(file, expected);
                 rejecting.set(false);
                 cleanupUnavailable.set(false);
+                cleanupStarted.set(false);
                 try (Session retried = caller.authenticate(authentication())) { assertSame(caller, retried.getConnection()); }
                 expected[1] ^= 1; verifyContents(file, expected);
             } finally { share.rm(name); }
@@ -407,7 +441,118 @@ class PublicGmacBindingIT {
         }
         assertTrue(transports.stream().noneMatch(TransportLayer::isConnected));
         System.out.println("PUBLIC_GMAC_COMPLETE run=bootstrap-final-" + fault + "-failure signing=AES_GMAC cleanupLogoff="
-                + !fault.equals("lost-root-cleanup-failure") + " privateRootClosed=true callerPreserved=true retry=true");
+                + !cleanupFails + " privateRootClosed=true callerPreserved=true retry=true java=" + System.getProperty("java.version"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void clientCloseBeforeBootstrapPublicationPreservesTheBorrowedCaller(boolean beforeFinalVerification) throws Exception {
+        String portValue = System.getenv("SMB_TEST_PORTS");
+        assumeTrue(portValue != null, "Dedicated GMAC fixture required");
+        int port = Integer.parseInt(portValue);
+        AtomicBoolean armed = new AtomicBoolean();
+        AtomicLong targetId = new AtomicLong();
+        AtomicReference<Session> candidate = new AtomicReference<>();
+        AtomicReference<SMBPacketData<?>> heldFinal = new AtomicReference<>();
+        AtomicReference<PacketReceiver<SMBPacketData<?>>> receiver = new AtomicReference<>();
+        CountDownLatch blocked = new CountDownLatch(1), resume = new CountDownLatch(1);
+        List<Connection> owners = new ArrayList<>();
+        SmbConfig config = SmbConfig.builder().withDialects(SMB2Dialect.SMB_3_1_1)
+                .withSigningAlgorithms(SMB3SigningAlgorithm.AES_GMAC).withSigningRequired(true)
+                .withSecurityProvider(new BCSecurityProvider()).withTimeout(10, TimeUnit.SECONDS)
+                .withAuthenticators(new NtlmAuthenticator.Factory()).withTransportLayerFactory((handlers, settings) -> {
+                    owners.add((Connection) handlers.getReceiver());
+                    PacketHandlers<SMBPacketData<?>, SMBPacket<?, ?>> filtered = new PacketHandlers<>(handlers.getSerializer(),
+                            new PacketReceiver<SMBPacketData<?>>() {
+                                public void handle(SMBPacketData<?> packet) throws TransportException {
+                                    if (armed.get() && beforeFinalVerification && packet instanceof SMB2PacketData) {
+                                        SMB2PacketData reply = (SMB2PacketData) packet;
+                                        if (reply.getHeader().getMessage() == SMB2MessageCommandCode.SMB2_SESSION_SETUP
+                                                && reply.getHeader().getSessionId() == targetId.get()
+                                                && reply.getHeader().getStatusCode() == 0 && heldFinal.compareAndSet(null, packet)) {
+                                            receiver.set(handlers.getReceiver()); blocked.countDown(); return;
+                                        }
+                                    }
+                                    handlers.getReceiver().handle(packet);
+                                }
+                                public void handleError(Throwable failure) { handlers.getReceiver().handleError(failure); }
+                            }, handlers.getPacketFactory());
+                    TransportLayer<SMBPacket<?, ?>> delegate = new DirectTcpTransport<>(settings.getSocketFactory(), settings.getSoTimeout(), filtered);
+                    return new TransportLayer<SMBPacket<?, ?>>() {
+                        public void connect(InetSocketAddress address) throws IOException { delegate.connect(address); }
+                        public void disconnect() throws IOException { delegate.disconnect(); }
+                        public boolean isConnected() { return delegate.isConnected(); }
+                        public void write(SMBPacket<?, ?> packet) throws TransportException {
+                            if (armed.get() && packet instanceof PacketSignatory.SignedPacketWrapper
+                                    && ((SMB2Packet) packet).getHeader().getMessage() == SMB2MessageCommandCode.SMB2_SESSION_SETUP) {
+                                targetId.compareAndSet(0, ((SMB2Packet) packet).getHeader().getSessionId());
+                            }
+                            delegate.write(packet);
+                        }
+                    };
+                }).build();
+        try (SMBClient client = new SMBClient(SmbConfig.builder(config).withSigningAlgorithms(SMB3SigningAlgorithm.AES_CMAC).build()) {
+            @Override public void publishBootstrapChannel(Session session, Connection root, Connection caller) throws IOException {
+                if (armed.get()) {
+                    candidate.set(session);
+                    if (!beforeFinalVerification) {
+                        blocked.countDown();
+                        try {
+                            if (!resume.await(5, TimeUnit.SECONDS)) throw new IOException("Publication barrier timed out");
+                        } catch (InterruptedException failure) {
+                            Thread.currentThread().interrupt(); throw new IOException(failure);
+                        }
+                    }
+                }
+                super.publishBootstrapChannel(session, root, caller);
+            }
+        }; Connection caller = new Connection(config, client, new SMBEventBus(), client.getServerList())) {
+            caller.connect("127.0.0.1", port);
+            try (Session older = caller.authenticate(authentication()); DiskShare share = (DiskShare) older.connectShare("share")) {
+                String name = "bootstrap-client-close-" + UUID.randomUUID() + ".bin";
+                try (File file = share.openFile(name, EnumSet.of(AccessMask.GENERIC_READ, AccessMask.GENERIC_WRITE),
+                        EnumSet.of(FileAttributes.FILE_ATTRIBUTE_NORMAL), SMB2ShareAccess.ALL,
+                        SMB2CreateDisposition.FILE_CREATE, EnumSet.noneOf(SMB2CreateOptions.class))) {
+                    byte[] expected = new byte[131077]; new Random(61).nextBytes(expected); verifyContents(file, expected);
+                    int before = owners.size();
+                    ExecutorService workers = Executors.newFixedThreadPool(2);
+                    try {
+                        armed.set(true);
+                        Future<Session> attempt = workers.submit(() -> caller.authenticate(authentication()));
+                        assertTrue(blocked.await(5, TimeUnit.SECONDS));
+                        expected[0] ^= 1; verifyContents(file, expected);
+                        workers.submit(client::close).get(5, TimeUnit.SECONDS);
+                        assertTrue(owners.get(before).isClosed());
+                        if (beforeFinalVerification) receiver.get().handle(heldFinal.get());
+                        else resume.countDown();
+                        java.util.concurrent.ExecutionException failure = assertThrows(java.util.concurrent.ExecutionException.class,
+                                () -> attempt.get(5, TimeUnit.SECONDS));
+                        assertInstanceOf(com.hierynomus.smbj.common.SMBRuntimeException.class, failure.getCause());
+                        assertEquals("SMB client is closed", failure.getCause().getCause().getMessage());
+                        assertEquals(0, failure.getCause().getCause().getSuppressed().length,
+                                "Verified borrowed channel must clean up without creating another connection");
+                        assertEquals(before + 1, owners.size());
+                        assertNotNull(candidate.get());
+                        assertSame(owners.get(before), candidate.get().getConnection(), "Closed client cannot publish canonical handoff");
+                        assertEquals(0, candidate.get().getChannelCount());
+                        assertTrue(caller.isConnected());
+                        assertEquals(1, caller.getSessionTable().activeSessions().size());
+                        assertSame(older, caller.getSessionTable().find(older.getSessionId()));
+                        for (Connection owner : owners) {
+                            assertTrue(owner.getPreauthSessionTable().activeSessions().isEmpty());
+                            assertNull(owner.getSessionTable().find(targetId.get()));
+                        }
+                        expected[1] ^= 1; verifyContents(file, expected);
+                        assertThrows(IOException.class, () -> client.connect("127.0.0.1", port));
+                    } finally {
+                        resume.countDown(); workers.shutdownNow(); assertTrue(workers.awaitTermination(5, TimeUnit.SECONDS));
+                    }
+                } finally { share.rm(name); }
+            }
+        }
+        assertTrue(owners.stream().allMatch(Connection::isClosed));
+        System.out.println("PUBLIC_GMAC_COMPLETE run=client-close-" + (beforeFinalVerification ? "before-final" : "before-publication")
+                + " signing=AES_GMAC latePublication=false borrowedPreserved=true candidateTablesEmpty=true java=" + System.getProperty("java.version"));
     }
 
     private static void echo(Session session) throws Exception {
