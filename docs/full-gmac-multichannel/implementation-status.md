@@ -36,6 +36,22 @@ bundles and compact evidence archive are recorded in
 [validation-development-rebases.json](validation-development-rebases.json).
 G0 remains incomplete.
 
+The native follow-up at `8131d13` fixes four bootstrap recovery/client-close
+failures exposed by testing the rebased branch against Samba. Four availability
+predicates now preserve cleanup while a private bootstrap awaits canonical
+handoff; published sessions retain last-channel fencing. Three new local cases
+cover recovery before/after binding and fencing after handoff. The full local
+check passes **1,170 cases in 118 suites**. Live acceptance passes **31 Java 21
+cases** (11 public NTLM, eight cancellation, four lease isolation, eight Kerberos)
+and **11 actual Java 8 public cases plus 34 selected local cases**. Separate
+profile audits verify **9,670 GMAC inputs and 1,442 GCM transforms** with no
+observed distinct-message nonce reuse. All 188 observed GSS contexts are disposed
+and all 13 owned fixtures, including the failed baseline run, are removed. The
+513 production classes target Java 8. Exact source, scope, failures and verified
+compressed evidence are in
+[the native rebase validation](validation-native-development-rebase.json).
+This renews these Linux profiles; the remaining contract below stays open.
+
 Directory lease keys, parent-key lookups and cached listings now use the exact
 TreeConnect identity and normalized path. Two sessions, two shares or a reused
 numeric TreeId cannot borrow another tree's cache. Scoped entries keep an
