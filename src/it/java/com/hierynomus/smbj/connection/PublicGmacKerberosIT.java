@@ -459,6 +459,7 @@ class PublicGmacKerberosIT {
             subject.getPrivateCredentials().add(expired);
             assertFalse(expired.isCurrent());
             Throwable failure = assertThrows(IOException.class, session::reauthenticate);
+            assertEquals(0, failure.getSuppressed().length, "Failed GSS context disposal must not be hidden by NO_CRED");
             while (!(failure instanceof GSSException) && failure.getCause() != null) failure = failure.getCause();
             assertInstanceOf(GSSException.class, failure);
             assertEquals(GSSException.NO_CRED, ((GSSException) failure).getMajor());
