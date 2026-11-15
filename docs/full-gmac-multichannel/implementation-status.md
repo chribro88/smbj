@@ -15,6 +15,10 @@ source states. See [research history](research/README.md),
 [the auxiliary record](validation-auxiliary.json) and
 [the concurrent record](validation-auxiliary-concurrent.json).
 
+Older local report and trace trees are retained as verified compressed archives.
+See [artifact retention and restoration](test-artifact-retention.md) before using
+an older validation record's temporary artifact directory.
+
 ## Current production integration
 
 Client-managed GMAC authentication establishes the target session on a private

@@ -1,0 +1,24 @@
+{
+  "removed_obsolete_go_research_caches": [
+    {
+      "path": "/tmp/smbj-gmac-go-mod",
+      "allocated_bytes_before": 156971008
+    },
+    {
+      "path": "/tmp/smbj-gmac-go-toolchain",
+      "allocated_bytes_before": 295763968
+    },
+    {
+      "path": "/tmp/smbj-gmac-go1.27.0.tar.gz",
+      "allocated_bytes_before": 70524928
+    }
+  ],
+  "additional_removed_cache": {
+    "path": "/tmp/smbj-gmac-go-cache",
+    "previous_du_h": "146M"
+  },
+  "measured_allocated_bytes_reclaimed": 523259904,
+  "compressed_paths": 125,
+  "compression_reclaimed_bytes": 381435904,
+  "compression_retained_bytes": 48967680
+}
