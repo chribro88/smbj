@@ -17,6 +17,7 @@ package com.hierynomus.smbj.connection;
 
 import com.github.dockerjava.api.model.*;
 import com.hierynomus.msdtyp.AccessMask;
+import com.hierynomus.mserref.NtStatus;
 import com.hierynomus.mssmb2.*;
 import com.hierynomus.mssmb2.messages.*;
 import com.hierynomus.security.bc.BCSecurityProvider;
@@ -55,6 +56,7 @@ import javax.security.auth.login.*;
 import java.nio.file.*;
 import java.nio.charset.StandardCharsets;
 import java.security.Key;
+import java.security.Principal;
 import org.ietf.jgss.GSSContext;
 import org.ietf.jgss.GSSException;
 import com.sun.security.jgss.ExtendedGSSContext;
@@ -125,7 +127,7 @@ class PublicGmacKerberosIT {
             int port = peer.getMappedPort(445), kdcPort = peer.getMappedPort(88);
             Path directory = Files.createTempDirectory("smbj-native-kerberos-");
             String oldKrbConfig = System.getProperty("java.security.krb5.conf");
-            LoginContext login = null;
+            LoginContext login = null, otherLogin = null;
             try {
                 String enctype = keyBytes == 16 ? "aes128-cts-hmac-sha1-96" : "aes256-cts-hmac-sha1-96";
                 Path krbConfig = directory.resolve("krb5.conf");
@@ -135,7 +137,10 @@ class PublicGmacKerberosIT {
                 Files.write(krbConfig, configuration.getBytes(StandardCharsets.UTF_8));
                 System.setProperty("java.security.krb5.conf", krbConfig.toString());
                 System.out.printf("KERBEROS_READY mode=%s id=%s smbPort=%d kdcPort=%d%n", mode, cid, port, kdcPort);
-                try { login = login(password); }
+                try {
+                    login = login("smbtest@SMBJ.TEST", password);
+                    otherLogin = login("Administrator@SMBJ.TEST", password);
+                }
                 catch (Exception failure) {
                     Path diagnostics = Paths.get(System.getenv("SMBJ_AD_OUTPUT"), "fixture-" + mode + ".log");
                     Files.write(diagnostics, peer.getLogs().replace(password, "<private-fixture-secret>").getBytes(StandardCharsets.UTF_8));
@@ -149,17 +154,17 @@ class PublicGmacKerberosIT {
                 System.out.printf("KERBEROS_LOGIN mode=%s keyBytes=%d kdcPort=%d success=true%n", mode, keyBytes, kdcPort);
             System.out.printf("KERBEROS_FIXTURE mode=%s owner=%s id=%s port=%d version=%s%n", mode, owner, cid, port,
                     peer.execInContainer("smbd", "--version").getStdout().trim());
-            exercisePublicChannels(port, keyBytes, borrowed, encryption, login.getSubject());
+            exercisePublicChannels(port, keyBytes, borrowed, encryption, login.getSubject(), otherLogin.getSubject());
             int disposed = 0;
             for (SpnegoAuthenticator authenticator : authenticators) {
                 assertNull(context(authenticator), "Production must dispose initial, auxiliary, binding and reauthentication GSS contexts");
                 disposed++;
             }
             assertTrue(exportedKeyLengths.size() >= 15);
-            assertEquals(authenticators.size(), exportedKeyLengths.size() + 1,
-                    "Only the expired-cache attempt fails before exporting a key");
+            assertEquals(authenticators.size(), exportedKeyLengths.size() + 2,
+                    "Expired-cache and rejected-principal attempts fail before exporting keys");
             for (int length : exportedKeyLengths.values()) assertEquals(keyBytes, length);
-            System.out.printf("KERBEROS_CONTEXTS mode=%s created=%d established=%d failedBeforeKey=1 rawKeyBytes=%d kerberos=true disposed=%d live=0%n",
+            System.out.printf("KERBEROS_CONTEXTS mode=%s created=%d established=%d failedBeforeKey=2 rawKeyBytes=%d kerberos=true disposed=%d live=0%n",
                     mode, authenticators.size(), exportedKeyLengths.size(), keyBytes, disposed);
             } finally {
                 try {
@@ -167,7 +172,10 @@ class PublicGmacKerberosIT {
                         if (context(authenticator) != null) authenticator.close();
                     }
                 } finally {
-                    try { if (login != null) login.logout(); }
+                    try {
+                        try { if (otherLogin != null) otherLogin.logout(); }
+                        finally { if (login != null) login.logout(); }
+                    }
                     finally {
                         if (oldKrbConfig == null) System.clearProperty("java.security.krb5.conf");
                         else System.setProperty("java.security.krb5.conf", oldKrbConfig);
@@ -180,12 +188,14 @@ class PublicGmacKerberosIT {
                 mode, keyBytes, borrowed, encryption, cid, System.getenv("SMBJ_AD_IMAGE_ID"), System.getProperty("java.version"));
     }
 
-    private void exercisePublicChannels(int port, int keyBytes, boolean borrowed, boolean encryption, Subject subject) throws Exception {
+    private void exercisePublicChannels(int port, int keyBytes, boolean borrowed, boolean encryption,
+                                        Subject subject, Subject otherSubject) throws Exception {
         GmacBindingWireObserver observer = new GmacBindingWireObserver("server.smbj.test", port);
         Map<Long, byte[]> actualKeys = new ConcurrentHashMap<>();
         AtomicLong target = new AtomicLong();
         AtomicInteger bindingStarts = new AtomicInteger();
         AtomicInteger setupRequests = new AtomicInteger();
+        AtomicReference<SMB2PacketData> rejectedSetup = new AtomicReference<>();
         AtomicBoolean bindingBarrier = new AtomicBoolean();
         List<Long> logoffs = new CopyOnWriteArrayList<>();
         AtomicBoolean holdNextLogoff = new AtomicBoolean();
@@ -231,6 +241,15 @@ class PublicGmacKerberosIT {
                     PacketHandlers<SMBPacketData<?>, SMBPacket<?, ?>> filtered = new PacketHandlers<>(handlers.getSerializer(),
                             new PacketReceiver<SMBPacketData<?>>() {
                                 public void handle(SMBPacketData<?> packet) throws TransportException {
+                                    if (packet instanceof SMB2PacketData) {
+                                        SMB2PacketData response = (SMB2PacketData) packet;
+                                        if (target.get() != 0 && response.getHeader().getSessionId() == target.get()
+                                                && response.getHeader().getMessage() == SMB2MessageCommandCode.SMB2_SESSION_SETUP
+                                                && response.getHeader().getStatusCode() != NtStatus.STATUS_SUCCESS.getValue()
+                                                && response.getHeader().getStatusCode() != NtStatus.STATUS_MORE_PROCESSING_REQUIRED.getValue()) {
+                                            rejectedSetup.set(response);
+                                        }
+                                    }
                                     Request pending = delayedRequest.get();
                                     if (holdNextLogoff.get() && pending != null) {
                                         SMB2PacketData reply = packet instanceof SMB2PacketData ? (SMB2PacketData) packet : null;
@@ -406,6 +425,21 @@ class PublicGmacKerberosIT {
                             assertSnapshot(retained, main);
                             System.out.printf("KERBEROS_CACHE_EXPIRY rawKeyBytes=%d borrowed=%s encrypt=%s noCredential=true setupRequests=0 existingOpen=true freshRetry=true%n",
                                     keyBytes, borrowed, encryption);
+                            int beforeRejection = setupRequests.get();
+                            rejectedSetup.set(null);
+                            rejectsDifferentPrincipal(main, subject, otherSubject);
+                            assertEquals(beforeRejection + 1, setupRequests.get());
+                            SMB2PacketData rejection = rejectedSetup.get();
+                            assertNotNull(rejection, "The rejection must come from the peer");
+                            assertEquals(NtStatus.STATUS_ACCESS_DENIED.getValue(), rejection.getHeader().getStatusCode());
+                            assertTrue(rejection.getHeader().isFlagSet(SMB2MessageFlag.SMB2_FLAGS_SIGNED));
+                            assertSnapshot(retained, main);
+                            assertEquals(3, main.getChannelCount());
+                            data[2] ^= 1; verifyContents(file, data);
+                            main.reauthenticate();
+                            assertSnapshot(retained, main);
+                            System.out.printf("KERBEROS_PEER_REJECTION rawKeyBytes=%d borrowed=%s encrypt=%s status=STATUS_ACCESS_DENIED setupRequests=1 signed=true existingOpen=true freshRetry=true%n",
+                                    keyBytes, borrowed, encryption);
                             data[1] ^= 1; verifyContents(file, data);
                             first.close(true);
                             Connection replacement = open(client, main, port, observer);
@@ -470,13 +504,29 @@ class PublicGmacKerberosIT {
         }
     }
 
-    private static LoginContext login(String password) throws Exception {
+    private static void rejectsDifferentPrincipal(Session session, Subject subject, Subject other) throws Exception {
+        Set<Principal> principals = new HashSet<>(subject.getPrincipals());
+        Set<Object> credentials = new HashSet<>(subject.getPrivateCredentials());
+        assertFalse(principals.equals(other.getPrincipals()));
+        try {
+            subject.getPrincipals().clear(); subject.getPrincipals().addAll(other.getPrincipals());
+            subject.getPrivateCredentials().clear(); subject.getPrivateCredentials().addAll(other.getPrivateCredentials());
+            SMBApiException failure = assertThrows(SMBApiException.class, session::reauthenticate);
+            assertEquals(NtStatus.STATUS_ACCESS_DENIED, failure.getStatus());
+            assertEquals(0, failure.getSuppressed().length, "Rejected authentication must dispose its GSS context cleanly");
+        } finally {
+            subject.getPrincipals().clear(); subject.getPrincipals().addAll(principals);
+            subject.getPrivateCredentials().clear(); subject.getPrivateCredentials().addAll(credentials);
+        }
+    }
+
+    private static LoginContext login(String principal, String password) throws Exception {
         Map<String, String> options = new HashMap<>();
-        options.put("principal", "smbtest@SMBJ.TEST"); options.put("useTicketCache", "false");
+        options.put("principal", principal); options.put("useTicketCache", "false");
         options.put("storeKey", "true"); options.put("isInitiator", "true"); options.put("refreshKrb5Config", "true");
         LoginContext login = new LoginContext("smbj-native", null, callbacks -> {
             for (Callback callback : callbacks) {
-                if (callback instanceof NameCallback) ((NameCallback) callback).setName("smbtest@SMBJ.TEST");
+                if (callback instanceof NameCallback) ((NameCallback) callback).setName(principal);
                 else if (callback instanceof PasswordCallback) ((PasswordCallback) callback).setPassword(password.toCharArray());
                 else throw new UnsupportedCallbackException(callback);
             }

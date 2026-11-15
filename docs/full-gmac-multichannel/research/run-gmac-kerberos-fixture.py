@@ -45,7 +45,8 @@ try:
     metadata['gcm_audits'] = [line for line in lines if line.startswith('AUXWIRE_GCM ')]
     metadata['disposal_aborts'] = [line for line in lines if line.startswith('KERBEROS_DISPOSAL_ABORT ')]
     metadata['cache_expiry'] = [line for line in lines if line.startswith('KERBEROS_CACHE_EXPIRY ')]
-    assert all(len(metadata[key]) == 8 for key in ('profiles', 'contexts', 'audits', 'disposal_aborts', 'cache_expiry'))
+    metadata['peer_rejection'] = [line for line in lines if line.startswith('KERBEROS_PEER_REJECTION ')]
+    assert all(len(metadata[key]) == 8 for key in ('profiles', 'contexts', 'audits', 'disposal_aborts', 'cache_expiry', 'peer_rejection'))
     assert len(metadata['gcm_audits']) == 4
     assert all('distinctMessageNonceReuses=0' in line for line in metadata['gcm_audits'])
     assert all('distinctMessageNonceReuses=0' in line for line in metadata['audits'])
@@ -59,6 +60,11 @@ try:
     assert {(entry['rawKeyBytes'], entry['borrowed'], entry['encrypt']) for entry in expiry} == expected
     assert all(entry['noCredential'] == 'true' and entry['setupRequests'] == '0'
                and entry['existingOpen'] == 'true' and entry['freshRetry'] == 'true' for entry in expiry)
+    rejected = [dict(word.split('=', 1) for word in line.split()[1:]) for line in metadata['peer_rejection']]
+    assert {(entry['rawKeyBytes'], entry['borrowed'], entry['encrypt']) for entry in rejected} == expected
+    assert all(entry['status'] == 'STATUS_ACCESS_DENIED' and entry['setupRequests'] == '1'
+               and entry['signed'] == 'true' and entry['existingOpen'] == 'true'
+               and entry['freshRetry'] == 'true' for entry in rejected)
     gcm = [dict(word.split('=', 1) for word in line.split()[1:]) for line in metadata['gcm_audits']]
     assert {entry['run'] for entry in gcm} == {
         'public-kerberos-' + size + '-' + borrowed + '-true'
@@ -67,8 +73,8 @@ try:
                and int(entry['encryptedLogoffFrames']) >= 4 for entry in gcm)
     contexts = [dict(word.split('=', 1) for word in line.split()[1:]) for line in metadata['contexts']]
     assert all(int(entry['established']) > 0 and entry['created'] == entry['disposed']
-               and int(entry['created']) == int(entry['established']) + 1
-               and entry['failedBeforeKey'] == '1' and entry['live'] == '0' for entry in contexts)
+               and int(entry['created']) == int(entry['established']) + 2
+               and entry['failedBeforeKey'] == '2' and entry['live'] == '0' for entry in contexts)
     seen = set()
     metadata['containers'] = []
     for line in metadata['profiles']:
