@@ -64,6 +64,46 @@ import static org.mockito.Mockito.*;
 
 class SMBInitialAuthenticationTest {
     @ParameterizedTest
+    @ValueSource(strings = {"success", "cleanup", "init", "init-error", "token", "transport", "final", "same-io", "same-runtime", "same-error"})
+    void disposesEachAuthenticationAttemptBeforePublicationAndPreservesItsFailure(String phase) throws Exception {
+        StubAuthenticator authenticator = mock(StubAuthenticator.class, withSettings().extraInterfaces(java.io.Closeable.class));
+        when(authenticator.supports(any())).thenReturn(true);
+        Fixture fixture = new Fixture(false, SMB2Dialect.SMB_3_1_1, SMB3SigningAlgorithm.AES_GMAC, authenticator);
+        Throwable primary = phase.equals("init") || phase.equals("same-runtime") ? new IllegalStateException("Authentication failed")
+                : phase.equals("init-error") || phase.equals("same-error") ? new AssertionError("Authentication failed")
+                : phase.equals("transport") ? new com.hierynomus.protocol.transport.TransportException("Authentication failed")
+                : new IOException("Authentication failed");
+        if (phase.startsWith("init")) doThrow(primary).when(authenticator).init(any());
+        when(authenticator.authenticate(any(), any(), any())).thenAnswer(call -> {
+            if (phase.equals("token") || phase.startsWith("same-")) throw primary;
+            AuthenticateResponse response = new StubAuthenticator().authenticate(call.getArgument(0), call.getArgument(1), call.getArgument(2));
+            response.setSessionKey(fixture.gssKey);
+            return response;
+        });
+        if (phase.equals("transport")) doThrow(primary).when(fixture.connection).sendAndReceive(any());
+        if (phase.equals("final")) fixture.fault = "signature";
+        Throwable cleanupFailure = phase.startsWith("same-") ? primary : new IOException("Authentication cleanup failed");
+        doAnswer(call -> {
+            assertNull(fixture.sessions.find(47L), "Dispose the context before making the new session active");
+            if (!phase.equals("success")) throw cleanupFailure;
+            return null;
+        }).when((java.io.Closeable) authenticator).close();
+        if (phase.equals("success")) assertSame(fixture.session, fixture.establish());
+        else {
+            Throwable failure = assertThrows(Throwable.class, fixture::establish);
+            if (failure instanceof SMBRuntimeException) failure = failure.getCause();
+            if (phase.equals("final")) assertTrue(failure.getMessage().contains("signature is invalid"));
+            else assertSame(phase.equals("cleanup") ? cleanupFailure : primary, failure);
+            assertEquals(phase.startsWith("same-") || phase.equals("cleanup") ? 0 : 1, failure.getSuppressed().length);
+            if (!phase.startsWith("same-") && !phase.equals("cleanup")) assertSame(cleanupFailure, failure.getSuppressed()[0]);
+            assertNull(fixture.sessions.find(47L));
+        }
+        verify((java.io.Closeable) authenticator).close();
+        assertTrue(fixture.preauth.activeSessions().isEmpty());
+        verify(fixture.connection, never()).close(anyBoolean());
+    }
+
+    @ParameterizedTest
     @CsvSource({"false,SMB_2_1,AES_CMAC", "true,SMB_2_1,AES_CMAC",
             "false,SMB_3_0,AES_CMAC", "true,SMB_3_0,AES_CMAC",
             "false,SMB_3_1_1,AES_CMAC", "true,SMB_3_1_1,AES_CMAC",
@@ -329,6 +369,10 @@ class SMBInitialAuthenticationTest {
         private SMB2SessionSetup lastResponse;
 
         private Fixture(boolean jce, SMB2Dialect dialect, SMB3SigningAlgorithm algorithm) throws Exception {
+            this(jce, dialect, algorithm, null);
+        }
+
+        private Fixture(boolean jce, SMB2Dialect dialect, SMB3SigningAlgorithm algorithm, StubAuthenticator authenticator) throws Exception {
             this.dialect = dialect;
             this.algorithm = algorithm;
             Arrays.fill(gssKey, (byte) 0x35);
@@ -350,6 +394,7 @@ class SMBInitialAuthenticationTest {
                     .withAuthenticators(new StubAuthenticator.Factory() {
                         @Override
                         public StubAuthenticator create() {
+                            if (authenticator != null) return authenticator;
                             return new StubAuthenticator() {
                                 @Override
                                 public AuthenticateResponse authenticate(AuthenticationContext auth, byte[] token,

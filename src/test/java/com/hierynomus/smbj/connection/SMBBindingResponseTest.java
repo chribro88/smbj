@@ -78,6 +78,51 @@ class SMBBindingResponseTest {
     private long messageId = 2;
     private long lastMessageId;
 
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"success", "cleanup", "init", "init-error", "token", "transport", "final", "same-io", "same-runtime", "same-error"})
+    void disposesEachBindingAttemptBeforePublicationAndPreservesItsFailure(String phase) throws Exception {
+        StubAuthenticator authenticator = mock(StubAuthenticator.class, withSettings().extraInterfaces(java.io.Closeable.class));
+        when(authenticator.supports(any())).thenReturn(true);
+        SMBSessionBuilder builder = builder(true, new StubAuthenticator.Factory() {
+            @Override public StubAuthenticator create() { return authenticator; }
+        });
+        Throwable primary = phase.equals("init") || phase.equals("same-runtime") ? new IllegalStateException("Binding failed")
+                : phase.equals("init-error") || phase.equals("same-error") ? new AssertionError("Binding failed")
+                : phase.equals("transport") ? new com.hierynomus.protocol.transport.TransportException("Binding failed")
+                : new IOException("Binding failed");
+        if (phase.startsWith("init")) doThrow(primary).when(authenticator).init(any());
+        when(authenticator.authenticate(any(), any(), any())).thenAnswer(call -> {
+            if (phase.equals("token") || phase.startsWith("same-")) throw primary;
+            return new StubAuthenticator().authenticate(call.getArgument(0), call.getArgument(1), call.getArgument(2));
+        });
+        when(secondary.sendAndReceive(any())).thenAnswer(call -> {
+            if (phase.equals("transport")) throw primary;
+            MessageDigest hash = MessageDigest.getInstance("SHA-512");
+            hash.update(new byte[64]);
+            return response(0, true, phase.equals("final"), channelKey(hash.digest(requestBytes(call.getArgument(0)))), 7);
+        });
+        Throwable cleanupFailure = phase.startsWith("same-") ? primary : new IOException("Binding cleanup failed");
+        doAnswer(call -> {
+            verify(session, never()).addChannel(any(), any());
+            if (!phase.equals("success")) throw cleanupFailure;
+            return null;
+        }).when((java.io.Closeable) authenticator).close();
+        if (phase.equals("success")) {
+            assertSame(session, builder.bind(session, new PacketSignatory(provider)));
+            verify(session).addChannel(eq(secondary), any());
+        } else {
+            Throwable failure = assertThrows(Throwable.class, () -> builder.bind(session, new PacketSignatory(provider)));
+            if (phase.equals("final")) assertTrue(failure.getMessage().contains("signature is invalid"));
+            else assertSame(phase.equals("cleanup") ? cleanupFailure : primary, failure);
+            assertEquals(phase.startsWith("same-") || phase.equals("cleanup") ? 0 : 1, failure.getSuppressed().length);
+            if (!phase.startsWith("same-") && !phase.equals("cleanup")) assertSame(cleanupFailure, failure.getSuppressed()[0]);
+            assertNull(bindingSessions.find(47L));
+        }
+        verify((java.io.Closeable) authenticator).close();
+        assertSame(originalKey, keys.getSigningKey());
+        verify(secondary, never()).close(anyBoolean());
+    }
+
     private SMBSessionBuilder builder(boolean required) {
         return builder(required, new StubAuthenticator.Factory());
     }
@@ -225,7 +270,10 @@ class SMBBindingResponseTest {
         }
         assertEquals(2, contexts.size());
         assertNotSame(contexts.get(0), contexts.get(1));
-        for (GSSContext context : contexts) verify(context, times(2)).initSecContext(any(byte[].class), eq(0), anyInt());
+        for (GSSContext context : contexts) {
+            verify(context, times(2)).initSecContext(any(byte[].class), eq(0), anyInt());
+            verify(context).dispose();
+        }
         assertEquals(2, keyQueries.get());
         assertSame(session, bindingSessions.find(47L));
         assertSame(sessionKey, keys.getSessionKey());

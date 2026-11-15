@@ -449,6 +449,44 @@ ECHOs per candidate, with 5,216 total per profile. Longer histories, transport
 buffer allocations and the remaining G0 lifetime variants stay open. See
 [validation-batched-probes.json](validation-batched-probes.json).
 
+### Authentication context disposal
+
+Initial authentication and binding now dispose their selected Closeable
+authenticator before publishing the session/channel. Attempt ownership begins
+before initialization, includes failures in initialization/token processing and
+response verification, and is cleared before close so a failing disposal is not
+retried. Reauthentication uses the same identity-guarded cleanup: an identical
+cached failure is preserved, while a distinct cleanup failure is suppressed on
+the primary exception. Unpublished initial and binding table state is retired
+even when cleanup fails. Non-Closeable NTLM authenticators retain their existing
+behavior; caller-owned authentication identities/credentials are not closed.
+
+The pre-fix run has **42 failures in 117 cases**: 22 existing Kerberos binding
+variants expose missing GSS disposal, 18 new initial/binding cases expose missing
+cleanup, and two reauthentication cases expose self-suppression. With two further
+post-success cleanup-failure cases, **136 focused checks pass**. Full `check`
+passes **963 tests in 105 suites**, zero failures/errors/skips, plus license and
+JaCoCo.
+
+The four real Kerberos profiles retain 16/32-byte exported-key checks, public
+binding/replacement, existing-open I/O and reauthentication. They now assert
+**66 contexts disposed and zero retained contexts before fixture fallback
+cleanup**, rather than relying on manual disposal for initial/binding contexts.
+Raw key lengths are observed during the exchange before production disposes the
+GSS state. These checks run on Java 21; a complete actual-Java-8 Kerberos/failure
+matrix and native disposal-error injection remain unqualified. A disposal error
+after a verified final response prevents local publication; these local failure
+checks do not establish peer-side LOGOFF in that case. See
+[validation-authentication-disposal.json](validation-authentication-disposal.json).
+
+The identical production JAR also passes 11 public NTLM cases and the 16-case
+provider/transport/encryption/write-mode matrix, making **31 Java 21 native cases**
+including Kerberos. The public NTLM/Kerberos observers independently verify
+**4,603 GMAC tags**, without observed distinct-message actual-key/nonce reuse in
+those traces. The actual Java 8 profile passes **40 cases** (16 native plus
+24 selected local); all 511 production classes remain Java 8 bytecode. All owned
+Samba/AD fixtures are removed. No full G0 or expiry/failure matrix is claimed.
+
 ## Inputs and history
 
 - Branch: `feature/full-gmac-multichannel`.

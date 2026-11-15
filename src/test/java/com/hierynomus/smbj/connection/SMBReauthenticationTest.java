@@ -53,6 +53,7 @@ class SMBReauthenticationTest {
     private final SecretKey channel = new SecretKeySpec(new byte[]{1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16}, SMB3SigningAlgorithm.AES_GMAC.getAlgorithmName());
     private boolean exportKey = true, failClose;
     private final AtomicInteger closes = new AtomicInteger();
+    private Throwable cachedFailure;
     private SmbConfig config;
 
     private SMBSessionBuilder builder() {
@@ -83,6 +84,8 @@ class SMBReauthenticationTest {
 
     private class TrackingAuthenticator extends StubAuthenticator implements java.io.Closeable {
         @Override public AuthenticateResponse authenticate(AuthenticationContext auth, byte[] token, ConnectionContext context) throws IOException {
+            if (cachedFailure instanceof IOException) throw (IOException) cachedFailure;
+            if (cachedFailure instanceof Error) throw (Error) cachedFailure;
             tokens.incrementAndGet();
             AuthenticateResponse response = super.authenticate(auth, token, context);
             if (!exportKey) response.setSessionKey(null);
@@ -90,12 +93,25 @@ class SMBReauthenticationTest {
         }
         @Override public void close() throws IOException {
             closes.incrementAndGet();
+            if (cachedFailure instanceof IOException) throw (IOException) cachedFailure;
+            if (cachedFailure instanceof Error) throw (Error) cachedFailure;
             if (failClose) throw new IOException("Injected authentication cleanup failure");
         }
     }
 
     private void reauthenticate(SMBSessionBuilder builder) throws IOException {
         builder.reauthenticate(session, new PacketSignatory(new BCSecurityProvider()));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void preservesAnIdenticalCachedAuthenticationAndCleanupFailure(boolean error) throws Exception {
+        SMBSessionBuilder builder = builder();
+        cachedFailure = error ? new AssertionError("Cached GSS failure") : new IOException("Cached GSS failure");
+        assertSame(cachedFailure, assertThrows(Throwable.class, () -> reauthenticate(builder)));
+        assertEquals(0, cachedFailure.getSuppressed().length);
+        assertEquals(1, closes.get());
+        retained();
     }
 
     private void retained() {

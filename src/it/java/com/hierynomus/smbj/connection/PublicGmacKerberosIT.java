@@ -66,6 +66,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 @Timeout(120)
 class PublicGmacKerberosIT {
     private final List<SpnegoAuthenticator> authenticators = new CopyOnWriteArrayList<>();
+    private final Map<SpnegoAuthenticator, Integer> exportedKeyLengths = new ConcurrentHashMap<>();
 
     @ParameterizedTest
     @CsvSource({"16,false", "16,true", "32,false", "32,true"})
@@ -131,22 +132,20 @@ class PublicGmacKerberosIT {
             System.out.printf("KERBEROS_FIXTURE mode=%s owner=%s id=%s port=%d version=%s%n", mode, owner, cid, port,
                     peer.execInContainer("smbd", "--version").getStdout().trim());
             exercisePublicChannels(port, keyBytes, borrowed, login.getSubject());
-            int established = 0, disposed = 0;
+            int disposed = 0;
             for (SpnegoAuthenticator authenticator : authenticators) {
-                GSSContext context = context(authenticator);
-                if (context == null) disposed++;
-                if (context != null && context.isEstablished()) {
-                    Key exported = (Key) ((ExtendedGSSContext) context).inquireSecContext(InquireType.KRB5_GET_SESSION_KEY);
-                    assertEquals(keyBytes, exported.getEncoded().length);
-                    established++;
-                }
+                assertNull(context(authenticator), "Production must dispose initial, auxiliary, binding and reauthentication GSS contexts");
+                disposed++;
             }
-            assertTrue(established >= 9); assertTrue(disposed >= 6, "Reauthentication disposes each fresh GSS context");
-            System.out.printf("KERBEROS_CONTEXTS mode=%s established=%d rawKeyBytes=%d kerberos=true disposed=%d%n", mode, established, keyBytes, disposed);
+            assertTrue(exportedKeyLengths.size() >= 15);
+            assertEquals(authenticators.size(), exportedKeyLengths.size());
+            for (int length : exportedKeyLengths.values()) assertEquals(keyBytes, length);
+            System.out.printf("KERBEROS_CONTEXTS mode=%s established=%d rawKeyBytes=%d kerberos=true disposed=%d live=0%n",
+                    mode, exportedKeyLengths.size(), keyBytes, disposed);
             } finally {
                 try {
                     for (SpnegoAuthenticator authenticator : authenticators) {
-                        GSSContext context = context(authenticator); if (context != null) context.dispose();
+                        if (context(authenticator) != null) authenticator.close();
                     }
                 } finally {
                     try { if (login != null) login.logout(); }
@@ -174,7 +173,23 @@ class PublicGmacKerberosIT {
                 .withSecurityProvider(new BCSecurityProvider()).withSocketFactory(observer)
                 .withTimeout(10, TimeUnit.SECONDS).withAuthenticators(new SpnegoAuthenticator.Factory() {
                     @Override public SpnegoAuthenticator create() {
-                        SpnegoAuthenticator auth = super.create(); authenticators.add(auth); return auth;
+                        SpnegoAuthenticator auth = new SpnegoAuthenticator() {
+                            @Override public AuthenticateResponse authenticate(AuthenticationContext auth, byte[] token, ConnectionContext connection) throws IOException {
+                                AuthenticateResponse response = super.authenticate(auth, token, connection);
+                                try {
+                                    GSSContext context = context(this);
+                                    if (context != null && context.isEstablished()) {
+                                        Key key = (Key) ((ExtendedGSSContext) context).inquireSecContext(InquireType.KRB5_GET_SESSION_KEY);
+                                        assertNotNull(key);
+                                        exportedKeyLengths.put(this, key.getEncoded().length);
+                                    }
+                                } catch (ReflectiveOperationException | org.ietf.jgss.GSSException failure) {
+                                    throw new IOException("Could not observe native GSS key length", failure);
+                                }
+                                return response;
+                            }
+                        };
+                        authenticators.add(auth); return auth;
                     }
                 }).withTransportLayerFactory((handlers, settings) -> {
                     TransportLayer<SMBPacket<?, ?>> delegate = new DirectTcpTransport<>(settings.getSocketFactory(), settings.getSoTimeout(), handlers);
@@ -290,7 +305,7 @@ class PublicGmacKerberosIT {
         login.login(); return login;
     }
 
-    private static GSSContext context(SpnegoAuthenticator authenticator) throws Exception {
+    private static GSSContext context(SpnegoAuthenticator authenticator) throws ReflectiveOperationException {
         Field field = SpnegoAuthenticator.class.getDeclaredField("gssContext"); field.setAccessible(true);
         return (GSSContext) field.get(authenticator);
     }

@@ -54,6 +54,7 @@ import org.slf4j.LoggerFactory;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 import java.io.ByteArrayOutputStream;
+import java.io.Closeable;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.EnumSet;
@@ -110,6 +111,7 @@ public class SMBSessionBuilder {
     public Session establish(AuthenticationContext authContext) {
         BuilderContext ctx = null;
         boolean published = false;
+        Throwable failure = null;
         try {
             Authenticator authenticator = getAuthenticator(authContext);
             if (authenticator instanceof NtlmAuthenticator && config.getNtlmConfig().isIntegrityEnabled() && !(authContext.isAnonymous() && !(authContext.isGuest()))) {
@@ -122,6 +124,7 @@ public class SMBSessionBuilder {
             processAuthenticationToken(ctx, connectionContext.getGssNegotiateToken());
 
             Session session = setupSession(ctx);
+            disposeAuthenticator(ctx, null);
             if (!sessionTable.registerSessionIfAbsent(session.getSessionId(), session)) {
                 throw new IOException("Authentication returned an already active SessionId");
             }
@@ -129,11 +132,21 @@ public class SMBSessionBuilder {
             logger.info("Successfully authenticated {} on {}, session is {}", authContext.getUsername(), connection.getRemoteHostname(), session.getSessionId());
             return session;
         } catch (SpnegoException | IOException e) {
+            failure = e;
             throw new SMBRuntimeException(e);
+        } catch (RuntimeException | Error e) {
+            failure = e;
+            throw e;
         } finally {
-            if (ctx != null && ctx.session != null) {
-                preauthSessionTable.removeSession(ctx.sessionId, ctx.session);
-                if (!published) ctx.session.discardUnpublishedAuthentication();
+            try {
+                disposeAuthenticator(ctx, failure);
+            } catch (IOException e) {
+                throw new SMBRuntimeException(e);
+            } finally {
+                if (ctx != null && ctx.session != null) {
+                    preauthSessionTable.removeSession(ctx.sessionId, ctx.session);
+                    if (!published) ctx.session.discardUnpublishedAuthentication();
+                }
             }
         }
     }
@@ -155,6 +168,8 @@ public class SMBSessionBuilder {
             throw new IOException("GMAC binding nonce uniqueness requires an independent authenticated session");
         }
         boolean bound = false;
+        BuilderContext ctx = null;
+        Throwable failure = null;
         // As in go-smb2 sessionSetupBinding, install established cipher keys before reading binding replies.
         if (!sessionTable.registerSessionIfAbsent(session.getSessionId(), session)) {
             throw new IOException("Connection already contains this SMB session");
@@ -164,8 +179,8 @@ public class SMBSessionBuilder {
             if (authenticator instanceof NtlmAuthenticator && config.getNtlmConfig().isIntegrityEnabled()) {
                 authenticator = new NtlmSealer((NtlmAuthenticator) authenticator);
             }
+            ctx = newContext(session.getAuthenticationContext(), authenticator);
             authenticator.init(config);
-            BuilderContext ctx = newContext(session.getAuthenticationContext(), authenticator);
             ctx.sessionId = session.getSessionId();
             SessionContext transcript = new SessionContext();
             transcript.setPreauthIntegrityHashValue(connectionContext.getPreauthIntegrityHashValue());
@@ -208,6 +223,7 @@ public class SMBSessionBuilder {
                             dialect == SMB2Dialect.SMB_3_1_1 ? signingAlgorithm() : AES_128_CMAC_ALGORITHM);
                     verifySessionSetupResponse(response, channelKey, signatory, "channel binding", exchange + 1);
                     connection.sessionSetupAccepted(response);
+                    disposeAuthenticator(ctx, null);
                     if (auxiliary != null) auxiliary.close();
                     if (ownsTransport) session.addChannel(connection, channelKey);
                     else session.addBorrowedChannel(connection, channelKey);
@@ -224,10 +240,18 @@ public class SMBSessionBuilder {
             }
             throw new IOException("SMB channel binding exceeded authentication exchange limit");
         } catch (SpnegoException e) {
+            failure = e;
             throw new IOException("SMB channel authentication failed", e);
+        } catch (IOException | RuntimeException | Error e) {
+            failure = e;
+            throw e;
         } finally {
-            if (!bound) {
-                sessionTable.removeSession(session.getSessionId(), session);
+            try {
+                disposeAuthenticator(ctx, failure);
+            } finally {
+                if (!bound) {
+                    sessionTable.removeSession(session.getSessionId(), session);
+                }
             }
         }
     }
@@ -244,10 +268,10 @@ public class SMBSessionBuilder {
             if (authenticator instanceof NtlmAuthenticator && config.getNtlmConfig().isIntegrityEnabled()) {
                 authenticator = new NtlmSealer((NtlmAuthenticator) authenticator);
             }
-            try (java.io.Closeable cleanup = authenticator instanceof java.io.Closeable
-                    ? (java.io.Closeable) authenticator : null) {
+            BuilderContext ctx = newContext(session.getAuthenticationContext(), authenticator);
+            Throwable failure = null;
+            try {
                 authenticator.init(config);
-                BuilderContext ctx = newContext(session.getAuthenticationContext(), authenticator);
                 processAuthenticationToken(ctx, connectionContext.getGssNegotiateToken());
                 for (int exchange = 0; exchange < 16; exchange++) {
                     SMB2SessionSetup request = new SMB2SessionSetup(dialect,
@@ -283,6 +307,11 @@ public class SMBSessionBuilder {
                     }
                 }
                 throw new IOException("SMB reauthentication exceeded authentication exchange limit");
+            } catch (IOException | RuntimeException | Error e) {
+                failure = e;
+                throw e;
+            } finally {
+                disposeAuthenticator(ctx, failure);
             }
         } catch (SpnegoException failure) {
             throw new IOException("SMB reauthentication failed", failure);
@@ -331,6 +360,20 @@ public class SMBSessionBuilder {
         ctx.authenticator = authenticator;
         ctx.authContext = authContext;
         return ctx;
+    }
+
+    private void disposeAuthenticator(BuilderContext ctx, Throwable failure) throws IOException {
+        if (ctx == null) return;
+        Authenticator authenticator = ctx.authenticator;
+        ctx.authenticator = null;
+        if (authenticator instanceof Closeable) {
+            try {
+                ((Closeable) authenticator).close();
+            } catch (IOException | RuntimeException | Error cleanupFailure) {
+                if (failure == null) throw cleanupFailure;
+                if (failure != cleanupFailure) failure.addSuppressed(cleanupFailure);
+            }
+        }
     }
 
     private Session setupSession(BuilderContext ctx) throws IOException {

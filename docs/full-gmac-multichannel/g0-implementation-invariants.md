@@ -82,6 +82,17 @@ five established keys, preauthentication value, original-key reservations and
 encryption-counter owner remain unchanged. Later binding still uses K. Closeable
 authentication attempts are disposed on success and failure.
 
+Selected Closeable authenticators also belong to the initial-authentication or
+binding attempt, starting before initialization. Their GSS contexts are released
+after the final token/key/signature checks and before local session/channel
+publication. Cleanup clears its owned reference before closing, preserves an
+identical cached primary failure and suppresses only distinct cleanup failures.
+Failure removes provisional/attempt-local table state. Authentication identities
+and caller credentials remain available for later independent exchanges. The
+live Kerberos fixture checks zero retained contexts before its fallback cleanup;
+native disposal-error/peer-LOGOFF behavior remains unqualified. See
+[validation-authentication-disposal.json](validation-authentication-disposal.json).
+
 On a live channel, native allocation does not repeat an ordinary request MID.
 CANCEL retains its request's owner/MID and uses the existing one-shot cancellation
 claim and CANCEL discriminator. Exhaustion is rejected rather than wrapping.
@@ -158,3 +169,4 @@ profiles. Binding remains signed and unencrypted.
 - [Pending-owner loss and encrypted cancellation](validation-encrypted-owner-loss.json)
 - [Churn resources and cached-error cleanup](validation-churn-cleanup.json)
 - [Bounded collision-probe pipelining](validation-batched-probes.json)
+- [Authentication context disposal](validation-authentication-disposal.json)
