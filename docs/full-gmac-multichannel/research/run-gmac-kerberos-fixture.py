@@ -42,9 +42,14 @@ try:
     metadata['profiles'] = [line for line in lines if line.startswith('PUBLIC_KRB_COMPLETE ')]
     metadata['contexts'] = [line for line in lines if line.startswith('KERBEROS_CONTEXTS ')]
     metadata['audits'] = [line for line in lines if line.startswith('AUXWIRE_COMPLETE ')]
-    assert all(len(metadata[key]) == 4 for key in ('profiles', 'contexts', 'audits'))
+    metadata['disposal_aborts'] = [line for line in lines if line.startswith('KERBEROS_DISPOSAL_ABORT ')]
+    assert all(len(metadata[key]) == 4 for key in ('profiles', 'contexts', 'audits', 'disposal_aborts'))
     assert all('distinctMessageNonceReuses=0' in line for line in metadata['audits'])
     expected = {(str(size), str(borrowed).lower()) for size in (16, 32) for borrowed in (False, True)}
+    aborts = [dict(word.split('=', 1) for word in line.split()[1:]) for line in metadata['disposal_aborts']]
+    assert {(entry['rawKeyBytes'], entry['borrowed']) for entry in aborts} == expected
+    assert all(entry['confirmedLogoffs'] == '1' and entry['timedOutLogoffs'] == '1'
+               and entry['lateIgnored'] == 'true' and entry['injectedAfterDispose'] == 'true' for entry in aborts)
     seen = set()
     metadata['containers'] = []
     for line in metadata['profiles']:

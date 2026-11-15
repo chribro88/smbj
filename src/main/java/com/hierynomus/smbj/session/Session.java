@@ -349,7 +349,15 @@ public class Session implements AutoCloseable {
                 nestedSessionsRwLock.writeLock().unlock();
             }
             SMB2Logoff logoff = new SMB2Logoff(connection.getNegotiatedProtocol().getDialect(), sessionId);
-            SMB2Logoff response = Futures.get(this.<SMB2Logoff>send(logoff), config.getTransactTimeout(), TimeUnit.MILLISECONDS, TransportException.Wrapper);
+            Connection owner = selectChannel();
+            Future<SMB2Logoff> pending = this.<SMB2Logoff>send(logoff, owner);
+            SMB2Logoff response;
+            try {
+                response = Futures.get(pending, config.getTransactTimeout(), TimeUnit.MILLISECONDS, TransportException.Wrapper);
+            } catch (TransportException failure) {
+                owner.abandonRequest(logoff.getHeader().getMessageId(), failure);
+                throw failure;
+            }
             if (!NtStatus.isSuccess(response.getHeader().getStatusCode())) {
                 throw new SMBApiException(response.getHeader(), "Could not logoff session <<" + sessionId + ">>");
             }

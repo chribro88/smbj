@@ -557,13 +557,19 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
         try {
             return Futures.get(response, config.getTransactTimeout(), TimeUnit.MILLISECONDS, TransportException.Wrapper);
         } catch (TransportException failure) {
-            // The authentication builder cannot consume a reply after its wait has failed.
-            if (packet.getHeader().getMessage() == SMB2MessageCommandCode.SMB2_SESSION_SETUP) {
-                Request abandoned = outstandingRequests.remove(packet.getHeader().getMessageId());
-                if (abandoned != null) abandoned.getPromise().deliverError(failure);
+            // A failed authentication or LOGOFF wait cannot consume a late reply.
+            if (packet.getHeader().getMessage() == SMB2MessageCommandCode.SMB2_SESSION_SETUP
+                    || packet.getHeader().getMessage() == SMB2MessageCommandCode.SMB2_LOGOFF) {
+                abandonRequest(packet.getHeader().getMessageId(), failure);
             }
             throw failure;
         }
+    }
+
+    /** Release tracking for an exchange whose caller can no longer consume its response. */
+    public void abandonRequest(long messageId, Throwable failure) {
+        Request abandoned = outstandingRequests.remove(messageId);
+        if (abandoned != null) abandoned.getPromise().deliverError(failure);
     }
 
     void sessionSetupAccepted(com.hierynomus.mssmb2.messages.SMB2SessionSetup response) {

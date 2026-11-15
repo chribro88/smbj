@@ -89,9 +89,28 @@ publication. Cleanup clears its owned reference before closing, preserves an
 identical cached primary failure and suppresses only distinct cleanup failures.
 Failure removes provisional/attempt-local table state. Authentication identities
 and caller credentials remain available for later independent exchanges. The
-live Kerberos fixture checks zero retained contexts before its fallback cleanup;
-native disposal-error/peer-LOGOFF behavior remains unqualified. See
+live Kerberos fixture checks zero retained contexts before its fallback cleanup. See
 [validation-authentication-disposal.json](validation-authentication-disposal.json).
+
+If disposal fails after initial authentication has verified the final response,
+the unpublished authenticated session attempts one ordinary LOGOFF. A conditional
+session-table entry retains its verified keys for response verification during
+that cleanup; the exact entry is removed afterward. A conflicting active identity
+is preserved and cleanup failure is suppressed on the original disposal error.
+Failures before final verification do not use untrusted peer keys/identities for
+LOGOFF. A later binding failure never authorizes LOGOFF of the established target
+session merely to discard its candidate.
+
+LOGOFF retains the exact selected connection and the session's configured wait
+timeout. A failed wait removes that connection's MID/cancel lookups and settles
+the abandoned promise before close removes session verification state. Late plain
+SMB2 replies cannot grant credits or complete that retired request. Native
+Kerberos tests inject a failure after real GSS disposal, verify successful abort
+LOGOFF and a held-reply timeout, then deliver the late response and retry binding
+on the borrowed connection while an older open remains usable. Actual provider
+disposal failure, encrypted late-transform cleanup and the full expiry/failure
+matrix remain unqualified. See
+[validation-disposal-logoff.json](validation-disposal-logoff.json).
 
 On a live channel, native allocation does not repeat an ordinary request MID.
 CANCEL retains its request's owner/MID and uses the existing one-shot cancellation
@@ -170,3 +189,4 @@ profiles. Binding remains signed and unencrypted.
 - [Churn resources and cached-error cleanup](validation-churn-cleanup.json)
 - [Bounded collision-probe pipelining](validation-batched-probes.json)
 - [Authentication context disposal](validation-authentication-disposal.json)
+- [Authenticated abort and LOGOFF request retirement](validation-disposal-logoff.json)

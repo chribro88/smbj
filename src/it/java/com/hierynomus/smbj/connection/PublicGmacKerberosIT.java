@@ -23,12 +23,17 @@ import com.hierynomus.security.bc.BCSecurityProvider;
 import com.hierynomus.smbj.SmbConfig;
 import com.hierynomus.smbj.SMBClient;
 import com.hierynomus.smb.SMBPacket;
+import com.hierynomus.smb.SMBPacketData;
+import com.hierynomus.protocol.transport.PacketHandlers;
+import com.hierynomus.protocol.transport.PacketReceiver;
 import com.hierynomus.protocol.transport.TransportLayer;
 import com.hierynomus.protocol.transport.TransportException;
 import com.hierynomus.smbj.transport.tcp.direct.DirectTcpTransport;
 import java.net.InetSocketAddress;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import javax.security.auth.Subject;
 import com.hierynomus.smbj.auth.*;
 import com.hierynomus.smbj.session.Session;
@@ -67,6 +72,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 class PublicGmacKerberosIT {
     private final List<SpnegoAuthenticator> authenticators = new CopyOnWriteArrayList<>();
     private final Map<SpnegoAuthenticator, Integer> exportedKeyLengths = new ConcurrentHashMap<>();
+    private final AtomicBoolean failNextDisposal = new AtomicBoolean();
 
     @ParameterizedTest
     @CsvSource({"16,false", "16,true", "32,false", "32,true"})
@@ -166,12 +172,19 @@ class PublicGmacKerberosIT {
         Map<Long, byte[]> actualKeys = new ConcurrentHashMap<>();
         AtomicLong target = new AtomicLong();
         AtomicInteger bindingStarts = new AtomicInteger();
+        AtomicBoolean bindingBarrier = new AtomicBoolean();
+        List<Long> logoffs = new CopyOnWriteArrayList<>();
+        AtomicBoolean holdNextLogoff = new AtomicBoolean();
+        AtomicReference<SMB2PacketData> delayedLogoff = new AtomicReference<>();
+        AtomicReference<Request> delayedRequest = new AtomicReference<>();
+        AtomicReference<PacketReceiver<SMBPacketData<?>>> delayedReceiver = new AtomicReference<>();
         CountDownLatch entered = new CountDownLatch(2), release = new CountDownLatch(1);
         Field keyField = PacketSignatory.SignedPacketWrapper.class.getDeclaredField("secretKey"); keyField.setAccessible(true);
         SmbConfig config = SmbConfig.builder().withDialects(SMB2Dialect.SMB_3_1_1)
                 .withSigningAlgorithms(SMB3SigningAlgorithm.AES_GMAC).withSigningRequired(true)
                 .withSecurityProvider(new BCSecurityProvider()).withSocketFactory(observer)
-                .withTimeout(10, TimeUnit.SECONDS).withAuthenticators(new SpnegoAuthenticator.Factory() {
+                .withTimeout(10, TimeUnit.SECONDS).withTransactTimeout(1, TimeUnit.SECONDS)
+                .withAuthenticators(new SpnegoAuthenticator.Factory() {
                     @Override public SpnegoAuthenticator create() {
                         SpnegoAuthenticator auth = new SpnegoAuthenticator() {
                             @Override public AuthenticateResponse authenticate(AuthenticationContext auth, byte[] token, ConnectionContext connection) throws IOException {
@@ -188,11 +201,33 @@ class PublicGmacKerberosIT {
                                 }
                                 return response;
                             }
+                            @Override public void close() throws IOException {
+                                super.close();
+                                if (failNextDisposal.compareAndSet(true, false)) {
+                                    throw new IOException("Injected GSS disposal failure after authentication");
+                                }
+                            }
                         };
                         authenticators.add(auth); return auth;
                     }
                 }).withTransportLayerFactory((handlers, settings) -> {
-                    TransportLayer<SMBPacket<?, ?>> delegate = new DirectTcpTransport<>(settings.getSocketFactory(), settings.getSoTimeout(), handlers);
+                    PacketHandlers<SMBPacketData<?>, SMBPacket<?, ?>> filtered = new PacketHandlers<>(handlers.getSerializer(),
+                            new PacketReceiver<SMBPacketData<?>>() {
+                                public void handle(SMBPacketData<?> packet) throws TransportException {
+                                    if (packet instanceof SMB2PacketData
+                                            && ((SMB2PacketData) packet).getHeader().getMessage() == SMB2MessageCommandCode.SMB2_LOGOFF
+                                            && holdNextLogoff.compareAndSet(true, false)) {
+                                        SMB2PacketData reply = (SMB2PacketData) packet;
+                                        delayedRequest.set(((Connection) handlers.getReceiver()).outstandingRequests
+                                                .getRequestByMessageId(reply.getHeader().getMessageId()));
+                                        delayedReceiver.set(handlers.getReceiver()); delayedLogoff.set(reply);
+                                        return;
+                                    }
+                                    handlers.getReceiver().handle(packet);
+                                }
+                                public void handleError(Throwable failure) { handlers.getReceiver().handleError(failure); }
+                            }, handlers.getPacketFactory());
+                    TransportLayer<SMBPacket<?, ?>> delegate = new DirectTcpTransport<>(settings.getSocketFactory(), settings.getSoTimeout(), filtered);
                     return new TransportLayer<SMBPacket<?, ?>>() {
                         public void connect(InetSocketAddress address) throws IOException { delegate.connect(address); }
                         public void disconnect() throws IOException { delegate.disconnect(); }
@@ -202,7 +237,10 @@ class PublicGmacKerberosIT {
                                 SMB2Packet smb = (SMB2Packet) packet;
                                 try { actualKeys.putIfAbsent(smb.getHeader().getSessionId(), ((SecretKey) keyField.get(packet)).getEncoded().clone()); }
                                 catch (IllegalAccessException failure) { throw new AssertionError(failure); }
-                                if (target.get() != 0 && smb.getHeader().getSessionId() == target.get()
+                                if (smb.getHeader().getMessage() == SMB2MessageCommandCode.SMB2_LOGOFF) {
+                                    logoffs.add(smb.getHeader().getSessionId());
+                                }
+                                if (bindingBarrier.get() && target.get() != 0 && smb.getHeader().getSessionId() == target.get()
                                         && smb.getHeader().getMessage() == SMB2MessageCommandCode.SMB2_SESSION_SETUP
                                         && bindingStarts.incrementAndGet() <= 2) {
                                     entered.countDown();
@@ -218,7 +256,8 @@ class PublicGmacKerberosIT {
                     };
                 }).build();
         AuthenticationContext identity = new GSSAuthenticationContext("smbtest", "SMBJ.TEST", subject, null);
-        try (SMBClient client = new SMBClient(config); Connection caller = client.connect("server.smbj.test", port)) {
+        com.hierynomus.smbj.event.SMBEventBus bus = new com.hierynomus.smbj.event.SMBEventBus();
+        try (SMBClient client = new SMBClient(config, bus); Connection caller = client.connect("server.smbj.test", port)) {
             observer.register(caller);
             assertEquals(SMB3SigningAlgorithm.AES_GMAC, caller.getConnectionContext().getSigningAlgorithm());
             try (Session older = borrowed ? caller.authenticate(identity) : null) {
@@ -233,6 +272,70 @@ class PublicGmacKerberosIT {
                                 EnumSet.of(AccessMask.GENERIC_READ, AccessMask.GENERIC_WRITE), null,
                                 SMB2ShareAccess.ALL, SMB2CreateDisposition.FILE_CREATE, null)) {
                             byte[] data = new byte[131077]; new Random(67).nextBytes(data); verifyContents(file, data);
+                            Connection shared = new Connection(config, client, bus, client.getServerList());
+                            try {
+                                shared.connect("server.smbj.test", port); observer.register(shared);
+                                try (Session prior = shared.authenticate(identity);
+                                     DiskShare priorShare = (DiskShare) prior.connectShare("share")) {
+                                    observer.auxiliary(prior, shared);
+                                    String priorName = "kerberos-prior-" + UUID.randomUUID() + ".bin";
+                                    try (com.hierynomus.smbj.share.File priorFile = priorShare.openFile(priorName,
+                                            EnumSet.of(AccessMask.GENERIC_READ, AccessMask.GENERIC_WRITE), null,
+                                            SMB2ShareAccess.ALL, SMB2CreateDisposition.FILE_CREATE, null)) {
+                                        byte[] priorData = new byte[65539]; new Random(71).nextBytes(priorData); verifyContents(priorFile, priorData);
+                                        int before = logoffs.size();
+                                        byte[][] retained = snapshot(main);
+                                        failNextDisposal.set(true);
+                                        IOException failure = assertThrows(IOException.class, () -> shared.bind(main));
+                                        Throwable cause = failure;
+                                        while (cause.getCause() != null) cause = cause.getCause();
+                                        assertEquals("Injected GSS disposal failure after authentication", cause.getMessage());
+                                        assertEquals(0, cause.getSuppressed().length, "Verified-session cleanup must receive a successful LOGOFF");
+                                        assertFalse(failNextDisposal.get());
+                                        assertEquals(before + 1, logoffs.size(), "The authenticated unpublished auxiliary must LOGOFF");
+                                        long retired = logoffs.get(before);
+                                        assertNotEquals(prior.getSessionId(), retired); assertNotEquals(main.getSessionId(), retired);
+                                        assertTrue(shared.isConnected()); assertEquals(1, main.getChannelCount());
+                                        assertEquals(1, shared.getSessionTable().activeSessions().size());
+                                        assertSame(prior, shared.getSessionTable().find(prior.getSessionId()));
+                                        assertTrue(shared.getPreauthSessionTable().activeSessions().isEmpty());
+                                        assertSnapshot(retained, main);
+                                        priorData[0] ^= 1; verifyContents(priorFile, priorData);
+                                        data[0] ^= 1; verifyContents(file, data);
+                                        holdNextLogoff.set(true); failNextDisposal.set(true);
+                                        IOException timedOut = assertThrows(IOException.class, () -> shared.bind(main));
+                                        Throwable timeoutCause = timedOut;
+                                        while (timeoutCause.getCause() != null) timeoutCause = timeoutCause.getCause();
+                                        assertEquals("Injected GSS disposal failure after authentication", timeoutCause.getMessage());
+                                        assertEquals(1, timeoutCause.getSuppressed().length);
+                                        assertInstanceOf(TransportException.class, timeoutCause.getSuppressed()[0]);
+                                        SMB2PacketData late = delayedLogoff.getAndSet(null);
+                                        Request abandoned = delayedRequest.getAndSet(null);
+                                        assertNotNull(late); assertNotNull(abandoned);
+                                        assertEquals(0, late.getHeader().getStatusCode(), "The real peer accepted the cleanup LOGOFF");
+                                        assertFalse(shared.outstandingRequests.isOutstanding(abandoned.getMessageId()));
+                                        assertNull(shared.outstandingRequests.getRequestByCancelId(abandoned.getCancelId()));
+                                        assertTrue(abandoned.getPromise().isFulfilled());
+                                        assertEquals(before + 2, logoffs.size());
+                                        assertTrue(shared.getPreauthSessionTable().activeSessions().isEmpty());
+                                        assertEquals(1, shared.getSessionTable().activeSessions().size());
+                                        int credits = shared.sequenceWindow.available();
+                                        delayedReceiver.getAndSet(null).handle(late);
+                                        assertEquals(credits, shared.sequenceWindow.available(), "A retired late reply cannot grant credits");
+                                        assertTrue(shared.isConnected()); assertSame(prior, shared.getSessionTable().find(prior.getSessionId()));
+                                        assertSnapshot(retained, main);
+                                        priorData[1] ^= 1; verifyContents(priorFile, priorData);
+                                        data[1] ^= 1; verifyContents(file, data);
+                                        assertSame(main, shared.bind(main)); observer.bound(main, shared);
+                                        assertEquals(2, main.getChannelCount()); echo(main, shared);
+                                        priorData[1] ^= 1; verifyContents(priorFile, priorData);
+                                    } finally { priorShare.rm(priorName); }
+                                }
+                            } finally { shared.close(true); }
+                            assertEquals(1, main.getChannelCount());
+                            System.out.printf("KERBEROS_DISPOSAL_ABORT rawKeyBytes=%d borrowed=%s confirmedLogoffs=1 timedOutLogoffs=1 lateIgnored=true injectedAfterDispose=true%n",
+                                    keyBytes, borrowed);
+                            bindingBarrier.set(true);
                             ExecutorService workers = Executors.newFixedThreadPool(2);
                             Connection first, second;
                             try {

@@ -24,6 +24,7 @@ import com.hierynomus.smbj.connection.packet.SMB2ProcessResponsePacketHandler;
 import com.hierynomus.mssmb2.messages.SMB2SessionSetup.SMB2SecurityMode;
 import com.hierynomus.mssmb2.SMB2GlobalCapability;
 import com.hierynomus.mssmb2.messages.SMB2Echo;
+import com.hierynomus.mssmb2.messages.SMB2Logoff;
 import com.hierynomus.mssmb2.messages.SMB2SessionSetup;
 import com.hierynomus.protocol.transport.TransportException;
 import com.hierynomus.protocol.transport.TransportLayer;
@@ -59,17 +60,19 @@ import static org.mockito.Mockito.*;
 
 class AuthenticationTimeoutTest {
     @ParameterizedTest
-    @CsvSource({"false,false", "true,false", "false,true", "true,true"})
-    void abandonedSetupRetiresOnlyItsRequestAndPreservesInterruption(boolean interrupt, boolean reauthentication) throws Exception {
+    @CsvSource({"false,false,false", "true,false,false", "false,true,false", "true,true,false",
+            "false,false,true", "true,false,true", "false,true,true", "true,true,true"})
+    void abandonedExchangeRetiresOnlyItsRequestAndPreservesInterruption(boolean interrupt, boolean withSession, boolean logoff) throws Exception {
         try (Fixture fixture = new Fixture()) {
             Request other = fixture.registerOther();
             fixture.interruptOnWrite = interrupt;
             when(fixture.older.send(any(SMB2Packet.class), same(fixture.connection)))
                     .thenAnswer(call -> fixture.connection.send(call.getArgument(0)));
+            SMB2Packet packet = logoff ? new SMB2Logoff(SMB2Dialect.SMB_3_1_1, 47) : setup();
             try {
                 assertThrows(TransportException.class, () -> {
-                    if (reauthentication) fixture.connection.sendAndReceive(fixture.older, setup());
-                    else fixture.connection.sendAndReceive(setup());
+                    if (withSession) fixture.connection.sendAndReceive(fixture.older, packet);
+                    else fixture.connection.sendAndReceive(packet);
                 });
                 assertEquals(interrupt, Thread.currentThread().isInterrupted());
             } finally { Thread.interrupted(); }
@@ -86,15 +89,39 @@ class AuthenticationTimeoutTest {
         }
     }
 
-    @Test
-    void lateSetupAfterTimeoutIsIgnoredWithoutClosingTransportOrAcceptingCredits() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void lateExchangeAfterTimeoutIsIgnoredWithoutClosingTransportOrAcceptingCredits(boolean logoff) throws Exception {
         try (Fixture fixture = new Fixture()) {
             fixture.registerOther();
-            assertThrows(TransportException.class, () -> fixture.connection.sendAndReceive(setup()));
-            fixture.connection.handle(new SMB2PacketData(setupResponse(0)));
+            SMB2Packet packet = logoff ? new SMB2Logoff(SMB2Dialect.SMB_3_1_1, 47) : setup();
+            assertThrows(TransportException.class, () -> fixture.connection.sendAndReceive(packet));
+            fixture.connection.handle(new SMB2PacketData(response(0, logoff)));
             assertFalse(fixture.connection.outstandingRequests.isOutstanding(0L));
             assertTrue(fixture.sent.get().getPromise().isFulfilled());
             assertThrows(ExecutionException.class, () -> fixture.sent.get().getFuture(() -> { }).get(1, TimeUnit.SECONDS));
+            assertSame(fixture.older, fixture.connection.getSessionTable().find(47L));
+            assertEquals(8, fixture.connection.sequenceWindow.available());
+            verify(fixture.transport, never()).disconnect();
+        }
+    }
+
+    @Test
+    void sessionCloseRetiresItsLogoffAndIgnoresTheLateReplyAfterRemovingItsKeys() throws Exception {
+        try (Fixture fixture = new Fixture()) {
+            Session closing = new Session(fixture.connection, fixture.config, null, fixture.bus, null, new NoSignatory(), null);
+            closing.setSessionId(48);
+            fixture.connection.getSessionTable().registerSession(48L, closing);
+            assertThrows(TransportException.class, closing::close);
+            Request request = fixture.sent.get();
+            assertTrue(request.getPacket() instanceof SMB2Logoff);
+            assertNull(fixture.connection.outstandingRequests.getRequestByMessageId(request.getMessageId()));
+            assertNull(fixture.connection.outstandingRequests.getRequestByCancelId(request.getCancelId()));
+            assertTrue(request.getPromise().isFulfilled());
+            assertNull(fixture.connection.getSessionTable().find(48L));
+            byte[] late = response(request.getMessageId(), true);
+            ByteBuffer.wrap(late).order(ByteOrder.LITTLE_ENDIAN).putLong(40, 48);
+            fixture.connection.handle(new SMB2PacketData(late));
             assertSame(fixture.older, fixture.connection.getSessionTable().find(47L));
             assertEquals(8, fixture.connection.sequenceWindow.available());
             verify(fixture.transport, never()).disconnect();
@@ -110,18 +137,19 @@ class AuthenticationTimeoutTest {
         }
     }
 
-    @Test
-    void timeoutDuringResponseParsingCannotCompleteOrAbortAnAbandonedRequest() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void timeoutDuringResponseParsingCannotCompleteOrAbortAnAbandonedRequest(boolean logoff) throws Exception {
         OutstandingRequests requests = new OutstandingRequests();
-        Request request = new Request(setup(), 0, UUID.randomUUID());
+        Request request = new Request(logoff ? new SMB2Logoff(SMB2Dialect.SMB_3_1_1, 47) : setup(), 0, UUID.randomUUID());
         requests.registerOutstanding(request);
-        SMB2PacketData data = new SMB2PacketData(setupResponse(0));
+        SMB2PacketData data = new SMB2PacketData(response(0, logoff));
         SMB2MessageConverter converter = mock(SMB2MessageConverter.class);
         CountDownLatch parsing = new CountDownLatch(1), release = new CountDownLatch(1);
         when(converter.readPacket(same(request.getPacket()), same(data))).thenAnswer(call -> {
             parsing.countDown();
             assertTrue(release.await(5, TimeUnit.SECONDS));
-            return new SMB2SessionSetup();
+            return logoff ? new SMB2Logoff(SMB2Dialect.SMB_3_1_1, 47) : new SMB2SessionSetup();
         });
         ExecutorService worker = Executors.newSingleThreadExecutor();
         try {
@@ -143,10 +171,11 @@ class AuthenticationTimeoutTest {
         }
     }
 
-    @Test
-    void requestRetiredBeforeLaterPipelineLookupIsIgnored() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void requestRetiredBeforeLaterPipelineLookupIsIgnored(boolean logoff) throws Exception {
         OutstandingRequests requests = new OutstandingRequests();
-        SMB2PacketData data = new SMB2PacketData(setupResponse(0));
+        SMB2PacketData data = new SMB2PacketData(response(0, logoff));
         SMB2MessageConverter converter = mock(SMB2MessageConverter.class);
         new SMB2AsyncResponsePacketHandler(requests).handle(data);
         new SMB2ProcessResponsePacketHandler(converter, requests).handle(data);
@@ -158,18 +187,20 @@ class AuthenticationTimeoutTest {
                 EnumSet.noneOf(SMB2GlobalCapability.class));
     }
 
-    private static byte[] setupResponse(long mid) {
+    private static byte[] response(long mid, boolean logoff) {
         ByteBuffer bytes = ByteBuffer.allocate(72).order(ByteOrder.LITTLE_ENDIAN);
         bytes.putInt(0, 0x424d53fe); bytes.putShort(4, (short) 64);
-        bytes.putShort(12, (short) 1); bytes.putShort(14, (short) 64);
+        bytes.putShort(12, (short) (logoff ? 2 : 1)); bytes.putShort(14, (short) 64);
         bytes.putInt(16, 1); bytes.putLong(24, mid); bytes.putLong(40, 47);
-        bytes.putShort(64, (short) 9); bytes.putShort(68, (short) 72);
+        bytes.putShort(64, (short) (logoff ? 4 : 9)); bytes.putShort(68, (short) 72);
         return bytes.array();
     }
 
     private static final class Fixture implements AutoCloseable {
         final TransportLayer<SMBPacket<?, ?>> transport;
         final Connection connection;
+        final SMBEventBus bus = new SMBEventBus();
+        final SmbConfig config;
         final Session older = mock(Session.class);
         boolean interruptOnWrite;
         final AtomicReference<Request> sent = new AtomicReference<>();
@@ -178,9 +209,9 @@ class AuthenticationTimeoutTest {
         Fixture() throws Exception {
             transport = mock(TransportLayer.class);
             when(transport.isConnected()).thenReturn(true);
-            SmbConfig config = SmbConfig.builder().withTransactTimeout(20, TimeUnit.MILLISECONDS)
+            config = SmbConfig.builder().withTransactTimeout(20, TimeUnit.MILLISECONDS)
                     .withTransportLayerFactory((handlers, settings) -> transport).build();
-            connection = new Connection(config, null, new SMBEventBus(), new ServerList());
+            connection = new Connection(config, null, bus, new ServerList());
             ConnectionContext context = mock(ConnectionContext.class);
             when(context.getServer()).thenReturn(new Server("localhost", 445));
             when(context.getNegotiatedProtocol()).thenReturn(new NegotiatedProtocol(SMB2Dialect.SMB_3_1_1, 65536, 65536, 65536, true));

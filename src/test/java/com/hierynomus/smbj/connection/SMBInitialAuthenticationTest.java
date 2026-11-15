@@ -64,7 +64,8 @@ import static org.mockito.Mockito.*;
 
 class SMBInitialAuthenticationTest {
     @ParameterizedTest
-    @ValueSource(strings = {"success", "cleanup", "init", "init-error", "token", "transport", "final", "same-io", "same-runtime", "same-error"})
+    @ValueSource(strings = {"success", "cleanup", "cleanup-logoff-failure", "cleanup-logoff-same", "cleanup-collision", "cleanup-runtime", "cleanup-error",
+            "init", "init-error", "token", "transport", "final", "same-io", "same-runtime", "same-error"})
     void disposesEachAuthenticationAttemptBeforePublicationAndPreservesItsFailure(String phase) throws Exception {
         StubAuthenticator authenticator = mock(StubAuthenticator.class, withSettings().extraInterfaces(java.io.Closeable.class));
         when(authenticator.supports(any())).thenReturn(true);
@@ -82,9 +83,16 @@ class SMBInitialAuthenticationTest {
         });
         if (phase.equals("transport")) doThrow(primary).when(fixture.connection).sendAndReceive(any());
         if (phase.equals("final")) fixture.fault = "signature";
-        Throwable cleanupFailure = phase.startsWith("same-") ? primary : new IOException("Authentication cleanup failed");
+        Throwable cleanupFailure = phase.startsWith("same-") ? primary
+                : phase.equals("cleanup-runtime") ? new IllegalStateException("Authentication cleanup failed")
+                : phase.equals("cleanup-error") ? new AssertionError("Authentication cleanup failed")
+                : new IOException("Authentication cleanup failed");
+        IOException logoffFailure = phase.equals("cleanup-logoff-same") ? (IOException) cleanupFailure : new IOException("Injected LOGOFF failure");
+        if (phase.startsWith("cleanup-logoff")) doThrow(logoffFailure).when(fixture.session).close();
+        Session older = mock(Session.class);
         doAnswer(call -> {
             assertNull(fixture.sessions.find(47L), "Dispose the context before making the new session active");
+            if (phase.equals("cleanup-collision")) fixture.sessions.registerSession(47L, older);
             if (!phase.equals("success")) throw cleanupFailure;
             return null;
         }).when((java.io.Closeable) authenticator).close();
@@ -93,11 +101,17 @@ class SMBInitialAuthenticationTest {
             Throwable failure = assertThrows(Throwable.class, fixture::establish);
             if (failure instanceof SMBRuntimeException) failure = failure.getCause();
             if (phase.equals("final")) assertTrue(failure.getMessage().contains("signature is invalid"));
-            else assertSame(phase.equals("cleanup") ? cleanupFailure : primary, failure);
-            assertEquals(phase.startsWith("same-") || phase.equals("cleanup") ? 0 : 1, failure.getSuppressed().length);
-            if (!phase.startsWith("same-") && !phase.equals("cleanup")) assertSame(cleanupFailure, failure.getSuppressed()[0]);
-            assertNull(fixture.sessions.find(47L));
+            else assertSame(phase.startsWith("cleanup") ? cleanupFailure : primary, failure);
+            int suppressed = phase.startsWith("same-") || phase.startsWith("cleanup") ? 0 : 1;
+            if (phase.equals("cleanup-logoff-failure") || phase.equals("cleanup-collision")) suppressed = 1;
+            assertEquals(suppressed, failure.getSuppressed().length);
+            if (phase.equals("cleanup-logoff-failure")) assertSame(logoffFailure, failure.getSuppressed()[0]);
+            else if (phase.equals("cleanup-collision")) assertTrue(failure.getSuppressed()[0].getMessage().contains("SessionId is already active"));
+            else if (suppressed != 0) assertSame(cleanupFailure, failure.getSuppressed()[0]);
+            if (phase.equals("cleanup-collision")) assertSame(older, fixture.sessions.find(47L));
+            else assertNull(fixture.sessions.find(47L));
         }
+        verify(fixture.session, times(phase.startsWith("cleanup") && !phase.equals("cleanup-collision") ? 1 : 0)).close();
         verify((java.io.Closeable) authenticator).close();
         assertTrue(fixture.preauth.activeSessions().isEmpty());
         verify(fixture.connection, never()).close(anyBoolean());

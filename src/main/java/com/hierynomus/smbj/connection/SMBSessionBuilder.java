@@ -124,7 +124,12 @@ public class SMBSessionBuilder {
             processAuthenticationToken(ctx, connectionContext.getGssNegotiateToken());
 
             Session session = setupSession(ctx);
-            disposeAuthenticator(ctx, null);
+            try {
+                disposeAuthenticator(ctx, null);
+            } catch (IOException | RuntimeException | Error cleanupFailure) {
+                cleanupAuthenticatedSession(session, cleanupFailure);
+                throw cleanupFailure;
+            }
             if (!sessionTable.registerSessionIfAbsent(session.getSessionId(), session)) {
                 throw new IOException("Authentication returned an already active SessionId");
             }
@@ -360,6 +365,22 @@ public class SMBSessionBuilder {
         ctx.authenticator = authenticator;
         ctx.authContext = authContext;
         return ctx;
+    }
+
+    private void cleanupAuthenticatedSession(Session session, Throwable failure) {
+        boolean registered = false;
+        try {
+            // Keep verified keys available until the cleanup LOGOFF completes.
+            if (!sessionTable.registerSessionIfAbsent(session.getSessionId(), session)) {
+                throw new IOException("Cannot clean up authenticated SMB session: SessionId is already active");
+            }
+            registered = true;
+            session.close();
+        } catch (IOException | RuntimeException | Error cleanupFailure) {
+            if (failure != cleanupFailure) failure.addSuppressed(cleanupFailure);
+        } finally {
+            if (registered) sessionTable.removeSession(session.getSessionId(), session);
+        }
     }
 
     private void disposeAuthenticator(BuilderContext ctx, Throwable failure) throws IOException {

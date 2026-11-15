@@ -487,6 +487,53 @@ those traces. The actual Java 8 profile passes **40 cases** (16 native plus
 24 selected local); all 511 production classes remain Java 8 bytecode. All owned
 Samba/AD fixtures are removed. No full G0 or expiry/failure matrix is claimed.
 
+### Authenticated abort and LOGOFF request retirement
+
+A disposal error after a verified initial/auxiliary final response now attempts
+one ordinary LOGOFF of that unpublished session. Its verified keys are retained
+in a conditional session-table entry solely for cleanup response processing; the
+exact entry is removed afterward. A conflicting active entry is preserved.
+The original disposal error is returned, with a distinct cleanup failure
+suppressed and an identical cached failure left intact. Unverified authentication
+failures still discard only their local state, and the established target session
+is not logged off when its candidate fails.
+
+LOGOFF now retains its selected connection, awaits with the session's configured
+timeout, and retires its MID/cancel lookups after timeout or interruption before
+session verification state disappears. The existing response wait reuses that
+retirement for authentication and LOGOFF; ordinary operation timeout tracking is
+unchanged. Retirement neither resends the operation nor grants synthetic credits.
+
+Before the fix, six of 43 local initial-authentication cases and all four native
+Kerberos profiles expose missing authenticated auxiliary LOGOFF. A second local
+run passes initial-authentication cleanup but reproduces six LOGOFF tracking
+failures in the 149-case connected run. The final **149 focused checks pass**,
+including cleanup/collision/error identity, interruption, late replies, parsing
+races and actual Session.close behavior. Full `check` passes **976 tests in
+105 suites**, zero failures/errors/skips, with license and JaCoCo.
+
+The four real Kerberos profiles each inject two post-authentication disposal
+errors on a borrowed connection with an older open: one cleanup receives LOGOFF
+success, the other holds the real peer reply until the client times out. Both
+request lookups drain, the late plain reply is ignored without credit effects,
+older/main I/O continues, and binding retries on the same candidate. The peer
+frames are independently audited: **540 GMAC tags**, zero observed distinct-message
+actual-key/nonce reuse. All **94 GSS contexts** are disposed before fixture fallback
+cleanup. Faults throw IOException after successful real GSS disposal; they do not
+reproduce an operating-system/provider failure to free GSS resources. Coverage is
+BC/Direct/Java21 with 16/32-byte raw GSS keys and signing-only traffic. Encrypted
+late-transform cleanup, binding-phase disposal faults, actual-Java8 Kerberos and
+the complete expiry/failure matrix remain open. See
+[validation-disposal-logoff.json](validation-disposal-logoff.json).
+
+Compatibility checks also pass on the same production JAR: 11 public NTLM cases
+and 16 provider/transport/encryption/write-mode cases make **31 Java 21 native
+cases** including the four Kerberos profiles. The actual Java 8 profile passes
+**40 cases** (16 native, 24 selected local). Public NTLM/Kerberos traces independently
+verify **4,839 GMAC tags** with zero observed distinct-message actual-key/nonce
+reuse. All 511 production classes retain Java 8 bytecode, and all task-owned
+Samba/AD fixtures are removed. G0 and the full feature gates remain open.
+
 ## Inputs and history
 
 - Branch: `feature/full-gmac-multichannel`.
