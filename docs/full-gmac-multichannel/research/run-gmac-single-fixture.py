@@ -20,17 +20,23 @@ profile = parser.add_mutually_exclusive_group()
 parser.add_argument('--java8-home', type=Path)
 profile.add_argument('--async-cancel', action='store_true')
 profile.add_argument('--public-binding', action='store_true')
+profile.add_argument('--churn', action='store_true')
+parser.add_argument('--churn-cycles', type=int, default=64)
 profile.add_argument('--public-anchor-research', action='store_true')
 profile.add_argument('--bootstrap-abort-research', action='store_true')
 profile.add_argument('--unsigned-echo-research', action='store_true')
 profile.add_argument('--per-request-research', action='store_true')
 arguments = parser.parse_args()
+if not 1 <= arguments.churn_cycles <= 10000:
+    parser.error('--churn-cycles must be between 1 and 10000')
+if arguments.churn_cycles != 64 and not arguments.churn:
+    parser.error('--churn-cycles requires --churn')
 if not Path('gradlew').is_file():
     parser.error('Run from the SMBJ feature worktree')
 if arguments.java8_home:
     if any((arguments.public_anchor_research, arguments.bootstrap_abort_research,
             arguments.unsigned_echo_research, arguments.per_request_research)):
-        parser.error('--java8-home supports the default matrix, --public-binding or --async-cancel')
+        parser.error('--java8-home supports the default matrix, --public-binding, --async-cancel or --churn')
     if not os.environ.get('JAVA_HOME'):
         parser.error('Select the Java 21 build JDK with JAVA_HOME when using --java8-home')
     arguments.java8_home = arguments.java8_home.resolve()
@@ -48,7 +54,10 @@ if arguments.unsigned_echo_research:
 if arguments.per_request_research:
     if os.environ.get('SMBJ_GMAC_AUX_RESEARCH') != 'true' or not Path('src/it/java/com/hierynomus/smbj/connection/GmacConcurrentBootstrapIT.java').is_file():
         parser.error('--per-request-research requires the detached research checkout and explicit opt-in')
-if arguments.public_binding:
+if arguments.churn:
+    test_class, expected_count, marker, label = ('com.hierynomus.smbj.MultichannelPerformanceIT', 8,
+                                               'GMAC_CHURN_COMPLETE ', 'channel churn')
+elif arguments.public_binding:
     test_class, expected_count, marker, label = ('com.hierynomus.smbj.connection.PublicGmacBindingIT', 11,
                                                'PUBLIC_GMAC_COMPLETE ', 'public multichannel')
 elif arguments.per_request_research:
@@ -123,17 +132,21 @@ try:
     client_environment.update(SMB_TEST_HOST='127.0.0.1', SMB_TEST_PORTS=str(port), SMB_TEST_USERNAME='smbtest',
                               SMB_TEST_PASSWORD=password, SMB_TEST_DOMAIN='WORKGROUP', SMB_TEST_SHARE='share',
                               SMB_TEST_SIGNING_ALGORITHM='AES_GMAC', SMB_TEST_DIALECT='SMB_3_1_1')
+    if arguments.churn:
+        client_environment.update(SMB_TEST_CHURN='true', SMB_TEST_CHURN_CYCLES=str(arguments.churn_cycles))
     command = ['./gradlew', '--offline', '--no-daemon', '--max-workers=1',
                '-Dorg.gradle.jvmargs=-Xmx192m -XX:ActiveProcessorCount=2', '--init-script', str(init)]
     if arguments.java8_home:
         client_environment['SMBJ_JAVA8_OUTPUT'] = str(output)
         client_environment['SMBJ_JAVA8_PUBLIC_BINDING'] = str(arguments.public_binding).lower()
         client_environment['SMBJ_JAVA8_ASYNC_CANCEL'] = str(arguments.async_cancel).lower()
+        client_environment['SMBJ_JAVA8_CHURN'] = str(arguments.churn).lower()
         command += ['-Porg.gradle.java.installations.paths=' + str(arguments.java8_home) + ',' + os.environ['JAVA_HOME'],
                     '-Porg.gradle.java.installations.auto-detect=false', '-Porg.gradle.java.installations.auto-download=false',
                     '--init-script', 'docs/full-gmac-multichannel/research/java8-runtime-profile.gradle', 'java8RuntimeTest']
     else:
-        command += ['integrationTest', '--tests', test_class]
+        selection = test_class + '.sustainedBindingChurnKeepsResourcesBounded' if arguments.churn else test_class
+        command += ['integrationTest', '--tests', selection]
     command += ['-x', 'buildSambaImage', 'licenseIntegrationTest']
     raw = output / 'client-raw.log'
     try:
@@ -153,6 +166,10 @@ try:
     markers = ('AUXCON_COMPLETE ', 'AUXCON_BOOTSTRAP_ABORT ', 'AUXCON_NEGATIVE_CONTROL ',
                'AUXCON_BOOTSTRAP_NEGATIVE_CONTROL ') if arguments.per_request_research else (marker,)
     metadata['profiles'] = [line.strip() for line in text.splitlines() if line.startswith(markers)]
+    if arguments.churn:
+        metadata['samples'] = [line.strip() for line in text.splitlines() if line.startswith('GMAC_CHURN_SAMPLE ')]
+        assert len(metadata['samples']) == expected_count * arguments.churn_cycles
+        assert all('cycles=' + str(arguments.churn_cycles) + ' ' in line for line in metadata['profiles'])
     expected_profiles = 8 if arguments.bootstrap_abort_research else expected_count
     assert len(metadata['profiles']) == expected_profiles, len(metadata['profiles'])
     assert len(set(metadata['profiles'])) == expected_profiles

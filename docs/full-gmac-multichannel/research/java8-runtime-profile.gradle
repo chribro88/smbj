@@ -9,6 +9,7 @@ allprojects { project ->
         def output = new File(System.getenv('SMBJ_JAVA8_OUTPUT'))
         def publicBinding = System.getenv('SMBJ_JAVA8_PUBLIC_BINDING') == 'true'
         def asyncCancel = System.getenv('SMBJ_JAVA8_ASYNC_CANCEL') == 'true'
+        def churn = System.getenv('SMBJ_JAVA8_CHURN') == 'true'
         def toolchains = project.extensions.getByType(JavaToolchainService)
         def junit = (project.configurations.integrationTestRuntimeClasspath.resolvedConfiguration.resolvedArtifacts
                 + project.configurations.integrationTestCompileClasspath.resolvedConfiguration.resolvedArtifacts)
@@ -22,7 +23,8 @@ allprojects { project ->
             source = project.files(publicBinding ? [
                     'src/it/java/com/hierynomus/smbj/connection/PublicGmacBindingIT.java',
                     'src/it/java/com/hierynomus/smbj/connection/GmacBindingWireObserver.java'] : [
-                    asyncCancel ? 'src/it/java/com/hierynomus/smbj/connection/GmacAsyncCancellationIT.java'
+                    churn ? 'src/it/java/com/hierynomus/smbj/MultichannelPerformanceIT.java'
+                            : asyncCancel ? 'src/it/java/com/hierynomus/smbj/connection/GmacAsyncCancellationIT.java'
                             : 'src/it/java/com/hierynomus/smbj/SingleChannelSigningIT.java',
                     'src/it/java/com/hierynomus/smbj/testing/MultichannelTestSupport.java'],
                     'src/test/java/com/hierynomus/protocol/commons/concurrent/PromiseBackedFutureTest.java',
@@ -41,9 +43,18 @@ allprojects { project ->
             javaLauncher.set(toolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(8)) })
             useJUnitPlatform()
             include(publicBinding ? '**/PublicGmacBindingIT.class'
+                            : churn ? '**/MultichannelPerformanceIT.class'
                             : asyncCancel ? '**/GmacAsyncCancellationIT.class' : '**/SingleChannelSigningIT.class',
                     '**/PromiseBackedFutureTest.class', '**/RequestCancellationTest.class',
                     '**/PacketSignatoryTest.class', '**/SequenceWindowExhaustionTest.class')
+            if (churn) {
+                filter {
+                    includeTestsMatching '*.MultichannelPerformanceIT.sustainedBindingChurnKeepsResourcesBounded'
+                    ['PromiseBackedFutureTest', 'RequestCancellationTest', 'PacketSignatoryTest', 'SequenceWindowExhaustionTest'].each {
+                        includeTestsMatching '*.' + it
+                    }
+                }
+            }
             reports.junitXml.outputLocation.set(new File(output, 'java8-reports'))
             reports.html.outputLocation.set(new File(output, 'java8-html'))
             doFirst {
