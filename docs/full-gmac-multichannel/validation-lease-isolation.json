@@ -1,0 +1,170 @@
+{
+  "result": "PASS",
+  "scope": "Linux directory-lease path/session/share isolation, real permission denial and owner-liveness cleanup; full G0 remains open",
+  "recorded_at": "2026-11-15T13:20:36.276695+00:00",
+  "base_revision": "115cdd2291321cdbfcc967956ed1d9ef7be25fdc",
+  "source_sha256": {
+    "src/main/java/com/hierynomus/smbj/connection/LeaseManager.java": "de38b89ae39e4f7b722f4242ee32cc0d1e22ea159655c383d6f0656d604b3146",
+    "src/main/java/com/hierynomus/smbj/connection/LeaseEntry.java": "374426b219764fbed06dbefa9be0519a98a6d2f2a4306ee80ad1da2b39de7ec5",
+    "src/main/java/com/hierynomus/smbj/share/TreeConnect.java": "625590aafc8255666fc9a5e15373df12b12a009a14510ee637a2ea5fb18cde1a",
+    "src/main/java/com/hierynomus/smbj/share/DiskShare.java": "84dfe945a10f69964c27f12a14c3ebbc06148af51811650d39b79cd2ebc60877",
+    "src/test/java/com/hierynomus/smbj/share/DirectoryLeaseIsolationTest.java": "960c5581792a8edf0e7cdc34146cb3935e4234a08aee30b4e3be0d8993bf6a9d",
+    "src/test/groovy/com/hierynomus/smbj/share/DiskShareListSpec.groovy": "4a20e851fdc407be2cb78a7e68f4f473a5fc5fe9b242c0af850412773a5a9436",
+    "src/it/java/com/hierynomus/smbj/connection/GmacLeaseBreakIT.java": "c18b808d7452b77a09b34f80ad2822beed15b8e9b55848c781a9b81cfd9d6f27",
+    "src/it/java/com/hierynomus/smbj/connection/GmacLeaseIsolationIT.java": "23d38a1b28f9fe32b4ecd48434604a947ab487d935d3f1907f275622c727150a",
+    "src/it/java/com/hierynomus/smbj/connection/GmacBindingWireObserver.java": "ca180b9d198838affe31c76a7c7a89e0f51f9f806b80abef3ef1fb627977a1ce",
+    "docs/full-gmac-multichannel/research/run-gmac-single-fixture.py": "3c39085c9a344962bc4f3d14a7087a2192f4c8bec9ca5769d3427e254ba04313",
+    "docs/full-gmac-multichannel/research/java8-runtime-profile.gradle": "32f2892a342403d53e8625b3ec3bfbf69f666003a82b0f7fe7b9f3e7697583a8",
+    "docs/full-gmac-multichannel/research/smb-gmac-lease-isolation.conf": "562a5c08ff3a40aa1a0dee3e8f5b309a128b20eca51e235650ab78338b84775b"
+  },
+  "local": {
+    "suites": 110,
+    "tests": 1018,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "local_execution": "check; Gradle heap192m, single test worker256m, fresh fork every20 test classes; assertions/timeouts unchanged",
+  "native": {
+    "scope_java21": {
+      "tests": 4,
+      "profiles": [
+        "GMAC_LEASE_ISOLATION java=21.0.12.1 provider=BC signing=AES_GMAC encrypt=false cipher=none cacheScopes=4 secondUserDenied=true primaryRetired=true firstSessionClosed=true existingSecondHandle=true",
+        "GMAC_LEASE_ISOLATION java=21.0.12.1 provider=BC signing=AES_GMAC encrypt=true cipher=AES_128_GCM cacheScopes=4 secondUserDenied=true primaryRetired=true firstSessionClosed=true existingSecondHandle=true",
+        "GMAC_LEASE_ISOLATION java=21.0.12.1 provider=JCE signing=AES_GMAC encrypt=false cipher=none cacheScopes=4 secondUserDenied=true primaryRetired=true firstSessionClosed=true existingSecondHandle=true",
+        "GMAC_LEASE_ISOLATION java=21.0.12.1 provider=JCE signing=AES_GMAC encrypt=true cipher=AES_128_GCM cacheScopes=4 secondUserDenied=true primaryRetired=true firstSessionClosed=true existingSecondHandle=true"
+      ],
+      "independently_verified_gmac_tags": 288,
+      "independently_verified_gcm_transforms": 201,
+      "lease_audits": [],
+      "containers": [
+        {
+          "id": "3fa109d18ab2a08c4f30fd8a27240cd8d632952894e215ee01df27494910fad6",
+          "removed": true
+        }
+      ]
+    },
+    "scope_java8": {
+      "tests": 4,
+      "profiles": [
+        "GMAC_LEASE_ISOLATION java=1.8.0_512 provider=BC signing=AES_GMAC encrypt=false cipher=none cacheScopes=4 secondUserDenied=true primaryRetired=true firstSessionClosed=true existingSecondHandle=true",
+        "GMAC_LEASE_ISOLATION java=1.8.0_512 provider=BC signing=AES_GMAC encrypt=true cipher=AES_128_GCM cacheScopes=4 secondUserDenied=true primaryRetired=true firstSessionClosed=true existingSecondHandle=true",
+        "GMAC_LEASE_ISOLATION java=1.8.0_512 provider=JCE signing=AES_GMAC encrypt=false cipher=none cacheScopes=4 secondUserDenied=true primaryRetired=true firstSessionClosed=true existingSecondHandle=true",
+        "GMAC_LEASE_ISOLATION java=1.8.0_512 provider=JCE signing=AES_GMAC encrypt=true cipher=AES_128_GCM cacheScopes=4 secondUserDenied=true primaryRetired=true firstSessionClosed=true existingSecondHandle=true"
+      ],
+      "independently_verified_gmac_tags": 288,
+      "independently_verified_gcm_transforms": 200,
+      "lease_audits": [],
+      "containers": [
+        {
+          "id": "52eb1237966dbc25e0a69e1e5290a56d14834b869869a6b2d5a9d525ba9949cb",
+          "removed": true
+        }
+      ],
+      "java8_profile": {
+        "suites": 7,
+        "tests": 34,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "local_compatibility": {
+        "suites": 6,
+        "tests": 30,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    "break_java21": {
+      "tests": 4,
+      "profiles": [
+        "GMAC_LEASE java=21.0.12.1 provider=BC signing=AES_GMAC encrypt=false cipher=none breaks=2 primaryRetired=true existingHandle=true",
+        "GMAC_LEASE java=21.0.12.1 provider=BC signing=AES_GMAC encrypt=true cipher=AES_128_GCM breaks=2 primaryRetired=true existingHandle=true",
+        "GMAC_LEASE java=21.0.12.1 provider=JCE signing=AES_GMAC encrypt=false cipher=none breaks=2 primaryRetired=true existingHandle=true",
+        "GMAC_LEASE java=21.0.12.1 provider=JCE signing=AES_GMAC encrypt=true cipher=AES_128_GCM breaks=2 primaryRetired=true existingHandle=true"
+      ],
+      "independently_verified_gmac_tags": 248,
+      "independently_verified_gcm_transforms": 207,
+      "lease_audits": [
+        "AUXWIRE_LEASE notifications=6 authenticatedAcknowledgments=5 survivingBreakKeys=3 unsignedPlaintextNotifications=6 zeroSessionNotifications=6 sentinelMidNotifications=6",
+        "AUXWIRE_LEASE notifications=6 authenticatedAcknowledgments=5 survivingBreakKeys=3 unsignedPlaintextNotifications=6 zeroSessionNotifications=6 sentinelMidNotifications=6",
+        "AUXWIRE_LEASE notifications=6 authenticatedAcknowledgments=5 survivingBreakKeys=3 unsignedPlaintextNotifications=6 zeroSessionNotifications=6 sentinelMidNotifications=6",
+        "AUXWIRE_LEASE notifications=6 authenticatedAcknowledgments=5 survivingBreakKeys=3 unsignedPlaintextNotifications=6 zeroSessionNotifications=6 sentinelMidNotifications=6"
+      ],
+      "containers": [
+        {
+          "id": "74d1b892fa785e999befa5b8de5e15e6df47b3cdedabc2112acfb6517aa8622d",
+          "removed": true
+        }
+      ]
+    },
+    "break_java8": {
+      "tests": 4,
+      "profiles": [
+        "GMAC_LEASE java=1.8.0_512 provider=BC signing=AES_GMAC encrypt=false cipher=none breaks=2 primaryRetired=true existingHandle=true",
+        "GMAC_LEASE java=1.8.0_512 provider=BC signing=AES_GMAC encrypt=true cipher=AES_128_GCM breaks=2 primaryRetired=true existingHandle=true",
+        "GMAC_LEASE java=1.8.0_512 provider=JCE signing=AES_GMAC encrypt=false cipher=none breaks=2 primaryRetired=true existingHandle=true",
+        "GMAC_LEASE java=1.8.0_512 provider=JCE signing=AES_GMAC encrypt=true cipher=AES_128_GCM breaks=2 primaryRetired=true existingHandle=true"
+      ],
+      "independently_verified_gmac_tags": 248,
+      "independently_verified_gcm_transforms": 208,
+      "lease_audits": [
+        "AUXWIRE_LEASE notifications=6 authenticatedAcknowledgments=5 survivingBreakKeys=3 unsignedPlaintextNotifications=6 zeroSessionNotifications=6 sentinelMidNotifications=6",
+        "AUXWIRE_LEASE notifications=6 authenticatedAcknowledgments=5 survivingBreakKeys=3 unsignedPlaintextNotifications=6 zeroSessionNotifications=6 sentinelMidNotifications=6",
+        "AUXWIRE_LEASE notifications=6 authenticatedAcknowledgments=5 survivingBreakKeys=3 unsignedPlaintextNotifications=6 zeroSessionNotifications=6 sentinelMidNotifications=6",
+        "AUXWIRE_LEASE notifications=6 authenticatedAcknowledgments=5 survivingBreakKeys=3 unsignedPlaintextNotifications=6 zeroSessionNotifications=6 sentinelMidNotifications=6"
+      ],
+      "containers": [
+        {
+          "id": "7012dc65218086b96b056c9c2bdaed15c5bd7f3aadf9a1cce7974ee77d774a20",
+          "removed": true
+        }
+      ],
+      "java8_profile": {
+        "suites": 7,
+        "tests": 34,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "local_compatibility": {
+        "suites": 6,
+        "tests": 30,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    }
+  },
+  "jar": {
+    "name": "smbj-0.15.1-feature-full-gmac-multichannel-SNAPSHOT.jar",
+    "sha256": "1df0953a4dac386683b64a0152e4484b08dc3eea8582093148fa07cee9e3d7d6",
+    "classes": 512,
+    "class_major": 52
+  },
+  "earlier_attempts": [
+    "Baseline six-case regression: own-cache control passes; three foreign session/share/generation lookups return the cached listing and two tree-close cases leave their entries live. Five failures preserved.",
+    "Initial focused passes51, expanded focused passes56; first full source passes1016/110 suites before final owner-liveness additions.",
+    "Separate red tests reproduce a closed manager recreating state through an open tree and a channel-less session recreating keys while another session keeps the manager alive.",
+    "Initial native four-case acceptance uses three cached views and the same user in two sessions. Later acceptance adds a second Unix user and cached private-directory denial. Final native scopes use the current hashed source; initial discovery source is not claimed as the final candidate.",
+    "Production baseline snapshots were verified/reconstructed from commit115cdd2; failure test source preserves the original unscoped fixture. See before/source-provenance.txt."
+  ],
+  "limits": [
+    "Native scope uses Samba4.23.10, NTLM, Direct TCP, BC/JCE, signing-only or optional sessionGCM, Java21 and actualJava8. Same-path distinct tree-generation tests and failed-disconnect/publication races are local; native sessions/shares use actual independently assigned tree IDs.",
+    "Private-directory denial is a real server STATUS_ACCESS_DENIED for a distinct authenticated Unix user while another user has the listing cached. It does not establish the full authorization/authentication-expiry matrix.",
+    "Existing native break variants remain unsigned plaintext SID0/MID-1 with authenticated ACKs. Native signed/random-MID/encrypted unsolicited, Async/Kerberos leasing, grant/break/cache-handle publication, DFS rerouting, recovery and queue-pressure matrices remain incomplete.",
+    "Remaining sustained costs and authentication failure/expiry/cancellation/policy variants stay tracked. Global mandatory encryption is unqualified; Windows deferred and ONTAP untested."
+  ],
+  "checks_unavailable": {
+    "jdtls": "STOPPED; user authorized available checks; shared instance not restarted",
+    "authenticated_sonarqube": "Secrets wrapper reports authentication warning; no authenticated server analysis claimed"
+  },
+  "owned_containers_confirmed_removed": 7,
+  "artifact_archive": "/tmp/smbj-retained-evidence/smbj-lease-isolation-115cdd2.tar.gz",
+  "artifact_archive_sha256": "bf7c58c90f9c9b8a5057fcc1eadb35a512507d3a0b561e3e28fde6c2765428be",
+  "artifact_archive_bytes": 1993217,
+  "artifact_root_name": "smbj-lease-isolation-115cdd2",
+  "artifact_files": 332,
+  "artifact_manifest_sha256": "43273f7a70951135901555e6136c779ee79f76ca2704c863d6416e465132fe6b"
+}

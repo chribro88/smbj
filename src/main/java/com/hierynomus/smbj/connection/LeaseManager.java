@@ -39,6 +39,7 @@ import com.hierynomus.mssmb2.LeaseKey;
 import com.hierynomus.mssmb2.messages.SMB2LeaseBreakAcknowledgment;
 import com.hierynomus.mssmb2.messages.SMB2LeaseBreakNotification;
 import com.hierynomus.smbj.session.Session;
+import com.hierynomus.smbj.share.TreeConnect;
 
 /**
  * Lease table retained by a session's canonical {@link Connection}, including while bound
@@ -51,7 +52,7 @@ public class LeaseManager implements Closeable {
     private static final Logger logger = LoggerFactory.getLogger(LeaseManager.class);
 
     private final ConcurrentMap<LeaseKey, LeaseEntry> byKey = new ConcurrentHashMap<>();
-    private final ConcurrentMap<String, LeaseKey> byPath = new ConcurrentHashMap<>();
+    private final ConcurrentMap<LeasePath, LeaseKey> byPath = new ConcurrentHashMap<>();
     // Path identity and handle reservations change together; cache I/O stays outside this lock.
     private final Object registrationLock = new Object();
     private final AtomicBoolean closed = new AtomicBoolean();
@@ -97,34 +98,66 @@ public class LeaseManager implements Closeable {
     public LeaseKey leaseKeyForPath(String shareName, String path) {
         synchronized (registrationLock) {
             ensureOpen();
-            return byPath.computeIfAbsent(normalizePathKey(shareName, path), p -> LeaseKey.random());
+            return byPath.computeIfAbsent(new LeasePath(null, shareName, path), p -> LeaseKey.random());
         }
     }
 
     /** Stable per-node key: mint once per normalized path, reuse thereafter. */
     public LeaseKey leaseKeyForPath(String path) {
-        return leaseKeyForPath(null, path);
+        return leaseKeyForPath((String) null, path);
     }
 
     /** The lease key previously minted for {@code (shareName, path)}, or {@code null} if never opened. */
     public LeaseKey leaseKeyForExistingPath(String shareName, String path) {
-        return byPath.get(normalizePathKey(shareName, path));
+        return byPath.get(new LeasePath(null, shareName, path));
     }
 
     /** The lease key previously minted for {@code path}, or {@code null} if never opened. */
     public LeaseKey leaseKeyForExistingPath(String path) {
-        return leaseKeyForExistingPath(null, path);
+        return leaseKeyForExistingPath((String) null, path);
     }
 
     /** The live lease entry for {@code (shareName, path)}, or {@code null} if none is registered. */
     public LeaseEntry getByPath(String shareName, String path) {
-        LeaseKey key = byPath.get(normalizePathKey(shareName, path));
+        LeaseKey key = byPath.get(new LeasePath(null, shareName, path));
         return key == null ? null : byKey.get(key);
     }
 
     /** The live lease entry for {@code path}, or {@code null} if none is registered. */
     public LeaseEntry getByPath(String path) {
-        return getByPath(null, path);
+        if (isClosed(null)) return null;
+        LeaseEntry found = getByPath((String) null, path);
+        if (found != null) return found;
+        for (LeaseEntry entry : byKey.values()) {
+            if (normalizePath(entry.getPath()).equals(normalizePath(path))) {
+                if (found != null) return null;
+                found = entry;
+            }
+        }
+        return found;
+    }
+
+    public LeaseKey leaseKeyForPath(TreeConnect tree, String path) {
+        synchronized (registrationLock) {
+            requireOpen(tree);
+            return byPath.computeIfAbsent(new LeasePath(tree, null, path), p -> LeaseKey.random());
+        }
+    }
+
+    public LeaseKey leaseKeyForExistingPath(TreeConnect tree, String path) {
+        return byPath.get(new LeasePath(tree, null, path));
+    }
+
+    public LeaseEntry getByPath(TreeConnect tree, String path) {
+        if (isClosed(tree)) return null;
+        LeaseKey key = byPath.get(new LeasePath(tree, null, path));
+        LeaseEntry entry = key == null ? null : byKey.get(key);
+        return entry != null && entry.getTreeConnect() == tree ? entry : null;
+    }
+
+    public void invalidateDirectoryCache(TreeConnect tree, String path) {
+        LeaseEntry entry = getByPath(tree, path);
+        if (entry != null) entry.invalidateCache();
     }
 
     /**
@@ -138,19 +171,27 @@ public class LeaseManager implements Closeable {
     }
 
     private void registerEntry(LeaseEntry entry) {
-        ensureOpen();
+        requireOpen(entry.getTreeConnect());
         entry.retainReference(this);
         byKey.put(entry.getLeaseKey(), entry);
-        byPath.putIfAbsent(normalizePathKey(entry.getShareName(), entry.getPath()), entry.getLeaseKey());
+        byPath.putIfAbsent(new LeasePath(entry.getTreeConnect(), entry.getShareName(), entry.getPath()), entry.getLeaseKey());
     }
 
     /** Atomically select the current path lease and reserve a CREATE on it. */
     public LeaseEntry acquire(String shareName, String path, LeaseKey parentKey, long requestedState) {
+        return acquire(null, shareName, path, parentKey, requestedState);
+    }
+
+    public LeaseEntry acquire(TreeConnect tree, String path, LeaseKey parentKey, long requestedState) {
+        return acquire(tree, null, path, parentKey, requestedState);
+    }
+
+    private LeaseEntry acquire(TreeConnect tree, String shareName, String path, LeaseKey parentKey, long requestedState) {
         LeaseEntry existing;
         LeaseEntry acquired;
         synchronized (registrationLock) {
-            ensureOpen();
-            String pathKey = normalizePathKey(shareName, path);
+            requireOpen(tree);
+            LeasePath pathKey = new LeasePath(tree, shareName, path);
             LeaseKey key = byPath.get(pathKey);
             existing = key == null ? null : byKey.get(key);
             if (existing != null && !existing.isBroken()) {
@@ -161,7 +202,8 @@ public class LeaseManager implements Closeable {
                 byPath.remove(pathKey);
             }
             key = byPath.computeIfAbsent(pathKey, p -> LeaseKey.random());
-            acquired = new LeaseEntry(key, parentKey, requestedState, shareName, path);
+            acquired = tree == null ? new LeaseEntry(key, parentKey, requestedState, shareName, path)
+                : new LeaseEntry(key, parentKey, requestedState, path, tree);
             registerEntry(acquired);
         }
         if (existing != null) {
@@ -189,7 +231,7 @@ public class LeaseManager implements Closeable {
 
     /** Actively evicts cached enumeration and closes cached handle for a directory. */
     public void invalidateDirectoryCache(String path) {
-        invalidateDirectoryCache(null, path);
+        invalidateDirectoryCache((String) null, path);
     }
 
     /**
@@ -198,24 +240,29 @@ public class LeaseManager implements Closeable {
      * deletion, and the server can send breaks that must be acknowledged until those handles close.
      */
     public void invalidateDirectoryAndDescendants(String shareName, String path) {
-        String normalizedShare = normalizeShare(shareName);
-        String normalizedPath = normalizePath(path);
-        String targetKey = formatPathKey(normalizedShare, normalizedPath);
-        String prefix = normalizedPath.isEmpty() ? targetKey : targetKey + "\\";
+        invalidateDirectoryAndDescendants(null, shareName, path);
+    }
+
+    public void invalidateDirectoryAndDescendants(TreeConnect tree, String path) {
+        invalidateDirectoryAndDescendants(tree, null, path);
+    }
+
+    private void invalidateDirectoryAndDescendants(TreeConnect tree, String shareName, String path) {
+        LeasePath target = new LeasePath(tree, shareName, path);
 
         List<LeaseEntry> detached = new ArrayList<>();
         synchronized (registrationLock) {
-            for (Map.Entry<String, LeaseKey> mapEntry : byPath.entrySet()) {
-                String k = mapEntry.getKey();
-                if (k.equals(targetKey) || k.startsWith(prefix)) {
+            for (Map.Entry<LeasePath, LeaseKey> mapEntry : byPath.entrySet()) {
+                LeasePath k = mapEntry.getKey();
+                if (target.contains(k)) {
                     LeaseKey lk = mapEntry.getValue();
                     byPath.remove(k, lk);
                 }
             }
 
             for (LeaseEntry entry : byKey.values()) {
-                String entryKey = normalizePathKey(entry.getShareName(), entry.getPath());
-                if (entryKey.equals(targetKey) || entryKey.startsWith(prefix)) {
+                LeasePath entryKey = new LeasePath(entry.getTreeConnect(), entry.getShareName(), entry.getPath());
+                if (target.contains(entryKey)) {
                     detached.add(entry);
                 }
             }
@@ -227,7 +274,7 @@ public class LeaseManager implements Closeable {
 
     /** Invalidate caches and detach path keys for a directory and all its descendants. */
     public void invalidateDirectoryAndDescendants(String path) {
-        invalidateDirectoryAndDescendants(null, path);
+        invalidateDirectoryAndDescendants((String) null, path);
     }
 
     /** Resolve an inbound break's lease key to its entry (spec 06). */
@@ -244,12 +291,32 @@ public class LeaseManager implements Closeable {
 
     /** Invalidate only the leases belonging to this exact session owner. */
     public void releaseSession(Session session) {
-        for (LeaseEntry entry : byKey.values()) {
-            if (entry.getSession() == session && byKey.remove(entry.getLeaseKey(), entry)) {
-                entry.setBroken(true);
-                entry.invalidateCache();
+        List<LeaseEntry> detached = new ArrayList<>();
+        synchronized (registrationLock) {
+            for (LeaseEntry entry : byKey.values()) {
+                if (entry.getSession() == session && byKey.remove(entry.getLeaseKey(), entry)) {
+                    entry.setBroken(true);
+                    detached.add(entry);
+                }
             }
+            byPath.keySet().removeIf(path -> path.tree != null && path.tree.getSession() == session);
         }
+        for (LeaseEntry entry : detached) entry.invalidateCache();
+    }
+
+    /** Drop one exact tree's keys and caches before TREE_DISCONNECT, including failure cleanup. */
+    public void releaseTree(TreeConnect tree) {
+        List<LeaseEntry> detached = new ArrayList<>();
+        synchronized (registrationLock) {
+            for (LeaseEntry entry : byKey.values()) {
+                if (entry.getTreeConnect() == tree && byKey.remove(entry.getLeaseKey(), entry)) {
+                    entry.setBroken(true);
+                    detached.add(entry);
+                }
+            }
+            byPath.keySet().removeIf(path -> path.tree == tree);
+        }
+        for (LeaseEntry entry : detached) entry.invalidateCache();
     }
 
     /** Number of lease breaks fully handled (test/diagnostic hook). */
@@ -419,5 +486,41 @@ public class LeaseManager implements Closeable {
         // namespace. Concatenating with a path separator lets (null, "share\\docs") collide
         // with ("share", "docs"). A length prefix also avoids delimiter collisions.
         return formatPathKey(s, p);
+    }
+
+    private boolean isClosed(TreeConnect tree) {
+        return closed.get() || breakExecutor.isShutdown() || (tree != null
+                && (tree.isClosed() || tree.getSession().getChannelCount() == 0));
+    }
+
+    private void requireOpen(TreeConnect tree) {
+        if (isClosed(tree)) throw new IllegalStateException("SMB lease owner is closed");
+    }
+
+    private static final class LeasePath {
+        private final TreeConnect tree;
+        private final String share;
+        private final String path;
+
+        private LeasePath(TreeConnect tree, String share, String path) {
+            this.tree = tree;
+            this.share = tree == null ? normalizeShare(share) : "";
+            this.path = normalizePath(path);
+        }
+
+        private boolean contains(LeasePath other) {
+            return tree == other.tree && share.equals(other.share)
+                && (path.isEmpty() || path.equals(other.path) || other.path.startsWith(path + "\\"));
+        }
+
+        @Override public boolean equals(Object other) {
+            if (!(other instanceof LeasePath)) return false;
+            LeasePath key = (LeasePath) other;
+            return tree == key.tree && share.equals(key.share) && path.equals(key.path);
+        }
+
+        @Override public int hashCode() {
+            return 31 * (31 * System.identityHashCode(tree) + share.hashCode()) + path.hashCode();
+        }
     }
 }

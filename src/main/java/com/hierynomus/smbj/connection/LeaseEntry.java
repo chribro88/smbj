@@ -25,6 +25,7 @@ import com.hierynomus.mssmb2.SMB2Dialect;
 import com.hierynomus.mssmb2.SMB2FileId;
 import com.hierynomus.smbj.session.Session;
 import com.hierynomus.smbj.share.Directory;
+import com.hierynomus.smbj.share.TreeConnect;
 import com.hierynomus.smbj.share.LeasedDirectoryCache;
 
 /**
@@ -40,6 +41,7 @@ public class LeaseEntry {
     private final long requestedState;
     private final String shareName;
     private final String path;
+    private final TreeConnect treeConnect;
 
     private volatile long grantedState;
     private volatile int epoch;
@@ -65,15 +67,31 @@ public class LeaseEntry {
     private volatile Directory cacheDirectory;
 
     public LeaseEntry(LeaseKey leaseKey, LeaseKey parentLeaseKey, long requestedState, String shareName, String path) {
+        this(leaseKey, parentLeaseKey, requestedState, shareName, path, null);
+    }
+
+    public LeaseEntry(LeaseKey leaseKey, LeaseKey parentLeaseKey, long requestedState, String path, TreeConnect tree) {
+        this(leaseKey, parentLeaseKey, requestedState, null, path, tree);
+    }
+
+    private LeaseEntry(LeaseKey leaseKey, LeaseKey parentLeaseKey, long requestedState, String shareName, String path, TreeConnect tree) {
         this.leaseKey = leaseKey;
         this.parentLeaseKey = parentLeaseKey;
         this.requestedState = requestedState;
         this.shareName = LeaseManager.normalizeShare(shareName);
         this.path = path;
+        this.treeConnect = tree;
+        if (tree != null) {
+            setOwner(tree.getSession(), tree.getTreeId(), tree.getNegotiatedProtocol().getDialect());
+        }
     }
 
     public LeaseEntry(LeaseKey leaseKey, LeaseKey parentLeaseKey, long requestedState, String path) {
         this(leaseKey, parentLeaseKey, requestedState, null, path);
+    }
+
+    public TreeConnect getTreeConnect() {
+        return treeConnect;
     }
 
     public String getShareName() {
@@ -169,6 +187,10 @@ public class LeaseEntry {
 
     /** Record the open's owning session/tree/dialect so a break can be acknowledged. */
     public void setOwner(Session session, long treeId, SMB2Dialect dialect) {
+        if (treeConnect != null && (session != treeConnect.getSession() || treeId != treeConnect.getTreeId()
+                || dialect != treeConnect.getNegotiatedProtocol().getDialect())) {
+            throw new IllegalArgumentException("Cannot change a lease's owning tree connection");
+        }
         this.treeId = treeId;
         this.dialect = dialect;
         this.session = session;

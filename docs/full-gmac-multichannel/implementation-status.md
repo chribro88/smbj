@@ -21,7 +21,31 @@ an older validation record's temporary artifact directory.
 
 ## Current production integration
 
-The latest lease-lifecycle work fixes a native failure after canonical transport
+Directory lease keys, parent-key lookups and cached listings now use the exact
+TreeConnect identity and normalized path. Two sessions, two shares or a reused
+numeric TreeId cannot borrow another tree's cache. Scoped entries keep an
+immutable owning session/tree/dialect. Tree closure invalidates only its own
+entries and drops its path keys before TREE_DISCONNECT, including failed sends.
+Key minting and registration reject closed trees, closed managers and sessions
+without surviving channels, with a second check after insertion for racing
+closure. A disconnected session cannot recreate state while another session
+keeps their shared canonical manager alive.
+
+The focused and native isolation evidence, runtime/provider coverage and remaining
+limits are recorded in [validation-lease-isolation.json](validation-lease-isolation.json).
+The final source passes 1,018 local tests in 110 suites and 16 native cases across
+Java 21 and actual Java 8, BC/JCE and signing/optional GCM. Each Java 8 run also
+passes thirty local compatibility cases. Independent audits verify 1,072 GMAC tags
+and 815 GCM transforms with no observed actual-key/nonce reuse. Evidence is
+byte-verified in a 1.99 MB archive; loose task artifacts are removed and all seven
+fixture containers across the retained attempts are confirmed removed.
+Native acceptance includes a second Unix user denied access to a directory whose
+listing is already cached for the first user, separate share contents, retirement
+of the original connection and continued I/O through an existing second-session
+handle. Grant/break/cache-handle publication races and notification queue pressure
+remain separate work; this does not close G0.
+
+The lease-lifecycle baseline in `115cdd2` fixes a native failure after canonical transport
 retirement: breaks arriving on a surviving bound channel previously reached an
 empty connection-local manager and were never acknowledged. Routing now resolves
 the exact logical Session and lease entry among the receiving channel's sessions.
@@ -34,7 +58,7 @@ cannot abort another live transport.
 The validation record specifies the tested runtimes, independent cryptographic
 checks and remaining notification variants:
 [validation-lease-lifetime.json](validation-lease-lifetime.json).
-The frozen patch passes 1,005 local cases in 109 suites and 27 native cases:
+That source state passes 1,005 local cases in 109 suites and 27 native cases:
 eight lease profiles across Java 21/actual Java 8, eleven public NTLM cases and
 eight real Kerberos cases. The Java 8 profile also passes thirty local compatibility
 cases. Independent audits verify 5,479 GMAC tags and 813 GCM transforms with no
@@ -47,8 +71,8 @@ Samba's observed native breaks are unsigned plaintext with SessionId 0 and
 MessageId -1, including on the optionally encrypted session. Their ACKs use the
 surviving channel's normal signed/encrypted send path. This is concrete lease
 acceptance, without claiming native signed/random-MID or encrypted unsolicited
-notifications. Cross-session/share cache namespaces, grant/break races and
-notification-queue pressure still need qualification. G0 remains open.
+notifications. Namespace isolation is covered by the newer record above;
+grant/break races and notification-queue pressure remain open. G0 remains open.
 
 Client-managed GMAC authentication establishes the target session on a private
 root, reserves its next MID for abort LOGOFF, and binds back onto the caller

@@ -54,6 +54,7 @@ public class TreeConnect {
     private final Set<AccessMask> maximalAccess;
     private final Set<SMB2ShareFlags> shareFlags;
     private final boolean encryptData;
+    private volatile boolean closed;
 
     public TreeConnect(long treeId, SmbPath smbPath, Session session, Set<SMB2ShareCapabilities> capabilities, SmbConfig config, ConnectionContext connectionContext, SMBEventBus bus, Set<AccessMask> maximalAccess, Set<SMB2ShareFlags> shareFlags) {
         this.treeId = treeId;
@@ -69,7 +70,9 @@ public class TreeConnect {
     }
 
     void close() throws TransportException {
+        closed = true;
         try {
+            session.getConnection().getLeaseManager().releaseTree(this);
             try {
                 checkEncryptionAvailable();
             } catch (SMBRuntimeException e) {
@@ -84,6 +87,10 @@ public class TreeConnect {
         } finally {
             bus.publish(new TreeDisconnected(this));
         }
+    }
+
+    public boolean isClosed() {
+        return closed;
     }
 
     public String getShareName() {

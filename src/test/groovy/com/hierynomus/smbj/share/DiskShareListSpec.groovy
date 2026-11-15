@@ -217,8 +217,8 @@ class DiskShareListSpec extends Specification {
         // Pre-seed the LeaseManager with a valid RH entry for "testdir" but no cacheDirectory.
         // This forces list() into the existing-lease path with no retained cache handle.
         def lm = session.getLeaseManager()
-        def key = lm.leaseKeyForPath("share", "testdir")
-        def seededEntry = new LeaseEntry(key, null, SMB2LeaseState.readHandle(), "share", "testdir")
+        def key = lm.leaseKeyForPath(share.getTreeConnect(), "testdir")
+        def seededEntry = new LeaseEntry(key, null, SMB2LeaseState.readHandle(), "testdir", share.getTreeConnect())
         seededEntry.setOwner(session, share.treeConnect.treeId, SMB2Dialect.SMB_3_0)
         seededEntry.setGranted(true)
         seededEntry.setGrantedState(SMB2LeaseState.readHandle())

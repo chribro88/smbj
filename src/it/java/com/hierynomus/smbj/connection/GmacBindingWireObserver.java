@@ -16,16 +16,24 @@
 package com.hierynomus.smbj.connection;
 
 import com.hierynomus.mssmb2.SMB2Dialect;
+import com.hierynomus.mssmb2.SMB2Packet;
 import com.hierynomus.mssmb2.messages.SMB2Echo;
+import com.hierynomus.protocol.transport.TransportException;
+import com.hierynomus.protocol.transport.TransportLayer;
+import com.hierynomus.smb.SMBPacket;
+import com.hierynomus.smbj.SmbConfig;
 import com.hierynomus.smbj.session.Session;
+import com.hierynomus.smbj.transport.tcp.direct.DirectTcpTransport;
 
 import javax.crypto.Cipher;
 import javax.crypto.AEADBadTagException;
 import javax.crypto.Mac;
+import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 import javax.net.SocketFactory;
 import java.io.*;
+import java.lang.reflect.Field;
 import java.net.*;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -34,6 +42,7 @@ import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.*;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -47,6 +56,7 @@ final class GmacBindingWireObserver extends SocketFactory {
     private final Map<Integer, Map<Long, byte[]>> auxiliaryKeys = new HashMap<>();
     private final Map<Integer, byte[]> channelKeys = new HashMap<>();
     private final Map<Long, byte[]> originalSessionKeys = new HashMap<>();
+    private final Map<Long, byte[]> capturedKeys = new ConcurrentHashMap<>();
     private final Map<Long, byte[][]> encryptionKeys = new HashMap<>();
     private final Set<String> encryptionNonces = new HashSet<>();
     private int verifiedTransforms, encryptedLogoffs;
@@ -65,6 +75,35 @@ final class GmacBindingWireObserver extends SocketFactory {
         this.hostname = hostname;
         this.port = port;
         new SecureRandom().nextBytes(fingerprintKey);
+    }
+
+    SmbConfig configuration(SmbConfig base) throws NoSuchFieldException {
+        Field keyField = PacketSignatory.SignedPacketWrapper.class.getDeclaredField("secretKey");
+        keyField.setAccessible(true);
+        return SmbConfig.builder(base).withSocketFactory(this).withTransportLayerFactory((handlers, settings) -> {
+            TransportLayer<SMBPacket<?, ?>> delegate = new DirectTcpTransport<>(
+                    settings.getSocketFactory(), settings.getSoTimeout(), handlers);
+            return new TransportLayer<SMBPacket<?, ?>>() {
+                public void connect(InetSocketAddress address) throws IOException { delegate.connect(address); }
+                public void disconnect() throws IOException { delegate.disconnect(); }
+                public boolean isConnected() { return delegate.isConnected(); }
+                public void write(SMBPacket<?, ?> packet) throws TransportException {
+                    SMB2Packet smb = (SMB2Packet) packet;
+                    if (packet instanceof PacketEncryptor.EncryptedPacketWrapper) {
+                        Session owner = ((Connection) handlers.getReceiver()).getSessionTable().find(smb.getHeader().getSessionId());
+                        encryption(owner);
+                        capturedKeys.putIfAbsent(owner.getSessionId(), owner.getSessionContext().getSigningKey().getEncoded().clone());
+                    }
+                    if (packet instanceof PacketSignatory.SignedPacketWrapper) {
+                        try {
+                            SecretKey key = (SecretKey) keyField.get(packet);
+                            capturedKeys.putIfAbsent(smb.getHeader().getSessionId(), key.getEncoded().clone());
+                        } catch (IllegalAccessException failure) { throw new AssertionError(failure); }
+                    }
+                    delegate.write(packet);
+                }
+            };
+        }).build();
     }
 
     synchronized void register(Connection connection) {
@@ -160,6 +199,7 @@ final class GmacBindingWireObserver extends SocketFactory {
 
     synchronized void verifyAndReport(String run, int replacements, int minimumOperational,
                                       int minimumTransforms, int minimumLogoffs) throws GeneralSecurityException {
+        auxiliaryKeys(capturedKeys);
         Map<String, String> authenticatedInputs = new HashMap<>();
         Set<String> actualKeys = new HashSet<>();
         Set<String> bindingRequests = new HashSet<>();

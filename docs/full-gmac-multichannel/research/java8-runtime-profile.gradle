@@ -11,6 +11,7 @@ allprojects { project ->
         def asyncCancel = System.getenv('SMBJ_JAVA8_ASYNC_CANCEL') == 'true'
         def churn = System.getenv('SMBJ_JAVA8_CHURN') == 'true'
         def leaseBreak = System.getenv('SMBJ_JAVA8_LEASE_BREAK') == 'true'
+        def leaseIsolation = System.getenv('SMBJ_JAVA8_LEASE_ISOLATION') == 'true'
         def toolchains = project.extensions.getByType(JavaToolchainService)
         def junit = (project.configurations.integrationTestRuntimeClasspath.resolvedConfiguration.resolvedArtifacts
                 + project.configurations.integrationTestCompileClasspath.resolvedConfiguration.resolvedArtifacts)
@@ -23,8 +24,8 @@ allprojects { project ->
             dependsOn project.tasks.named('jar')
             source = project.files(publicBinding ? [
                     'src/it/java/com/hierynomus/smbj/connection/PublicGmacBindingIT.java',
-                    'src/it/java/com/hierynomus/smbj/connection/GmacBindingWireObserver.java'] : leaseBreak ? [
-                    'src/it/java/com/hierynomus/smbj/connection/GmacLeaseBreakIT.java',
+                    'src/it/java/com/hierynomus/smbj/connection/GmacBindingWireObserver.java'] : (leaseBreak || leaseIsolation) ? [
+                    'src/it/java/com/hierynomus/smbj/connection/' + (leaseIsolation ? 'GmacLeaseIsolationIT.java' : 'GmacLeaseBreakIT.java'),
                     'src/it/java/com/hierynomus/smbj/connection/GmacBindingWireObserver.java',
                     'src/it/java/com/hierynomus/smbj/testing/MultichannelTestSupport.java'] : [
                     churn ? 'src/it/java/com/hierynomus/smbj/MultichannelPerformanceIT.java'
@@ -49,6 +50,7 @@ allprojects { project ->
             javaLauncher.set(toolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(8)) })
             useJUnitPlatform()
             include(publicBinding ? '**/PublicGmacBindingIT.class'
+                            : leaseIsolation ? '**/GmacLeaseIsolationIT.class'
                             : leaseBreak ? '**/GmacLeaseBreakIT.class'
                             : churn ? '**/MultichannelPerformanceIT.class'
                             : asyncCancel ? '**/GmacAsyncCancellationIT.class' : '**/SingleChannelSigningIT.class',

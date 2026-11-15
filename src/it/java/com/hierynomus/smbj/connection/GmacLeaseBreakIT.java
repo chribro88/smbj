@@ -17,29 +17,20 @@ package com.hierynomus.smbj.connection;
 
 import com.hierynomus.msdtyp.AccessMask;
 import com.hierynomus.mssmb2.*;
-import com.hierynomus.protocol.transport.TransportException;
-import com.hierynomus.protocol.transport.TransportLayer;
 import com.hierynomus.security.bc.BCSecurityProvider;
 import com.hierynomus.security.jce.JceSecurityProvider;
-import com.hierynomus.smb.SMBPacket;
 import com.hierynomus.smbj.SMBClient;
 import com.hierynomus.smbj.SmbConfig;
 import com.hierynomus.smbj.session.Session;
 import com.hierynomus.smbj.share.Directory;
 import com.hierynomus.smbj.share.DiskShare;
 import com.hierynomus.smbj.share.File;
-import com.hierynomus.smbj.transport.tcp.direct.DirectTcpTransport;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.Arguments;
 
-import javax.crypto.SecretKey;
-import java.io.IOException;
-import java.lang.reflect.Field;
-import java.net.InetSocketAddress;
 import java.util.EnumSet;
-import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.stream.Stream;
@@ -62,36 +53,9 @@ class GmacLeaseBreakIT {
         assumeTrue(ports != null, "Dedicated native Samba fixture required");
         int port = Integer.parseInt(ports.split(",")[0].trim());
         GmacBindingWireObserver observer = new GmacBindingWireObserver(hostname(), port);
-        Map<Long, byte[]> actualKeys = new ConcurrentHashMap<>();
-        Field keyField = PacketSignatory.SignedPacketWrapper.class.getDeclaredField("secretKey");
-        keyField.setAccessible(true);
-        SmbConfig settings = SmbConfig.builder(config(encryption))
+        SmbConfig settings = observer.configuration(SmbConfig.builder(config(encryption))
                 .withSecurityProvider(jce ? new JceSecurityProvider() : new BCSecurityProvider())
-                .withSigningAlgorithms(SMB3SigningAlgorithm.AES_GMAC).withDirectoryLeasingEnabled(true)
-                .withSocketFactory(observer).withTransportLayerFactory((handlers, configuration) -> {
-                    TransportLayer<SMBPacket<?, ?>> delegate = new DirectTcpTransport<>(
-                            configuration.getSocketFactory(), configuration.getSoTimeout(), handlers);
-                    return new TransportLayer<SMBPacket<?, ?>>() {
-                        public void connect(InetSocketAddress address) throws IOException { delegate.connect(address); }
-                        public void disconnect() throws IOException { delegate.disconnect(); }
-                        public boolean isConnected() { return delegate.isConnected(); }
-                        public void write(SMBPacket<?, ?> packet) throws TransportException {
-                            SMB2Packet smb = (SMB2Packet) packet;
-                            if (packet instanceof PacketEncryptor.EncryptedPacketWrapper) {
-                                Session owner = ((Connection) handlers.getReceiver()).getSessionTable().find(smb.getHeader().getSessionId());
-                                observer.encryption(owner);
-                                actualKeys.putIfAbsent(owner.getSessionId(), owner.getSessionContext().getSigningKey().getEncoded().clone());
-                            }
-                            if (packet instanceof PacketSignatory.SignedPacketWrapper) {
-                                try {
-                                    SecretKey key = (SecretKey) keyField.get(packet);
-                                    actualKeys.putIfAbsent(smb.getHeader().getSessionId(), key.getEncoded().clone());
-                                } catch (IllegalAccessException failure) { throw new AssertionError(failure); }
-                            }
-                            delegate.write(packet);
-                        }
-                    };
-                }).build();
+                .withSigningAlgorithms(SMB3SigningAlgorithm.AES_GMAC).withDirectoryLeasingEnabled(true).build());
         String parent = "gmac-lease-" + UUID.randomUUID();
         Connection survivor;
         try (SMBClient client = new SMBClient(settings);
@@ -169,7 +133,6 @@ class GmacLeaseBreakIT {
             assertTrue(secondary.isConnected());
             }
         }
-        observer.auxiliaryKeys(actualKeys);
         observer.verifyLeaseBreaks(survivor);
         observer.verifyAndReport("lease-" + jce + "-" + encryption, 0, 8, 16, 2);
         System.out.printf("GMAC_LEASE java=%s provider=%s signing=AES_GMAC encrypt=%s cipher=%s breaks=2 primaryRetired=true existingHandle=true%n",

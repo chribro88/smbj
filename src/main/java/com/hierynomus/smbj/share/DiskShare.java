@@ -214,13 +214,13 @@ public class DiskShare extends Share {
         String shareName = smbPath.getShareName();
 
         SmbPath parent = full.getParent();
-        LeaseKey parentKey = (!rel.isEmpty() && parent != null) ? lm.leaseKeyForExistingPath(shareName, parent.getPath()) : null;
+        LeaseKey parentKey = (!rel.isEmpty() && parent != null) ? lm.leaseKeyForExistingPath(getTreeConnect(), parent.getPath()) : null;
 
         long requestedState = SMB2LeaseState.readHandle();
         // Reuse a live per-path lease entry so the app's open/close of its own handles never
         // orphans the cache's dedicated handle (kept on the entry). Each CREATE still returns a
         // fresh handle to the caller; acquire reserves its reference before CREATE is sent.
-        LeaseEntry entry = lm.acquire(shareName, rel, parentKey, requestedState);
+        LeaseEntry entry = lm.acquire(getTreeConnect(), rel, parentKey, requestedState);
         boolean ownedBySession;
         synchronized (entry) {
             // Publish the owner before CREATE so an early break can be acknowledged.
@@ -300,7 +300,7 @@ public class DiskShare extends Share {
         if (entry != null) {
             synchronized (entry) {
                 generation = entry.getCacheGeneration();
-                if (hasUsableDirectoryLease(entry) && lm.getByPath(shareName, path) == entry) {
+                if (hasUsableDirectoryLease(entry) && lm.getByPath(getTreeConnect(), path) == entry) {
                     // A reused handle may have been detached for closing after list() selected it.
                     // Only a newly opened handle may claim an empty cache slot.
                     if (newlyOpened && entry.getCacheDirectory() == null) {
@@ -321,7 +321,7 @@ public class DiskShare extends Share {
             if (retained) {
                 synchronized (entry) {
                     if (entry.getCacheGeneration() == generation && hasUsableDirectoryLease(entry)
-                            && lm.getByPath(shareName, path) == entry
+                            && lm.getByPath(getTreeConnect(), path) == entry
                             && entry.getCacheDirectory() == directory) {
                         entry.getCache().populate(shareName, path, informationClass, searchPattern, result);
                     } else if (entry.getCacheDirectory() == directory) {
@@ -449,11 +449,11 @@ public class DiskShare extends Share {
             String rel = full.getPath() == null ? "" : full.getPath();
             String shareName = smbPath.getShareName();
 
-            LeaseEntry entry = lm.getByPath(shareName, rel);
+            LeaseEntry entry = lm.getByPath(getTreeConnect(), rel);
             Directory directory = null;
             if (entry != null) {
                 synchronized (entry) {
-                    if (hasUsableDirectoryLease(entry) && lm.getByPath(shareName, rel) == entry) {
+                    if (hasUsableDirectoryLease(entry) && lm.getByPath(getTreeConnect(), rel) == entry) {
                         List<I> hit = entry.getCache().serve(shareName, rel, informationClass, searchPattern);
                         if (hit != null) {
                             return hit; // SERVED FROM CACHE — no CREATE / QUERY_DIRECTORY / CLOSE
@@ -698,13 +698,13 @@ public class DiskShare extends Share {
             }
         }
         SmbPath full = new SmbPath(smbPath, cleanPath);
-        session.getLeaseManager().invalidateDirectoryCache(smbPath.getShareName(), full.getParent().getPath());
+        session.getLeaseManager().invalidateDirectoryCache(getTreeConnect(), full.getParent().getPath());
     }
 
     void invalidateDirectoryAndDescendants(String path) {
         if (getConnectionContext().supportsDirectoryLeasing()) {
             SmbPath full = new SmbPath(smbPath, path);
-            session.getLeaseManager().invalidateDirectoryAndDescendants(smbPath.getShareName(), full.getPath());
+            session.getLeaseManager().invalidateDirectoryAndDescendants(getTreeConnect(), full.getPath());
         }
     }
 

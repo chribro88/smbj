@@ -20,6 +20,7 @@ profile = parser.add_mutually_exclusive_group()
 parser.add_argument('--java8-home', type=Path)
 profile.add_argument('--async-cancel', action='store_true')
 profile.add_argument('--lease-break', action='store_true')
+profile.add_argument('--lease-isolation', action='store_true')
 profile.add_argument('--public-binding', action='store_true')
 profile.add_argument('--churn', action='store_true')
 parser.add_argument('--churn-cycles', type=int, default=64)
@@ -37,7 +38,7 @@ if not Path('gradlew').is_file():
 if arguments.java8_home:
     if any((arguments.public_anchor_research, arguments.bootstrap_abort_research,
             arguments.unsigned_echo_research, arguments.per_request_research)):
-        parser.error('--java8-home supports the default matrix, --public-binding, --async-cancel, --lease-break or --churn')
+        parser.error('--java8-home supports the default matrix, --public-binding, --async-cancel, --lease-break, --lease-isolation or --churn')
     if not os.environ.get('JAVA_HOME'):
         parser.error('Select the Java 21 build JDK with JAVA_HOME when using --java8-home')
     arguments.java8_home = arguments.java8_home.resolve()
@@ -55,7 +56,12 @@ if arguments.unsigned_echo_research:
 if arguments.per_request_research:
     if os.environ.get('SMBJ_GMAC_AUX_RESEARCH') != 'true' or not Path('src/it/java/com/hierynomus/smbj/connection/GmacConcurrentBootstrapIT.java').is_file():
         parser.error('--per-request-research requires the detached research checkout and explicit opt-in')
-if arguments.lease_break:
+if arguments.lease_isolation:
+    test_class, expected_count, marker, label = ('com.hierynomus.smbj.connection.GmacLeaseIsolationIT', 4,
+                                               'GMAC_LEASE_ISOLATION ', 'lease isolation')
+    if arguments.config == Path('docs/full-gmac-multichannel/research/smb-gmac-gcm.conf'):
+        arguments.config = Path('docs/full-gmac-multichannel/research/smb-gmac-lease-isolation.conf')
+elif arguments.lease_break:
     test_class, expected_count, marker, label = ('com.hierynomus.smbj.connection.GmacLeaseBreakIT', 4,
                                                'GMAC_LEASE ', 'lease notification')
     if arguments.config == Path('docs/full-gmac-multichannel/research/smb-gmac-gcm.conf'):
@@ -105,6 +111,12 @@ environment['SMBJ_FIXTURE_PASSWORD'] = password
 cid = None
 metadata = {'image': image, 'owner': owner, 'config': str(config),
             'config_sha256': hashlib.sha256(config.read_bytes()).hexdigest()}
+share_setup = (
+    'id smbother >/dev/null 2>&1 || useradd -M smbother; '
+    'printf "%s\\n%s\\n" "$SMBJ_FIXTURE_PASSWORD" "$SMBJ_FIXTURE_PASSWORD" | smbpasswd -s -a smbother; '
+    'mkdir -p /shared/other /shared/private; chmod 1777 /shared/other; '
+    'chown smbtest /shared/private; chmod 700 /shared/private; '
+) if arguments.lease_isolation else ''
 try:
     cid = subprocess.check_output([
         'docker', 'create', '--pull=never', '--label', 'org.smbj.test-owner=' + owner,
@@ -113,7 +125,7 @@ try:
         '--env', 'SMBJ_FIXTURE_PASSWORD', '--entrypoint', '/bin/sh', image, '-c',
         'set -eu; id smbtest >/dev/null 2>&1 || useradd -M smbtest; '
         'printf "%s\\n%s\\n" "$SMBJ_FIXTURE_PASSWORD" "$SMBJ_FIXTURE_PASSWORD" | smbpasswd -s -a smbtest; '
-        'exec /usr/sbin/smbd -F --no-process-group --configfile=/etc/samba/smb.conf'
+        + share_setup + 'exec /usr/sbin/smbd -F --no-process-group --configfile=/etc/samba/smb.conf'
     ], env=environment, text=True).strip()
     assert re.fullmatch('[0-9a-f]{64}', cid), cid
     metadata['container_id'] = cid
@@ -141,6 +153,9 @@ try:
                               SMB_TEST_SIGNING_ALGORITHM='AES_GMAC', SMB_TEST_DIALECT='SMB_3_1_1')
     if arguments.churn:
         client_environment.update(SMB_TEST_CHURN='true', SMB_TEST_CHURN_CYCLES=str(arguments.churn_cycles))
+    if arguments.lease_isolation:
+        client_environment['SMB_TEST_LEASE_ISOLATION'] = 'true'
+        client_environment['SMB_TEST_SECOND_USERNAME'] = 'smbother'
     command = ['./gradlew', '--offline', '--no-daemon', '--max-workers=1',
                '-Dorg.gradle.jvmargs=-Xmx192m -XX:ActiveProcessorCount=2', '--init-script', str(init)]
     if arguments.java8_home:
@@ -149,6 +164,7 @@ try:
         client_environment['SMBJ_JAVA8_ASYNC_CANCEL'] = str(arguments.async_cancel).lower()
         client_environment['SMBJ_JAVA8_CHURN'] = str(arguments.churn).lower()
         client_environment['SMBJ_JAVA8_LEASE_BREAK'] = str(arguments.lease_break).lower()
+        client_environment['SMBJ_JAVA8_LEASE_ISOLATION'] = str(arguments.lease_isolation).lower()
         command += ['-Porg.gradle.java.installations.paths=' + str(arguments.java8_home) + ',' + os.environ['JAVA_HOME'],
                     '-Porg.gradle.java.installations.auto-detect=false', '-Porg.gradle.java.installations.auto-download=false',
                     '--init-script', 'docs/full-gmac-multichannel/research/java8-runtime-profile.gradle', 'java8RuntimeTest']
@@ -193,6 +209,10 @@ try:
         for key, prefix, count in (('lease_audits', 'AUXWIRE_LEASE ', 4),
                                    ('wire_audits', 'AUXWIRE_COMPLETE ', 4),
                                    ('gcm_audits', 'AUXWIRE_GCM ', 2)):
+            metadata[key] = [line.strip() for line in text.splitlines() if line.startswith(prefix)]
+            assert len(metadata[key]) == count, (key, metadata[key])
+    if arguments.lease_isolation:
+        for key, prefix, count in (('wire_audits', 'AUXWIRE_COMPLETE ', 4), ('gcm_audits', 'AUXWIRE_GCM ', 2)):
             metadata[key] = [line.strip() for line in text.splitlines() if line.startswith(prefix)]
             assert len(metadata[key]) == count, (key, metadata[key])
     if arguments.java8_home:

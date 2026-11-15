@@ -154,6 +154,17 @@ retired canonical manager; an in-flight binding cannot republish a multichannel
 session after last-channel loss. The native notification variant and remaining lease
 limits are recorded in [validation-lease-lifetime.json](validation-lease-lifetime.json).
 
+SDK lease entries, stable node keys and parent-key lookups are scoped to an exact
+TreeConnect object and normalized path. The tree identifies both its Session and
+its generation; numeric SessionId/TreeId reuse cannot select another tree's cache.
+Scoped entries reject changes to their session/tree/dialect owner. Closing a tree
+marks it closed and removes only its keys and entries before TREE_DISCONNECT,
+including failures. Key minting and registration check tree closure, manager
+shutdown and the session's surviving channels before and after publishing state.
+Last-channel loss cannot recreate keys even if another session keeps the manager
+alive. See [validation-lease-isolation.json](validation-lease-isolation.json) for
+the actual cache, permission-denial, concurrent closure and runtime evidence.
+
 An unmanaged direct Session can retain its original connection. Its original-key
 sends, including reauthentication, use the same monotonic reservation callback
 as binding. This preserves uniqueness while allowing original traffic to raise H;
