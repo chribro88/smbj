@@ -56,7 +56,11 @@ The ordinary sequence below is the unsafe baseline. The implemented private-boot
 
 ## 2. Normative constraints
 
-The linked Microsoft sections are the primary references inspected on the evidence date. Record the precise specification revision and applicable product-behavior notes when closing G0; section URLs alone are not immutable revision pins.
+The linked Microsoft sections are the primary references inspected on the evidence date.
+The supplied **MS-SMB2 v20260928, revision 88.0** is now
+[pinned by file hash and relevant sections](research/ms-smb2-revision-pin.md).
+That record distinguishes the printed wording from the measured Samba behavior;
+section URLs alone are not immutable revision pins.
 
 | Reference | Requirement, paraphrased | Design consequence |
 |---|---|---|
