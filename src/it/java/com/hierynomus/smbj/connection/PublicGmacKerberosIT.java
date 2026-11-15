@@ -459,7 +459,8 @@ class PublicGmacKerberosIT {
                             assertSnapshot(retained, main);
                             data[2] ^= 1; verifyContents(file, data);
                             echo(main, caller); echo(main, second); echo(main, replacement);
-                        } finally { share.rm(name); }
+                        }
+                        share.rm(name);
                     }
                     main.close(); assertTrue(caller.isConnected());
                     if (older != null) echo(older, caller);
