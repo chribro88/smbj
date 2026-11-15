@@ -135,3 +135,4 @@ profiles. Binding remains signed and unencrypted.
 - [Public Kerberos](validation-public-kerberos.json)
 - [Public reauthentication](validation-public-reauthentication.json)
 - [Public multichannel CANCEL and CHANGE_NOTIFY](validation-public-cancellation.json)
+- [Pending-owner loss and encrypted cancellation](validation-encrypted-owner-loss.json)

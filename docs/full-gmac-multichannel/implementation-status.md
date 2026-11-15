@@ -296,6 +296,53 @@ python3 docs/full-gmac-multichannel/research/run-gmac-single-fixture.py \
   --output /tmp/<fresh-java8-directory>
 ```
 
+### Pending-owner loss and encrypted cancellation
+
+The same public cancellation suite now has eight native profiles: both
+transports × both providers × signing-only/GCM operation. Every profile closes
+the physical owner of a pending watch. The failed future reports the transport
+failure, both request/cancel lookup entries are removed, and later cancellation
+returns false without emitting another CANCEL on a survivor. Ordinary listing
+still succeeds using the existing directory handle. A second replacement binds
+successfully, and an explicitly reopened directory subscription delivers a fresh
+event on that replacement. All four bound physical connections carry watches
+over the profile's lifetime.
+
+Independent default-JCE code now verifies encrypted transforms before the normal
+receiver processes them. It uses the owning connection's actual session keys,
+including auxiliary sessions, and authenticates raw header AAD, ciphertext and
+tag. It checks outer/inner SessionId agreement and tracks actual-key/nonce
+identity across connections and sessions. A ciphertext-tampering control fails
+tag verification. The signing-only profiles retain their independent GMAC and
+CANCEL-discriminator checks. Ordinary native MID consumption is checked for both
+plaintext and independently decrypted requests.
+
+All **eight Java 21 native profiles** pass, as does actual Java 8's **32-case
+profile** (eight native, 24 selected local). Each runtime independently verifies
+**100 GMAC tags** and **844 GCM transforms**, with zero observed key/nonce reuse
+among those inputs. Each encrypted profile includes all 35 notification/CANCEL
+frames, including ten interim replies, in its transform checks. License checks
+pass; the production JAR remains identical. The prior full local result remains
+927 tests at its recorded production source state.
+
+Two exploratory same-handle watch-resubscription runs **fail in all four
+signing-only profiles**: after owner loss, a new watch on the same handle reaches
+STATUS_PENDING but its first create event does not complete within five seconds.
+Completing the mutation's file close does not resolve this. These failures are
+preserved in the evidence archive and are not counted as successful recovery.
+The passing recovery explicitly closes the failed subscription's handle and
+opens a new one. This demonstrates one recovery path, not safe transparent
+watch replay or complete event continuity. Same-handle watch resubscription
+remains unqualified on the tested Samba 4.23.10 fixture.
+
+See [validation-encrypted-owner-loss.json](validation-encrypted-owner-loss.json).
+The existing `--async-cancel` reproduction commands now run all eight profiles;
+adding `--java8-home` runs the 32-case compatibility profile. Remaining work
+includes timeout/publication-fault cancellation, Kerberos cancellation,
+unsolicited notifications and sustained churn/resource measurements. Mandatory
+global-encryption binding retains its separately recorded failure. Windows
+testing remains deferred.
+
 ## Inputs and history
 
 - Branch: `feature/full-gmac-multichannel`.

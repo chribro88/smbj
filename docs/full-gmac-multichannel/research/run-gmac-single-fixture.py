@@ -64,7 +64,7 @@ elif arguments.public_anchor_research:
     test_class, expected_count, marker, label = ('com.hierynomus.smbj.session.GmacPublicAnchorIT', 2,
                                                'PUBLIC_ANCHOR_COMPLETE ', 'public-anchor research')
 elif arguments.async_cancel:
-    test_class, expected_count, marker, label = ('com.hierynomus.smbj.connection.GmacAsyncCancellationIT', 4,
+    test_class, expected_count, marker, label = ('com.hierynomus.smbj.connection.GmacAsyncCancellationIT', 8,
                                                'GMAC_ASYNC ', 'async cancellation')
 else:
     test_class, expected_count, marker, label = ('com.hierynomus.smbj.SingleChannelSigningIT', 16,
