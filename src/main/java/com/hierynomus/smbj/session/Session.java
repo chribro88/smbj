@@ -381,6 +381,10 @@ public class Session implements AutoCloseable {
 
     // CUSTOM ADDED: CANCEL must use the connection that allocated its MessageId.
     public <T extends SMB2Packet> Future<T> send(SMB2Packet packet, Connection selected) throws TransportException {
+        return send(packet, selected, false);
+    }
+
+    private <T extends SMB2Packet> Future<T> send(SMB2Packet packet, Connection selected, boolean encrypt) throws TransportException {
         if (closed || channelsFailed.get()) {
             throw new TransportException("SMB session was invalidated after an uncertain write");
         }
@@ -396,7 +400,7 @@ public class Session implements AutoCloseable {
             throw new TransportException("Message signing is required, but no signing key is negotiated");
         }
 
-        if (shouldEncryptData()) {
+        if (encrypt || shouldEncryptData()) {
             return selected.send(encryptor.encrypt(packet, sessionContext.getEncryptionKey()));
         }
 
@@ -405,6 +409,28 @@ public class Session implements AutoCloseable {
             return selected.send(packet);
         }
         return selected.send(signatory.sign(packet, signingKey));
+    }
+
+    /**
+     * Sends a packet, optionally requiring encryption with this session's encryption key.
+     *
+     * @param packet SMBPacket to send
+     * @param encrypt true to require encryption, false to use the session's normal send behaviour
+     * @return a Future to be used to retrieve the response packet
+     * @throws TransportException if encryption is required but no encryption key is available,
+     *                           or a transport level error occurs
+     */
+    public <T extends SMB2Packet> Future<T> send(SMB2Packet packet, boolean encrypt) throws TransportException {
+        if (!encrypt) {
+            return send(packet);
+        }
+
+        SecretKey encryptionKey = sessionContext.getEncryptionKey();
+        if (encryptionKey == null) {
+            throw new TransportException("Message encryption is required, but no encryption key is negotiated");
+        }
+
+        return send(packet, selectChannel(), true);
     }
 
     public <T extends SMB2Packet> T processSendResponse(SMB2CreateRequest packet) throws TransportException {
