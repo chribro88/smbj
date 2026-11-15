@@ -297,8 +297,7 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
         } catch (IOException | RuntimeException | Error failure) {
             primary = failure;
             if (session != null) {
-                try { session.close(); }
-                catch (IOException | RuntimeException cleanup) { if (cleanup != failure) failure.addSuppressed(cleanup); }
+                cleanupFailedBootstrap(session, bootstrap, failure);
             }
             throw failure;
         } finally {
@@ -308,6 +307,34 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
                 if (cleanup != primary) primary.addSuppressed(cleanup);
             } finally {
                 client.releaseBootstrapConnection(bootstrap);
+            }
+        }
+    }
+
+    private void cleanupFailedBootstrap(Session session, Connection bootstrap, Throwable failure) {
+        Connection cleanupChannel = null;
+        try {
+            // A lost final reply can leave the session bound at the peer. If its root
+            // died, obtain one verified channel key before attempting session LOGOFF.
+            if (!(failure instanceof Error) && session.getConnection() == bootstrap
+                    && bootstrap.isClosed() && isConnected()) {
+                cleanupChannel = new Connection(config, client, bus, serverList);
+                client.registerBootstrapConnection(cleanupChannel);
+                cleanupChannel.connect(getRemoteHostname(), remoteAddress);
+                cleanupChannel.bind(session, true);
+            }
+        } catch (IOException | RuntimeException cleanup) {
+            if (cleanup != failure) failure.addSuppressed(cleanup);
+        } finally {
+            try {
+                try { session.close(); }
+                catch (IOException | RuntimeException cleanup) { if (cleanup != failure) failure.addSuppressed(cleanup); }
+            } finally {
+                if (cleanupChannel != null) {
+                    try { cleanupChannel.close(true); }
+                    catch (IOException | RuntimeException cleanup) { if (cleanup != failure) failure.addSuppressed(cleanup); }
+                    finally { client.releaseBootstrapConnection(cleanupChannel); }
+                }
             }
         }
     }

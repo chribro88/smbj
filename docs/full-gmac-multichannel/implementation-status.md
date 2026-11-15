@@ -120,10 +120,42 @@ without observed distinct-message actual-key/nonce reuse.
 See [validation-bootstrap-production.json](validation-bootstrap-production.json).
 
 This removes application-traffic-driven catch-up in the integrated public path;
-it does not prove constant cost for an unbounded binding/retry history. Lost
-finals, private-root loss, all publication/close races, public Kerberos/runtime
+it does not prove constant cost for an unbounded binding/retry history. Complete
+lost-final/root-loss variants, all publication/close races, public Kerberos/runtime
 variants, the complete actual-key lifetime and independent server acceptance
 remain open. Earlier cost/status statements below retain their historical scope.
+
+### Lost bootstrap final and private-root cleanup
+
+Failed automatic bootstrap now makes one owned cleanup-channel attempt when its
+private root is already closed and the borrowed caller remains connected. It
+reuses the caller's configuration, endpoint, event bus and existing auxiliary
+authentication/binding flow. Only a verified new channel key is used to LOGOFF
+the failed session. Both owned transports are disposed, and the original
+authentication failure is preserved with any cleanup failures suppressed.
+An open root continues to use its reserved original-key LOGOFF nonce.
+
+The native public suite now has seven cases. New cases drop the peer's successful
+final binding reply, preserve older-session file I/O during the pending wait,
+and optionally close the private root. Successful cleanup receives a successful
+LOGOFF response; original-key binding request MIDs remain distinct. A failed
+cleanup connect causes one attempt, closes its owned candidate, preserves the
+original failure and older open, and permits fresh authentication. In that case
+remote session cleanup is unconfirmed. The root-loss regression fails on the
+preceding production implementation and passes with this change.
+
+This is bounded Samba 4.23.10/NTLM/Direct-TCP/BC/Java-21 coverage. Root loss during
+LOGOFF, cleanup authentication/binding faults, all close/publication races and
+the full lifetime/provider/server matrix remain open. No new cryptographic
+implementation or research is introduced. See
+[validation-bootstrap-loss.json](validation-bootstrap-loss.json).
+
+This milestone passes **905 local tests in 102 suites**, with license and JaCoCo
+checks; **23 Java 21 native cases** (seven public, 16 matrix); and the actual
+Java 8 profile's **40 cases** (16 native, 24 selected local). There are no
+failures/errors/skips. The identical production JAR is used before and after
+Java 8 validation, with all 511 production classes targeting Java 8. These totals
+do not close the outstanding G0 scenarios above.
 
 ## Inputs and history
 
