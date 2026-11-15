@@ -158,10 +158,16 @@ class PublicGmacBindingIT {
                             assertEquals(2, shared.getSessionTable().activeSessions().size());
                             expected[1] ^= 1; verifyContents(file, expected);
                         }
+                        byte[] beforeReauthentication = main.getSessionContext().getSigningKey().getEncoded().clone();
+                        for (int channel = 0; channel < main.getChannelCount(); channel++) main.reauthenticate();
+                        assertArrayEquals(beforeReauthentication, main.getSessionContext().getSigningKey().getEncoded());
                         first.close(true);
                         replacement = client.openChannel(main, "127.0.0.1", port);
                         observer.register(replacement); observer.bound(main, replacement);
                         assertEquals(borrowed ? 4 : 3, main.getChannelCount());
+                        byte[] retainedKey = main.getSessionContext().getSigningKey().getEncoded().clone();
+                        for (int channel = 0; channel < main.getChannelCount(); channel++) main.reauthenticate();
+                        assertArrayEquals(retainedKey, main.getSessionContext().getSigningKey().getEncoded());
                         expected[2] ^= 1; verifyContents(file, expected);
                     } finally { share.rm(name); }
                 }

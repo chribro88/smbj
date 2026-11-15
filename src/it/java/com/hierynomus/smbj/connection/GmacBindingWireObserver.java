@@ -126,6 +126,12 @@ final class GmacBindingWireObserver extends SocketFactory {
     synchronized void verifyAndReport(String run, int replacements, int minimumOperational) throws GeneralSecurityException {
         Map<String, String> authenticatedInputs = new HashMap<>();
         Set<String> actualKeys = new HashSet<>();
+        Set<String> bindingRequests = new HashSet<>();
+        for (Event event : events) {
+            if (!event.server && event.command == 1 && event.wire.length > 66 && (event.wire[66] & 1) != 0) {
+                bindingRequests.add(event.connection + ":" + event.mid);
+            }
+        }
         int verified = 0;
         int operational = 0;
         int preparedOnly = 0;
@@ -144,7 +150,8 @@ final class GmacBindingWireObserver extends SocketFactory {
             String role;
             if (event.sessionId == mainSessionId) {
                 ObservedSocket socket = sockets.get(event.connection);
-                if (event.connection == originalSocket || (event.command == 1 && (!event.server || event.status != 0))) {
+                if (event.connection == originalSocket || (event.command == 1 && bindingRequests.contains(event.connection + ":" + event.mid)
+                        && (!event.server || event.status != 0))) {
                     key = originalKey;
                     role = "original";
                 } else {
@@ -155,7 +162,7 @@ final class GmacBindingWireObserver extends SocketFactory {
             } else {
                 assertTrue(isAuxiliary, "Every signed session must have an observed actual key");
                 key = auxiliary.get(event.sessionId);
-                if (event.command == 1 && (!event.server || event.status != 0)) {
+                if (event.command == 1 && bindingRequests.contains(event.connection + ":" + event.mid) && (!event.server || event.status != 0)) {
                     key = originalSessionKeys.getOrDefault(event.sessionId, key);
                 }
                 role = "auxiliary";

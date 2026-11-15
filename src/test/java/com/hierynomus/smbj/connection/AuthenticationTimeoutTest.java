@@ -37,6 +37,7 @@ import com.hierynomus.smbj.session.Session;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.lang.reflect.Field;
 import java.nio.ByteBuffer;
@@ -58,13 +59,18 @@ import static org.mockito.Mockito.*;
 
 class AuthenticationTimeoutTest {
     @ParameterizedTest
-    @ValueSource(booleans = {false, true})
-    void abandonedSetupRetiresOnlyItsRequestAndPreservesInterruption(boolean interrupt) throws Exception {
+    @CsvSource({"false,false", "true,false", "false,true", "true,true"})
+    void abandonedSetupRetiresOnlyItsRequestAndPreservesInterruption(boolean interrupt, boolean reauthentication) throws Exception {
         try (Fixture fixture = new Fixture()) {
             Request other = fixture.registerOther();
             fixture.interruptOnWrite = interrupt;
+            when(fixture.older.send(any(SMB2Packet.class), same(fixture.connection)))
+                    .thenAnswer(call -> fixture.connection.send(call.getArgument(0)));
             try {
-                assertThrows(TransportException.class, () -> fixture.connection.sendAndReceive(setup()));
+                assertThrows(TransportException.class, () -> {
+                    if (reauthentication) fixture.connection.sendAndReceive(fixture.older, setup());
+                    else fixture.connection.sendAndReceive(setup());
+                });
                 assertEquals(interrupt, Thread.currentThread().isInterrupted());
             } finally { Thread.interrupted(); }
             Request abandoned = fixture.sent.get();

@@ -506,7 +506,14 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
     }
 
     <T extends SMB2Packet> T sendAndReceive(SMB2Packet packet, LongPredicate messageIdReservation) throws TransportException {
-        Future<T> response = this.<T>send(packet, messageIdReservation);
+        return receive(packet, this.<T>send(packet, messageIdReservation));
+    }
+
+    <T extends SMB2Packet> T sendAndReceive(Session session, SMB2Packet packet) throws TransportException {
+        return receive(packet, session.<T>send(packet, this));
+    }
+
+    private <T extends SMB2Packet> T receive(SMB2Packet packet, Future<T> response) throws TransportException {
         try {
             return Futures.get(response, config.getTransactTimeout(), TimeUnit.MILLISECONDS, TransportException.Wrapper);
         } catch (TransportException failure) {

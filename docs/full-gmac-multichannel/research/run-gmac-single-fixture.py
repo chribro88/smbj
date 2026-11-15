@@ -15,6 +15,7 @@ import xml.etree.ElementTree as ET
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--output', type=Path, required=True)
+parser.add_argument('--config', type=Path, default=Path('docs/full-gmac-multichannel/research/smb-gmac-gcm.conf'))
 profile = parser.add_mutually_exclusive_group()
 parser.add_argument('--java8-home', type=Path)
 profile.add_argument('--async-cancel', action='store_true')
@@ -80,7 +81,7 @@ init.write_text("""allprojects { tasks.withType(Test).configureEach {
 } }
 """)
 image = 'dockurr/samba@sha256:2a0452a12b7a244a22f18d0f233101bb8d4952b5500ae263905e3b9dad3bf2ae'
-config = Path('docs/full-gmac-multichannel/research/smb-gmac-gcm.conf').resolve()
+config = arguments.config.resolve()
 owner = 'smbj-late-response-' + str(uuid.uuid4())
 password = secrets.token_urlsafe(32)
 environment = os.environ.copy()

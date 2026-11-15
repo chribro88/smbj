@@ -232,6 +232,63 @@ public class SMBSessionBuilder {
         }
     }
 
+    public void reauthenticate(Session session, Signatory signatory) throws IOException {
+        SMB2Dialect dialect = connectionContext.getNegotiatedProtocol().getDialect();
+        if (!dialect.isSmb3x() || !config.isSigningEnabled() || !connection.isConnected()
+                || !connection.isSessionEstablished(session) || session.isGuest() || session.isAnonymous()
+                || session.getSessionContext().getSigningKey() == null) {
+            throw new IOException("Reauthentication requires an active authenticated SMB 3.x signing session");
+        }
+        try {
+            Authenticator authenticator = getAuthenticator(session.getAuthenticationContext());
+            if (authenticator instanceof NtlmAuthenticator && config.getNtlmConfig().isIntegrityEnabled()) {
+                authenticator = new NtlmSealer((NtlmAuthenticator) authenticator);
+            }
+            try (java.io.Closeable cleanup = authenticator instanceof java.io.Closeable
+                    ? (java.io.Closeable) authenticator : null) {
+                authenticator.init(config);
+                BuilderContext ctx = newContext(session.getAuthenticationContext(), authenticator);
+                processAuthenticationToken(ctx, connectionContext.getGssNegotiateToken());
+                for (int exchange = 0; exchange < 16; exchange++) {
+                    SMB2SessionSetup request = new SMB2SessionSetup(dialect,
+                            EnumSet.of(config.isSigningRequired() ? SMB2_NEGOTIATE_SIGNING_REQUIRED : SMB2_NEGOTIATE_SIGNING_ENABLED),
+                            connectionContext.getClientCapabilities());
+                    request.getHeader().setSessionId(session.getSessionId());
+                    request.setSecurityBuffer(ctx.securityContext);
+                    SecretKey key = session.getSigningKey(request.getHeader(), false, connection);
+                    SMB2SessionSetup response = connection.sendAndReceive(session, request);
+                    if (response.getHeader().getSessionId() != session.getSessionId()) {
+                        throw new IOException("SMB reauthentication response changed SessionId");
+                    }
+                    verifySessionSetupResponse(response, key, signatory, "reauthentication", exchange + 1);
+                    long status = response.getHeader().getStatusCode();
+                    if (status == NtStatus.STATUS_MORE_PROCESSING_REQUIRED.getValue() || status == NtStatus.STATUS_SUCCESS.getValue()) {
+                        if (response.getSessionFlags().contains(SMB2SessionSetup.SMB2SessionFlags.SMB2_SESSION_FLAG_IS_GUEST)
+                                || response.getSessionFlags().contains(SMB2SessionSetup.SMB2SessionFlags.SMB2_SESSION_FLAG_IS_NULL)) {
+                            throw new IOException("SMB reauthentication changed the session to guest or anonymous");
+                        }
+                        processAuthenticationToken(ctx, response.getSecurityBuffer());
+                        if (status == NtStatus.STATUS_SUCCESS.getValue()) {
+                            if (ctx.sessionKey == null || ctx.sessionKey.length == 0) {
+                                throw new IOException("SMB reauthentication did not export an authenticated key");
+                            }
+                            // Reauthentication validates credentials; established session/channel keys and MID state remain live.
+                            connection.sessionSetupAccepted(response);
+                            return;
+                        }
+                        connection.sessionSetupAccepted(response);
+                    } else {
+                        connection.sessionSetupAccepted(response);
+                        throw new SMBApiException(response.getHeader(), "SMB reauthentication failed");
+                    }
+                }
+                throw new IOException("SMB reauthentication exceeded authentication exchange limit");
+            }
+        } catch (SpnegoException failure) {
+            throw new IOException("SMB reauthentication failed", failure);
+        }
+    }
+
     void validateBinding(Session session) throws IOException {
         ConnectionContext original = session.getConnection().getConnectionContext();
         SMB2Dialect dialect = original.getNegotiatedProtocol().getDialect();

@@ -89,6 +89,7 @@ public class Session implements AutoCloseable {
     private final java.util.Set<Connection> ownedChannels = new java.util.HashSet<>();
     private boolean closing;
     private volatile boolean closed;
+    private final Object reauthenticationLock = new Object();
     private final ThreadPoolExecutor asyncWrites = new ThreadPoolExecutor(4, 4, 30, TimeUnit.SECONDS,
             new ArrayBlockingQueue<Runnable>(64), task -> {
                 Thread thread = new Thread(task, "SMBJ async write");
@@ -300,6 +301,21 @@ public class Session implements AutoCloseable {
         if (disconnectEvent.getSessionId() == sessionId) {
             logger.debug("Notified of TreeDisconnected <<{}>>", disconnectEvent.getTreeId());
             treeConnectTable.closed(disconnectEvent.getTreeId());
+        }
+    }
+
+    /** Reauthenticate this SMB 3.x session with its existing credentials, retaining keys and open handles. */
+    public void reauthenticate() throws IOException {
+        synchronized (reauthenticationLock) {
+            Connection selected;
+            synchronized (channels) {
+                if (closing || closed || channelsFailed.get()) throw new IOException("SMB session is closing or closed");
+                selected = selectChannel();
+            }
+            new com.hierynomus.smbj.connection.SMBSessionBuilder(selected, config, null).reauthenticate(this, signatory);
+            synchronized (channels) {
+                if (closing || closed || selected.isClosed()) throw new IOException("SMB session or channel closed during reauthentication");
+            }
         }
     }
 
@@ -533,22 +549,27 @@ public class Session implements AutoCloseable {
     }
 
     private <T extends SMB2Packet> Future<T> send(SMB2Packet packet, Connection selected, boolean encrypt) throws TransportException {
-        if (closed || channelsFailed.get()) {
-            throw new TransportException("SMB session was invalidated after an uncertain write");
-        }
-        if (selected != connection && !channelKeys.containsKey(selected)) {
-            throw new TransportException("Connection is not an authenticated channel of this session");
-        }
-        if (multichannel && selected.isClosed()) {
-            throw new TransportException("Selected SMB channel is disconnected");
-        }
-        packet.getHeader().setChannelSequence(channelSequence.get() & 0xFFFF);
-        SecretKey signingKey = getSigningKey(packet.getHeader(), true, selected);
-        if (sessionContext.isSigningRequired() && signingKey == null) {
-            throw new TransportException("Message signing is required, but no signing key is negotiated");
+        SecretKey signingKey;
+        // Closing a channel removes its key under this same monitor.
+        synchronized (channels) {
+            if (closed || channelsFailed.get()) {
+                throw new TransportException("SMB session was invalidated after an uncertain write");
+            }
+            if (selected != connection && !channelKeys.containsKey(selected)) {
+                throw new TransportException("Connection is not an authenticated channel of this session");
+            }
+            if (multichannel && selected.isClosed()) {
+                throw new TransportException("Selected SMB channel is disconnected");
+            }
+            packet.getHeader().setChannelSequence(channelSequence.get() & 0xFFFF);
+            signingKey = getSigningKey(packet.getHeader(), true, selected);
+            if (sessionContext.isSigningRequired() && signingKey == null) {
+                throw new TransportException("Message signing is required, but no signing key is negotiated");
+            }
+
         }
 
-        if (encrypt || shouldEncryptData()) {
+        if (packet.getHeader().getMessage() != com.hierynomus.mssmb2.SMB2MessageCommandCode.SMB2_SESSION_SETUP && (encrypt || shouldEncryptData())) {
             SecretKey encryptionKey = sessionContext.getEncryptionKey();
             if (encryptionKey == null) {
                 throw new TransportException("Message encryption is required, but no encryption key is negotiated");

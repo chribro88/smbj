@@ -75,11 +75,14 @@ class SingleChannelSigningIT {
              Connection primary = client.connect(hostname(), Integer.parseInt(port));
              Session session = primary.authenticate(authentication());
              DiskShare share = (DiskShare) session.connectShare(shareName())) {
-            System.out.printf("SIGNING_SINGLE java=%s provider=%s backend=%s transport=%s encrypt=%s writeThrough=%s dialect=%s signing=%s cipher=%s%n",
+            if (Boolean.parseBoolean(System.getenv("SMB_TEST_REQUIRE_SESSION_ENCRYPTION"))) {
+                assertTrue(session.getSessionContext().isEncryptData(), "Server must require session encryption");
+            }
+            System.out.printf("SIGNING_SINGLE java=%s provider=%s backend=%s transport=%s encrypt=%s writeThrough=%s dialect=%s signing=%s cipher=%s reauthentications=%d%n",
                     System.getProperty("java.version"), settings.getSecurityProvider().getClass().getSimpleName(), jce && gmac ? "default-JCE" : "BC",
                     async ? "AsyncDirectTcpTransport" : "DirectTcpTransport", encryption, writeThrough,
                     primary.getNegotiatedProtocol().getDialect(), primary.getConnectionContext().getSigningAlgorithm(),
-                    primary.getConnectionContext().getCipherId());
+                    primary.getConnectionContext().getCipherId(), gmac ? 2 : 0);
             try (File file = share.openFile(name, EnumSet.of(AccessMask.GENERIC_READ, AccessMask.GENERIC_WRITE),
                     EnumSet.of(FileAttributes.FILE_ATTRIBUTE_NORMAL), SMB2ShareAccess.ALL, SMB2CreateDisposition.FILE_CREATE,
                     writeThrough ? EnumSet.of(SMB2CreateOptions.FILE_WRITE_THROUGH) : EnumSet.noneOf(SMB2CreateOptions.class))) {
@@ -97,6 +100,11 @@ class SingleChannelSigningIT {
                     assertFalse(transports.get(1).isConnected(), "Private bootstrap was retired before authentication returned");
                     assertTrue(transports.get(2).isConnected());
                     assertEquals(2, session.getChannelCount());
+                    byte[] signingKey = session.getSessionContext().getSigningKey().getEncoded().clone();
+                    javax.crypto.SecretKey encryptionKey = session.getSessionContext().getEncryptionKey();
+                    session.reauthenticate(); session.reauthenticate();
+                    assertArrayEquals(signingKey, session.getSessionContext().getSigningKey().getEncoded());
+                    assertSame(encryptionKey, session.getSessionContext().getEncryptionKey());
                 }
                 assertEquals(algorithm == SMB3SigningAlgorithm.AES_GMAC ? 2 : 1, session.getChannelCount());
                 byte[] actual = new byte[bytes.length];

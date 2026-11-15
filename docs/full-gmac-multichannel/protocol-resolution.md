@@ -37,11 +37,22 @@ busy-caller and final-reply cleanup paths are recorded in
 This is implemented state/ownership coordination using the existing signers and
 KDF, with full lifetime, failure, cost and interoperability gates still open.
 
+The public reauthentication path now uses the selected established channel's
+key for requests, continuations and final replies. It retains all established
+keys and the preauthentication value, disposes its fresh authentication context,
+and keeps native MID and original-key reservation state. NTLM and Kerberos native
+cases preserve open handles and successfully bind replacement channels after
+reauthentication. The wire observer distinguishes binding by the request flag.
+See [implementation invariants](g0-implementation-invariants.md) and
+[public reauthentication validation](validation-public-reauthentication.json).
+Windows tests are deferred by user instruction; current implementation and
+acceptance proceed against the existing Linux fixtures.
+
 ## 1. Decision to establish
 
 Determine how SMBJ can authenticate every binding exchange without reusing a GMAC signing key and nonce, while obeying SMB's key-selection, MessageId and credit rules. The construction must include failed attempts, concurrent bindings, authentication rounds, channel replacement and relevant reauthentication.
 
-The ordinary sequence below exposes the reported collision. Research has not established a validated, efficient general solution. This is **not proof that every possible client-only solution is impossible**, and it does not establish a JDK, cryptographic-provider or kernel dependency defect.
+The ordinary sequence below is the unsafe baseline. The implemented private-bootstrap, auxiliary-session and reservation construction addresses that binding flow. Its current lifetime and cost boundaries are recorded in the implementation invariants and validation records; these remaining engineering checks do not require additional cryptographic research access.
 
 ## 2. Normative constraints
 

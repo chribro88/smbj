@@ -112,6 +112,7 @@ class SessionChannelsTest {
 
         assertEquals(0, session.getChannelCount());
         assertThrows(TransportException.class, () -> session.send(new SMB2Echo(SMB2Dialect.SMB_3_1_1)));
+        assertThrows(java.io.IOException.class, session::reauthenticate);
         verify(bus).unsubscribe(session);
         verify(bus, never()).publish(any());
         verify(primary, never()).send(any());
@@ -171,6 +172,60 @@ class SessionChannelsTest {
         verify(secondary, never()).close(anyBoolean());
         assertThrows(IllegalStateException.class, () -> session.addBorrowedChannel(secondary, secondaryKey));
         assertThrows(java.io.IOException.class, () -> session.beginBinding(secondary, false));
+    }
+
+    @Test
+    void sessionSetupUsesTheSelectedSigningKeyWithoutEncryption() throws Exception {
+        Session session = session();
+        session.getSessionContext().setEncryptData(true);
+        com.hierynomus.mssmb2.messages.SMB2SessionSetup request = new com.hierynomus.mssmb2.messages.SMB2SessionSetup(
+                SMB2Dialect.SMB_3_1_1, java.util.EnumSet.of(com.hierynomus.mssmb2.messages.SMB2SessionSetup.SMB2SecurityMode.SMB2_NEGOTIATE_SIGNING_REQUIRED),
+                java.util.EnumSet.noneOf(com.hierynomus.mssmb2.SMB2GlobalCapability.class));
+        session.send(request, secondary);
+        verify(signatory).sign(request, secondaryKey);
+        verify(secondary).send(request);
+    }
+
+    @Test
+    void aSendRacingWithCloseRetainsItsSelectedChannelKey() throws Exception {
+        when(signatory.sign(any(), any())).thenAnswer(call -> call.getArgument(0));
+        Session session = new Session(primary, SmbConfig.createDefaultConfig(), null,
+                new com.hierynomus.smbj.event.SMBEventBus(), null, signatory, null);
+        session.getSessionContext().setSigningKey(primaryKey);
+        session.addBorrowedChannel(secondary, secondaryKey);
+        NegotiatedProtocol protocol = primary.getNegotiatedProtocol();
+        CountDownLatch selectingKey = new CountDownLatch(1), resume = new CountDownLatch(1), closeStarted = new CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicReference<Thread> senderThread = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicReference<Thread> closerThread = new java.util.concurrent.atomic.AtomicReference<>();
+        when(primary.getNegotiatedProtocol()).thenAnswer(call -> {
+            if (Thread.currentThread() == senderThread.get()) {
+                selectingKey.countDown(); assertTrue(resume.await(5, TimeUnit.SECONDS));
+            }
+            return protocol;
+        });
+        doReturn(CompletableFuture.completedFuture(new com.hierynomus.mssmb2.messages.SMB2Logoff(SMB2Dialect.SMB_3_1_1, 0)))
+                .when(primary).send(any());
+        ExecutorService workers = Executors.newFixedThreadPool(2);
+        SMB2Echo request = new SMB2Echo(SMB2Dialect.SMB_3_1_1);
+        try {
+            Future<?> sending = workers.submit(() -> { senderThread.set(Thread.currentThread()); return session.send(request, secondary); });
+            assertTrue(selectingKey.await(2, TimeUnit.SECONDS));
+            Future<?> closing = workers.submit(() -> {
+                closerThread.set(Thread.currentThread()); closeStarted.countDown(); session.close(); return null;
+            });
+            assertTrue(closeStarted.await(2, TimeUnit.SECONDS));
+            try { closing.get(200, TimeUnit.MILLISECONDS); }
+            catch (TimeoutException waitingForKeySnapshot) {
+                java.lang.management.ThreadInfo info = java.lang.management.ManagementFactory.getThreadMXBean().getThreadInfo(closerThread.get().getId());
+                assertEquals(Thread.State.BLOCKED, info.getThreadState());
+                assertEquals(senderThread.get().getId(), info.getLockOwnerId());
+            }
+            resume.countDown(); sending.get(5, TimeUnit.SECONDS); closing.get(5, TimeUnit.SECONDS);
+            verify(signatory).sign(request, secondaryKey);
+            verify(secondary, never()).close(anyBoolean());
+        } finally {
+            resume.countDown(); workers.shutdownNow(); assertTrue(workers.awaitTermination(5, TimeUnit.SECONDS));
+        }
     }
 
     // Behavioral regression: go-smb2 7f69f658, TestSessionChannelsSelectLiveConnections.

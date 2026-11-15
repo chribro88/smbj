@@ -204,6 +204,51 @@ See
 image, runtime and audit scope. Public reauthentication, failure/expiry variants,
 remaining transports/providers and sustained churn remain engineering tasks.
 
+### Public reauthentication and channel-close safety
+
+`Session.reauthenticate()` now validates the existing credentials on one live
+SMB 3.x channel, using that channel's current signing key for the entire exchange.
+It retains session/channel keys, preauthentication and MID/nonce state. Fresh
+Closeable authentication contexts are disposed on success and failure. Invalid
+MACs, changed SessionIds, guest/null results, missing exported keys, signed
+authentication errors and the 16-exchange bound do not publish replacement state.
+Close can complete while authentication waits; a late final cannot return success
+after close. Shared SESSION_SETUP wait handling retires timed-out/interrupted
+lookups without discarding unrelated requests or borrowed transports.
+
+A deterministic send/close regression exposed a separate wrong-key race: channel
+removal could clear D between send validation and signing-key selection, causing
+fallback to original K. Both operations now use the existing channel monitor;
+serialization and network I/O remain outside it. The regression fails before the
+fix and passes afterward.
+
+Full `check` passes **927 tests in 104 suites**, with license and JaCoCo checks.
+The **31 Java 21 native cases** comprise 11 public NTLM, four public Kerberos and
+16 provider/transport/encryption profiles. The same production JAR passes actual
+Java 8's **35-case public profile** and **40-case matrix profile**. All these
+results have zero failures/errors/skips. There are 14 NTLM and 24 Kerberos public
+reauthentications, plus 32 in each default matrix run. Same-open I/O and later
+replacement binding remain usable. The independent observer verifies **4,299
+NTLM** and **304 Kerberos** signed inputs on Java 21 with zero observed
+distinct-message actual-key/nonce reuse; Java 8 repeats the 4,299-input NTLM audit.
+The production JAR contains 511 Java-8-targeted classes.
+
+An additional global `smb encrypt = required` fixture **fails**, before reaching
+reauthentication: eight encryption-disabled profiles are denied during initial
+authentication, and eight encryption-enabled profiles are rejected on the first
+bootstrap bind. The pinned Samba implementation rejects plaintext session traffic
+at its encryption-required check before binding/signature dispatch. This is an
+explicit unqualified interoperability policy, not a passing encryption test.
+The successful default profiles use optional session encryption and exercise GCM
+I/O. No binding-encryption workaround has been introduced.
+
+See [validation-public-reauthentication.json](validation-public-reauthentication.json)
+and [g0-implementation-invariants.md](g0-implementation-invariants.md). Remaining
+Linux work includes current-public cancellation/notification lifetime coverage,
+sustained replacement/resource/catch-up measurements and the outstanding failure
+matrix. Windows testing remains deferred; further paper or private-service access
+is not required to continue this work.
+
 ## Inputs and history
 
 - Branch: `feature/full-gmac-multichannel`.
@@ -765,24 +810,19 @@ guard removal remain unqualified.
 
 | Gate | Result | Missing authoritative evidence |
 |---|---|---|
-| G0 | BLOCKED | Supported binding nonce mechanism, full safe actual-key lifetime proof, authoritative interpretation and independent validation of that construction; ordinary-flow collision now confirmed live |
-| G1 | BLOCKED | All four reproductions resolved together; nonce collision remains unsolved |
+| G0 | IN_PROGRESS | Implemented construction and key/MID argument; finish current-public cancellation/notification lifetime variants, sustained churn/cost and remaining Linux failure/policy coverage |
+| G1 | IN_PROGRESS | Existing regressions and full local check pass; remaining combined operational qualification is recorded per scenario |
 | G2 | NOT_RUN | Complete local matrix across providers/transports/runtimes; the 40-case Java 8 profile passes, but the complete Java 8 multichannel/authentication/failure matrix remains unqualified |
-| G3 | BLOCKED | Complete NTLM/Kerberos authentication lifecycle and reauthentication variants, all applicable notifications, replay/fencing and GMAC binding cases |
-| G4 | BLOCKED | Forced-GMAC multi-channel runs on capable independent Samba/Windows peers and target ONTAP release/configuration |
+| G3 | IN_PROGRESS | Public NTLM/Kerberos reauthentication passes; complete expiry/failure variants, notifications and replay/fencing/recovery cases |
+| G4 | IN_PROGRESS | Native Linux/Samba acceptance passes in recorded configurations; mandatory-global-encryption binding remains unqualified; Windows deferred and ONTAP-specific behavior untested |
 | G5 | NOT_RUN | Sustained concurrent I/O and cancellation-churn memory (including transport queues), replacement/recovery and comparative measurements |
 | G6 | NOT_RUN | Complete source/provenance mapping, validated peer traces and complete reproducible review package |
 
-Specific remaining implementation work includes the approved G0 mechanism,
-remaining authentication lifecycle and reauthentication handling, complete notification coverage,
-replay/fencing and recovery semantics, sustained cancellation/transport-queue
-memory validation, and the remaining matrix assertions. Local sync/async short-write checks and live legacy-server compatibility do not
-establish the GMAC binding, native fault-peer or sustained operational requirements.
-
-The supplied [protocol-resolution.md](protocol-resolution.md) contains the precise
-questions and required evidence. No external message has been sent. The current
-Microsoft signing/sequence rules and the referenced ksmbd discussion were checked
-again during implementation; the independent live trace confirms the ordinary
-flow's collision, and no validated general construction was established.
-A missing construction is a design blocker, not evidence of a JDK/provider/kernel
-bug or a reason to report the full feature complete.
+Specific remaining implementation work includes authentication expiry/failure
+variants, complete notification coverage, replay/fencing and recovery semantics,
+sustained cancellation/transport-queue memory validation, and remaining matrix
+assertions. The implemented public construction and its written invariants are
+at the top of this document; earlier missing-construction statements describe
+historical source states. Native bounded success does not establish every failure
+or sustained operational requirement. Continue with the available Linux fixtures;
+no external research access or Windows fixture is needed for that work.

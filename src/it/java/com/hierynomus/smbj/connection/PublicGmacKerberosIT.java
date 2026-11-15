@@ -32,6 +32,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import javax.security.auth.Subject;
 import com.hierynomus.smbj.auth.*;
 import com.hierynomus.smbj.session.Session;
+import com.hierynomus.smbj.session.SessionContext;
 import com.hierynomus.smbj.share.*;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -130,17 +131,18 @@ class PublicGmacKerberosIT {
             System.out.printf("KERBEROS_FIXTURE mode=%s owner=%s id=%s port=%d version=%s%n", mode, owner, cid, port,
                     peer.execInContainer("smbd", "--version").getStdout().trim());
             exercisePublicChannels(port, keyBytes, borrowed, login.getSubject());
-            int established = 0;
+            int established = 0, disposed = 0;
             for (SpnegoAuthenticator authenticator : authenticators) {
                 GSSContext context = context(authenticator);
+                if (context == null) disposed++;
                 if (context != null && context.isEstablished()) {
                     Key exported = (Key) ((ExtendedGSSContext) context).inquireSecContext(InquireType.KRB5_GET_SESSION_KEY);
                     assertEquals(keyBytes, exported.getEncoded().length);
                     established++;
                 }
             }
-            assertTrue(established >= 9);
-            System.out.printf("KERBEROS_CONTEXTS mode=%s established=%d rawKeyBytes=%d kerberos=true%n", mode, established, keyBytes);
+            assertTrue(established >= 9); assertTrue(disposed >= 6, "Reauthentication disposes each fresh GSS context");
+            System.out.printf("KERBEROS_CONTEXTS mode=%s established=%d rawKeyBytes=%d kerberos=true disposed=%d%n", mode, established, keyBytes, disposed);
             } finally {
                 try {
                     for (SpnegoAuthenticator authenticator : authenticators) {
@@ -228,10 +230,15 @@ class PublicGmacKerberosIT {
                                 release.countDown(); workers.shutdownNow(); assertTrue(workers.awaitTermination(5, TimeUnit.SECONDS));
                             }
                             assertEquals(3, main.getChannelCount());
+                            byte[][] retained = snapshot(main);
+                            for (int channel = 0; channel < 3; channel++) main.reauthenticate();
+                            assertSnapshot(retained, main);
                             data[1] ^= 1; verifyContents(file, data);
                             first.close(true);
                             Connection replacement = open(client, main, port, observer);
                             assertEquals(3, main.getChannelCount());
+                            for (int channel = 0; channel < 3; channel++) main.reauthenticate();
+                            assertSnapshot(retained, main);
                             data[2] ^= 1; verifyContents(file, data);
                             echo(main, caller); echo(main, second); echo(main, replacement);
                         } finally { share.rm(name); }
@@ -248,6 +255,20 @@ class PublicGmacKerberosIT {
     private static Connection open(SMBClient client, Session session, int port, GmacBindingWireObserver observer) throws Exception {
         Connection channel = client.openChannel(session, "127.0.0.1", port);
         observer.register(channel); observer.bound(session, channel); return channel;
+    }
+
+    private static byte[][] snapshot(Session session) {
+        SessionContext context = session.getSessionContext();
+        SecretKey[] keys = {context.getSessionKey(), context.getSigningKey(), context.getEncryptionKey(),
+                context.getDecryptionKey(), context.getApplicationKey()};
+        byte[][] values = new byte[6][];
+        for (int i = 0; i < keys.length; i++) values[i] = keys[i] == null ? null : keys[i].getEncoded().clone();
+        values[5] = context.getPreauthIntegrityHashValue().clone(); return values;
+    }
+
+    private static void assertSnapshot(byte[][] expected, Session session) {
+        byte[][] actual = snapshot(session);
+        for (int i = 0; i < expected.length; i++) assertArrayEquals(expected[i], actual[i]);
     }
 
     private static LoginContext login(String password) throws Exception {
