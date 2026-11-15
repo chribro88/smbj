@@ -35,6 +35,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.security.auth.Subject;
+import javax.security.auth.kerberos.KerberosTicket;
 import com.hierynomus.smbj.auth.*;
 import com.hierynomus.smbj.session.Session;
 import com.hierynomus.smbj.session.SessionContext;
@@ -55,6 +56,7 @@ import java.nio.file.*;
 import java.nio.charset.StandardCharsets;
 import java.security.Key;
 import org.ietf.jgss.GSSContext;
+import org.ietf.jgss.GSSException;
 import com.sun.security.jgss.ExtendedGSSContext;
 import com.sun.security.jgss.InquireType;
 import java.io.IOException;
@@ -154,10 +156,11 @@ class PublicGmacKerberosIT {
                 disposed++;
             }
             assertTrue(exportedKeyLengths.size() >= 15);
-            assertEquals(authenticators.size(), exportedKeyLengths.size());
+            assertEquals(authenticators.size(), exportedKeyLengths.size() + 1,
+                    "Only the expired-cache attempt fails before exporting a key");
             for (int length : exportedKeyLengths.values()) assertEquals(keyBytes, length);
-            System.out.printf("KERBEROS_CONTEXTS mode=%s established=%d rawKeyBytes=%d kerberos=true disposed=%d live=0%n",
-                    mode, exportedKeyLengths.size(), keyBytes, disposed);
+            System.out.printf("KERBEROS_CONTEXTS mode=%s created=%d established=%d failedBeforeKey=1 rawKeyBytes=%d kerberos=true disposed=%d live=0%n",
+                    mode, authenticators.size(), exportedKeyLengths.size(), keyBytes, disposed);
             } finally {
                 try {
                     for (SpnegoAuthenticator authenticator : authenticators) {
@@ -182,6 +185,7 @@ class PublicGmacKerberosIT {
         Map<Long, byte[]> actualKeys = new ConcurrentHashMap<>();
         AtomicLong target = new AtomicLong();
         AtomicInteger bindingStarts = new AtomicInteger();
+        AtomicInteger setupRequests = new AtomicInteger();
         AtomicBoolean bindingBarrier = new AtomicBoolean();
         List<Long> logoffs = new CopyOnWriteArrayList<>();
         AtomicBoolean holdNextLogoff = new AtomicBoolean();
@@ -259,6 +263,8 @@ class PublicGmacKerberosIT {
                         public void disconnect() throws IOException { delegate.disconnect(); }
                         public boolean isConnected() { return delegate.isConnected(); }
                         public void write(SMBPacket<?, ?> packet) throws TransportException {
+                            if (packet instanceof SMB2Packet && ((SMB2Packet) packet).getHeader().getMessage()
+                                    == SMB2MessageCommandCode.SMB2_SESSION_SETUP) setupRequests.incrementAndGet();
                             if (packet instanceof PacketEncryptor.EncryptedPacketWrapper) {
                                 SMB2Packet smb = (SMB2Packet) packet;
                                 Session owner = ((Connection) handlers.getReceiver()).getSessionTable().find(smb.getHeader().getSessionId());
@@ -391,6 +397,15 @@ class PublicGmacKerberosIT {
                             byte[][] retained = snapshot(main);
                             for (int channel = 0; channel < 3; channel++) main.reauthenticate();
                             assertSnapshot(retained, main);
+                            int beforeExpiry = setupRequests.get();
+                            rejectsExpiredSubjectTicket(main, subject);
+                            assertEquals(beforeExpiry, setupRequests.get(), "Expired client credentials must fail before sending SESSION_SETUP");
+                            assertSnapshot(retained, main);
+                            data[1] ^= 1; verifyContents(file, data);
+                            main.reauthenticate();
+                            assertSnapshot(retained, main);
+                            System.out.printf("KERBEROS_CACHE_EXPIRY rawKeyBytes=%d borrowed=%s encrypt=%s noCredential=true setupRequests=0 existingOpen=true freshRetry=true%n",
+                                    keyBytes, borrowed, encryption);
                             data[1] ^= 1; verifyContents(file, data);
                             first.close(true);
                             Connection replacement = open(client, main, port, observer);
@@ -427,6 +442,31 @@ class PublicGmacKerberosIT {
     private static void assertSnapshot(byte[][] expected, Session session) {
         byte[][] actual = snapshot(session);
         for (int i = 0; i < expected.length; i++) assertArrayEquals(expected[i], actual[i]);
+    }
+
+    private static void rejectsExpiredSubjectTicket(Session session, Subject subject) throws Exception {
+        assertTrue(Boolean.parseBoolean(System.getProperty("javax.security.auth.useSubjectCredsOnly", "true")));
+        KerberosTicket tgt = subject.getPrivateCredentials(KerberosTicket.class).stream()
+                .filter(ticket -> ticket.getServer().getName().startsWith("krbtgt/"))
+                .findFirst().orElseThrow(() -> new AssertionError("Native login did not supply a TGT"));
+        Date start = new Date(System.currentTimeMillis() - 120000), end = new Date(System.currentTimeMillis() - 60000);
+        // Expire only the client's cache metadata; the encoded server ticket is never sent.
+        KerberosTicket expired = new KerberosTicket(tgt.getEncoded(), tgt.getClient(), tgt.getServer(),
+                tgt.getSessionKey().getEncoded(), tgt.getSessionKeyType(), tgt.getFlags(), start, start, end, end, tgt.getClientAddresses());
+        Set<Object> credentials = new HashSet<>(subject.getPrivateCredentials());
+        try {
+            subject.getPrivateCredentials().clear();
+            subject.getPrivateCredentials().add(expired);
+            assertFalse(expired.isCurrent());
+            Throwable failure = assertThrows(IOException.class, session::reauthenticate);
+            while (!(failure instanceof GSSException) && failure.getCause() != null) failure = failure.getCause();
+            assertInstanceOf(GSSException.class, failure);
+            assertEquals(GSSException.NO_CRED, ((GSSException) failure).getMajor());
+        } finally {
+            subject.getPrivateCredentials().clear();
+            subject.getPrivateCredentials().addAll(credentials);
+            if (!expired.isDestroyed()) expired.destroy();
+        }
     }
 
     private static LoginContext login(String password) throws Exception {
