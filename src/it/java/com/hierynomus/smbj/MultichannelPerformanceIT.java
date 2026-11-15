@@ -173,6 +173,7 @@ class MultichannelPerformanceIT {
         long started = System.nanoTime(), cpuBefore = cpuNanos(), gcBefore = gcCount();
         long fdBefore, fdAfter, heapBefore, heapAfter, firstEchoes = -1, lastEchoes = -1;
         int failures = 0, collected, threadsBefore, threadsAfter;
+        SMB3EncryptionCipher selectedCipher;
         ExecutorService binder = Executors.newSingleThreadExecutor();
         try (SMBClient client = new SMBClient(settings, bus);
              Connection primary = client.connect(hostname(), port);
@@ -182,6 +183,11 @@ class MultichannelPerformanceIT {
             probe.originalKey = session.getSessionContext().getSigningKey().getEncoded().clone();
             probe.encryptor = field(session, "encryptor");
             probe.encryptionKey = session.getSessionContext().getEncryptionKey();
+            selectedCipher = primary.getConnectionContext().getCipherId();
+            if (encryption) {
+                assertEquals(SMB3EncryptionCipher.AES_128_GCM, selectedCipher);
+                assertNotNull(probe.encryptionKey);
+            } else assertNull(selectedCipher);
             probe.bound(session, primary);
             assertEquals(SMB3SigningAlgorithm.AES_GMAC, primary.getConnectionContext().getSigningAlgorithm());
             probe.bound(session, client.openChannel(session, hostname(), port));
@@ -234,7 +240,7 @@ class MultichannelPerformanceIT {
                         + "originalKeyInputs=%d freshChannelKeys=%d retiredCollected=%d descriptorsBefore=%d descriptorsAfter=%d heapBefore=%d heapAfter=%d threadsBefore=%d threadsAfter=%d "
                         + "elapsedNanos=%d cpuNanos=%d gcCollections=%d payloadBytes=%d processors=%d maxHeap=%d%n",
                 System.getProperty("java.version"), jce ? "default-JCE" : "BC", async ? "async" : "direct", encryption,
-                encryption ? SMB3EncryptionCipher.AES_128_GCM : null, cycles, failures,
+                selectedCipher, cycles, failures,
                 bindTimes.get(bindTimes.size() / 2), bindTimes.get(Math.min(bindTimes.size() - 1, (int) Math.ceil(bindTimes.size() * .99) - 1)),
                 firstEchoes, lastEchoes, probe.echoes.get(), probe.originalMids.size(), probe.boundKeys.size(), collected, fdBefore, fdAfter, heapBefore, heapAfter, threadsBefore, threadsAfter,
                 System.nanoTime() - started, cpuNanos() - cpuBefore, gcCount() - gcBefore,
@@ -312,6 +318,8 @@ class MultichannelPerformanceIT {
         }
         int reachableRetired() { return (int) retired.stream().filter(reference -> reference.get() != null).count(); }
         void bound(Session session, Connection channel) throws Exception {
+            assertEquals(SMB3SigningAlgorithm.AES_GMAC, channel.getConnectionContext().getSigningAlgorithm());
+            assertEquals(encryptionKey == null ? null : SMB3EncryptionCipher.AES_128_GCM, channel.getConnectionContext().getCipherId());
             com.hierynomus.mssmb2.messages.SMB2Echo echo = new com.hierynomus.mssmb2.messages.SMB2Echo(SMB2Dialect.SMB_3_1_1);
             byte[] key = session.getSigningKey(echo.getHeader(), false, channel).getEncoded();
             assertFalse(Arrays.equals(originalKey, key));

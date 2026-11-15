@@ -343,6 +343,74 @@ unsolicited notifications and sustained churn/resource measurements. Mandatory
 global-encryption binding retains its separately recorded failure. Windows
 testing remains deferred.
 
+### Churn and cached transport-error cleanup
+
+A prepared binding-send fault exposed a production error-preservation defect.
+The send aborted the candidate with a cached transport exception; auxiliary
+LOGOFF then raised that same object. The automatic resource-suppression code
+threw `IllegalArgumentException: Self-suppression not permitted`, hiding the
+original failure. All eight initial native profiles reproduced it. Focused
+regressions fail for identical IOException, RuntimeException and Error objects;
+a distinct cleanup exception already behaves correctly.
+
+Connection binding now closes the auxiliary explicitly on failure, retains the
+primary failure and suppresses only a distinct cleanup failure. Successful
+binding still closes the auxiliary before channel publication in the existing
+builder. The borrowed transport contract and authentication exception conversion
+are preserved. The owning SMBClient also closes failed candidates after Error
+and guards against self-suppression from a cached close failure. Three added
+ownership cases reproduce the missing Error disposal and cached-close masking
+before that fix. Regression checkpoint: `95a5806`.
+
+The opt-in churn phase reuses the existing performance fixture and four-worker
+range workload. It keeps two channels live, holds each new candidate's first
+reserved binding request while the existing open completes generation-specific
+writes/readback, publishes and exercises the candidate, then retires it. Every
+eighth cycle fails an already prepared original-key request before transport
+publication. Retry must burn that MID. Application I/O cannot advance the
+original-key cursor. The probe explicitly asserts negotiated GMAC and the actual
+GCM/key context on every channel. It checks original-key identity, fresh bound
+key bytes, unchanged encryption ownership, stable active/pending/client tables,
+subscriptions, descriptors, live threads and weak-reference collectability.
+
+The 64-cycle matrix covers both transports, BC/default JCE and signing-only/GCM
+on Java 21 and actual Java 8. Per profile: **64 successful replacements**, **eight
+prepared failures**, **73 retired connections collected**, and **66 fresh bound
+keys**. Descriptor counts return to each profile's baseline; thread counts stay
+within the declared eight-thread allowance. Each runtime exercises 512 successful
+replacements and 64 prepared failures. The full local `check` passes **934 tests
+in 105 suites**. Actual Java 8's profile passes **32 cases** (eight native and
+24 selected local). Current-production NTLM/Kerberos public acceptance also passes
+11/four cases, independently verifying 4,299/304 signed inputs without observed
+distinct-message key/nonce reuse. See
+[validation-churn-cleanup.json](validation-churn-cleanup.json).
+
+These are bounded operational measurements. Collision ECHOs grow from **five to
+139 per successful candidate** over the tested history, with **5,216 total** per
+profile including the failed attempts and initial companion. Catch-up therefore
+still grows with binding history; this is a measured cost, not a constant-time
+claim. The heap gauges include the probe's retained weak references, fingerprints
+and samples. Collectability/ownership checks do not substitute for complete
+allocation or transport-buffer profiling. No thousand-cycle-per-session soak,
+comparative 1/2/4-channel throughput or deployment performance gate is claimed.
+The existing transfer meter now excludes disconnected bootstrap/candidate
+transports from its live registry; its separate throughput workload was not run
+as part of this churn result.
+
+Run from this worktree with the Java 21 build JDK selected:
+
+```sh
+python3 docs/full-gmac-multichannel/research/run-gmac-single-fixture.py \
+  --churn --churn-cycles 64 --output /tmp/<fresh-java21-directory>
+python3 docs/full-gmac-multichannel/research/run-gmac-single-fixture.py \
+  --churn --churn-cycles 64 --java8-home /tmp/smbj-java8-runtime/openjdk \
+  --output /tmp/<fresh-java8-directory>
+```
+
+Remaining work includes longer-history cost/resource qualification, sustained
+cancellation/stall variants, complete allocation/buffering measurements and the
+remaining authentication/notification policy cases. Windows remains deferred.
+
 ## Inputs and history
 
 - Branch: `feature/full-gmac-multichannel`.

@@ -370,8 +370,19 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
         try {
             boolean gmac = connectionContext.getSigningAlgorithm() == SMB3SigningAlgorithm.AES_GMAC;
             // A real authenticated session keeps the connection eligible for collision ECHOs.
-            try (Session auxiliary = gmac ? authenticateDirect(session.getAuthenticationContext()) : null) {
+            Session auxiliary = gmac ? authenticateDirect(session.getAuthenticationContext()) : null;
+            try {
                 return builder.bind(session, signatory, ownsTransport, auxiliary);
+            } catch (IOException | RuntimeException | Error failure) {
+                // Successful binding closes the auxiliary before publication. A failed
+                // send and its cleanup can throw the same cached connection error.
+                if (auxiliary != null) {
+                    try { auxiliary.close(); }
+                    catch (IOException | RuntimeException | Error cleanup) {
+                        if (cleanup != failure) failure.addSuppressed(cleanup);
+                    }
+                }
+                throw failure;
             }
         } catch (com.hierynomus.smbj.common.SMBRuntimeException failure) {
             if (failure.getCause() instanceof IOException) {

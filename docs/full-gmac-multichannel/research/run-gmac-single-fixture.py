@@ -86,9 +86,10 @@ init.write_text("""allprojects { tasks.withType(Test).configureEach {
     maxHeapSize = '384m'
     maxParallelForks = 1
     jvmArgs '-XX:ActiveProcessorCount=2'
+    CHURN_LOGGING
     outputs.upToDateWhen { false }
 } }
-""")
+""".replace('CHURN_LOGGING', "systemProperty 'logback.configurationFile', rootProject.file('docs/full-gmac-multichannel/research/kerberos-native/logging-off.xml').absolutePath" if arguments.churn else ''))
 image = 'dockurr/samba@sha256:2a0452a12b7a244a22f18d0f233101bb8d4952b5500ae263905e3b9dad3bf2ae'
 config = arguments.config.resolve()
 owner = 'smbj-late-response-' + str(uuid.uuid4())

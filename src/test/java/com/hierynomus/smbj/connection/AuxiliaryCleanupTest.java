@@ -19,6 +19,7 @@ import com.hierynomus.mssmb2.SMB3SigningAlgorithm;
 import com.hierynomus.protocol.transport.TransportLayer;
 import com.hierynomus.smb.SMBPacket;
 import com.hierynomus.smbj.SmbConfig;
+import com.hierynomus.smbj.SMBClient;
 import com.hierynomus.smbj.auth.AuthenticationContext;
 import com.hierynomus.smbj.event.SMBEventBus;
 import com.hierynomus.smbj.server.Server;
@@ -30,12 +31,47 @@ import org.mockito.MockedConstruction;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
+import java.net.InetSocketAddress;
+import java.util.Collection;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 class AuxiliaryCleanupTest {
+    @ParameterizedTest
+    @CsvSource({"io,true", "io,false", "error,true"})
+    void ownedCandidateClosesAndPreservesItsPrimaryFailure(String kind, boolean sameCleanup) throws Exception {
+        Throwable primary = kind.equals("io") ? new IOException("Binding failed") : new AssertionError("Binding failed");
+        Throwable cleanup = sameCleanup ? primary : new IOException("Close failed");
+        Session target = mock(Session.class);
+        Connection parent = mock(Connection.class);
+        when(target.getConnection()).thenReturn(parent);
+        when(parent.getRemoteHostname()).thenReturn("localhost");
+        when(target.beginBinding(any(Connection.class))).thenReturn(true);
+        AtomicBoolean connected = new AtomicBoolean();
+        SMBClient client = new SMBClient();
+        Field state = SMBClient.class.getDeclaredField("channelConnections"); state.setAccessible(true);
+        Collection<?> tracked = (Collection<?>) state.get(client);
+        try (MockedConstruction<Connection> channels = mockConstruction(Connection.class, (channel, construction) -> {
+            doAnswer(invocation -> { connected.set(true); return null; }).when(channel).connect(anyString(), any(InetSocketAddress.class));
+            when(channel.isConnected()).thenAnswer(invocation -> connected.get());
+            doAnswer(invocation -> { throw primary; }).when(channel).bind(same(target), eq(true));
+            doAnswer(invocation -> { connected.set(false); throw cleanup; }).when(channel).close(true);
+        })) {
+            try {
+                assertSame(primary, assertThrows(primary.getClass(), () -> client.openChannel(target, "127.0.0.1", 445)));
+                Connection channel = channels.constructed().get(0);
+                verify(channel).close(true);
+                verify(target).endBinding(channel);
+                assertFalse(connected.get()); assertTrue(tracked.isEmpty());
+                assertEquals(sameCleanup ? 0 : 1, primary.getSuppressed().length);
+                if (!sameCleanup) assertSame(cleanup, primary.getSuppressed()[0]);
+            } finally { connected.set(false); tracked.clear(); }
+        } finally { client.close(); }
+    }
+
     @ParameterizedTest
     @CsvSource({"io,true", "io,false", "runtime,true", "error,true"})
     void failedBindingPreservesItsPrimaryFailureAndBorrowedTransport(String kind, boolean sameCleanup) throws Exception {

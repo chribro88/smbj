@@ -102,11 +102,11 @@ public class SMBClient implements Closeable {
             channel.connect(session.getConnection().getRemoteHostname(), new java.net.InetSocketAddress(hostname, port));
             channel.bind(session, true);
             return channel;
-        } catch (IOException | RuntimeException e) {
+        } catch (IOException | RuntimeException | Error e) {
             try {
                 channel.close(true);
-            } catch (Exception closeFailure) {
-                e.addSuppressed(closeFailure);
+            } catch (Exception | Error closeFailure) {
+                if (closeFailure != e) e.addSuppressed(closeFailure);
             }
             throw e;
         } finally {

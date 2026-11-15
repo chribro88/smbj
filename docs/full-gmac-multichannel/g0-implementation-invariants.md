@@ -108,7 +108,12 @@ Reservation memory is one cursor, one abort slot and at most 16 initial-caller
 exclusions, plus existing per-active-channel state. Network catch-up depends on
 burned binding history. The current construction does not have constant catch-up
 cost for an unbounded number of replacements. File traffic no longer drives that
-cost. Sustained churn and its practical resource/cost limits remain to be measured.
+cost. The current 64-cycle operational probe checks 512 replacements and 64
+prepared failures per runtime across eight profiles, stable live ownership and
+collectability of all 73 retired connections per profile. Catch-up grows from
+five to 139 ECHOs per successful candidate. Longer-history limits and comparative
+performance remain unqualified; see
+[validation-churn-cleanup.json](validation-churn-cleanup.json).
 
 The current native evidence uses Samba 4.23.10, NTLM and Kerberos with real
 16/32-byte GSS keys. Existing JCE wire checks independently verify tags and
@@ -136,3 +141,4 @@ profiles. Binding remains signed and unencrypted.
 - [Public reauthentication](validation-public-reauthentication.json)
 - [Public multichannel CANCEL and CHANGE_NOTIFY](validation-public-cancellation.json)
 - [Pending-owner loss and encrypted cancellation](validation-encrypted-owner-loss.json)
+- [Churn resources and cached-error cleanup](validation-churn-cleanup.json)
