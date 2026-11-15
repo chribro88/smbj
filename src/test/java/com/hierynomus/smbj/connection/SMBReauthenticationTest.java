@@ -150,12 +150,18 @@ class SMBReauthenticationTest {
         assertEquals(fault.equals("no-key") ? 2 : 1, tokens.get()); retained();
     }
 
-    @Test
-    void authenticatedFailureDiscardsTheSessionWithoutReplacingKeys() throws Exception {
+    @ParameterizedTest
+    @ValueSource(strings = {"none", "io", "error"})
+    void authenticatedFailureDiscardsTheSessionWithoutReplacingKeys(String cleanup) throws Exception {
         SMBSessionBuilder builder = builder();
+        Throwable cleanupFailure = cleanup.equals("io") ? new IOException("Cleanup failed") : new AssertionError("Cleanup failed");
+        if (!cleanup.equals("none")) doThrow(cleanupFailure).when(session).discardAuthenticatedSession();
         when(connection.sendAndReceive(eq(session), any(SMB2Packet.class))).thenAnswer(call ->
                 response(NtStatus.STATUS_ACCESS_DENIED.getValue(), "valid"));
-        assertThrows(SMBApiException.class, () -> reauthenticate(builder));
+        SMBApiException rejected = assertThrows(SMBApiException.class, () -> reauthenticate(builder));
+        assertEquals(NtStatus.STATUS_ACCESS_DENIED, rejected.getStatus());
+        assertEquals(cleanup.equals("none") ? 0 : 1, rejected.getSuppressed().length);
+        if (!cleanup.equals("none")) assertSame(cleanupFailure, rejected.getSuppressed()[0]);
         assertSame(original, keys.getSigningKey());
         assertEquals(1, closes.get());
         verify(session).discardAuthenticatedSession();
