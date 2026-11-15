@@ -58,11 +58,13 @@ class GmacBootstrapAbortIT {
     private final List<Connection> owned = new ArrayList<>();
 
     @ParameterizedTest
-    @ValueSource(strings = {"bad-final/fresh", "bad-final/open", "lost-final/fresh", "lost-final/open"})
+    @ValueSource(strings = {"bad-final/fresh", "bad-final/open", "lost-final/fresh", "lost-final/open",
+            "bad-final/root-loss", "bad-final/root-loss/open", "lost-final/root-loss", "lost-final/root-loss/open"})
     void reservedLogoffAbortsUnpublishedBindingAndPreservesBorrowedConnection(String scenario) throws Exception {
         assumeTrue("true".equals(System.getenv("SMBJ_GMAC_AUX_RESEARCH")), "Explicit detached research opt-in required");
         String mode = scenario.split("/")[0];
         boolean existingOpen = scenario.endsWith("/open");
+        boolean rootLoss = scenario.contains("/root-loss");
         String run = scenario.replace('/', '-');
         Throwable primary = null;
         try (SMBClient client = new SMBClient(config, bus)) {
@@ -125,17 +127,25 @@ class GmacBootstrapAbortIT {
                                 assertArrayEquals(originalKey, main.getSessionContext().getSigningKey().getEncoded());
                                 assertTrue(caller.isConnected());
                                 assertSame(older, caller.getSessionTable().find(older.getSessionId()));
-                                main.close();
+                                if (rootLoss) {
+                                    observer.expectAbortLogoff(false);
+                                    bootstrap.close(true);
+                                    assertTrue(bootstrap.isClosed());
+                                    assertThrows(IOException.class, main::close);
+                                    assertEquals(abortMid, nextMessageId(bootstrap), "Lost bootstrap cannot allocate the abort nonce");
+                                } else {
+                                    main.close();
+                                    assertEquals(abortMid + 1, nextMessageId(bootstrap));
+                                }
                                 assertEquals(0, main.getChannelCount());
-                                assertEquals(abortMid + 1, nextMessageId(bootstrap));
                                 bootstrap.close(true); assertTrue(bootstrap.isClosed());
                                 assertTrue(caller.isConnected());
                                 echo(older);
                                 if (file != null) { bytes[1] ^= 1; verifyContents(file, bytes); }
                                 try (Connection pooled = client.connect("127.0.0.1", port)) { assertSame(caller, pooled); }
                                 assertTrue(caller.isConnected());
-                                System.out.printf("BOOTSTRAP_ABORT_COMPLETE run=%s fault=%s bindingMids=%s abortMID=%d padding=%d olderOpenBeforeBinding=%s olderSessionLive=true pooledIdentityPreserved=true bootstrapTransportClosed=true unpublishedChannels=0 signing=AES_GMAC%n",
-                                        run, mode, used, abortMid, padding, existingOpen);
+                                System.out.printf("BOOTSTRAP_ABORT_COMPLETE run=%s fault=%s rootLoss=%s bindingMids=%s abortMID=%d padding=%d olderOpenBeforeBinding=%s olderSessionLive=true pooledIdentityPreserved=true bootstrapTransportClosed=true unpublishedChannels=0 signing=AES_GMAC%n",
+                                        run, mode, rootLoss, used, abortMid, padding, existingOpen);
                             } finally {
                                 worker.shutdownNow(); assertTrue(worker.awaitTermination(5, TimeUnit.SECONDS));
                             }

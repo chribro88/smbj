@@ -1,20 +1,23 @@
 --- a/GmacWireObserver.java
 +++ b/GmacWireObserver.java
-@@ -48,6 +48,7 @@
+@@ -48,6 +48,8 @@
      private long mainSessionId;
      private int originalSocket;
      private byte[] originalKey;
 +    private Long abortMid;
++    private boolean abortLogoffExpected = true;
 
      GmacWireObserver() { new SecureRandom().nextBytes(fingerprintKey); }
 
-@@ -73,6 +74,75 @@
+@@ -73,6 +75,77 @@
                  .getEncoded().clone();
          assertFalse(Arrays.equals(originalKey, key), "Operational channel key must differ from original key");
          channelKeys.put(owners.get(connection).id, key);
 +    }
 +
 +    synchronized void reserveAbort(long mid) { assertTrue(mid >= 0); abortMid = mid; }
++
++    synchronized void expectAbortLogoff(boolean expected) { abortLogoffExpected = expected; }
 +
 +    synchronized CountDownLatch faultFinal(Connection connection, String mode) {
 +        ObservedSocket socket = owners.get(connection);
@@ -110,8 +113,8 @@
                          event.preparedOnly ? "write-attempt" : "complete-frame");
              }
          }
-+        assertEquals(1, abortRequests, "One bootstrap LOGOFF request at the reserved nonce");
-+        assertEquals(1, abortResponses, "One authenticated successful bootstrap LOGOFF response");
++        assertEquals(abortLogoffExpected ? 1 : 0, abortRequests, "Bootstrap LOGOFF request count at the reserved nonce");
++        assertEquals(abortLogoffExpected ? 1 : 0, abortResponses, "Authenticated successful bootstrap LOGOFF response count");
          assertFalse(originalApplicationTraffic, "Original key connection must not carry application traffic");
          assertTrue(operational >= minimumOperational, "Expected application traffic must be included in the independent verification");
          for (ObservedSocket socket : sockets) {

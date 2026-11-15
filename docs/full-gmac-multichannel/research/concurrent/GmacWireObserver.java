@@ -48,6 +48,8 @@ final class GmacWireObserver extends SocketFactory {
     private long mainSessionId;
     private int originalSocket;
     private byte[] originalKey;
+    private int originalKeyBindingRequests, unsignedEchoRequests;
+    private boolean originalApplicationTraffic;
 
     GmacWireObserver() { new SecureRandom().nextBytes(fingerprintKey); }
 
@@ -87,11 +89,9 @@ final class GmacWireObserver extends SocketFactory {
 
     synchronized int partialClientBytes(Connection connection) { return owners.get(connection).partialClientBytes; }
 
-    synchronized void reservation(Connection connection, long first, int slots) {
-        ObservedSocket socket = owners.get(connection);
-        socket.reservedFirst = first;
-        socket.reservedEnd = first + slots;
-    }
+    synchronized int originalKeyBindingRequests() { return originalKeyBindingRequests; }
+    synchronized int unsignedEchoRequests() { return unsignedEchoRequests; }
+    synchronized boolean originalApplicationTraffic() { return originalApplicationTraffic; }
 
     synchronized void verifyAndReport(String run, int replacements) throws GeneralSecurityException {
         verifyAndReport(run, replacements, 501);
@@ -103,7 +103,6 @@ final class GmacWireObserver extends SocketFactory {
         int verified = 0;
         int operational = 0;
         int preparedOnly = 0;
-        boolean originalApplicationTraffic = false;
         MessageDigest transcript = MessageDigest.getInstance("SHA-256");
         for (Event event : events) {
             Map<Long, byte[]> auxiliary = auxiliaryKeys.get(event.connection);
@@ -119,10 +118,6 @@ final class GmacWireObserver extends SocketFactory {
             String role;
             if (event.sessionId == mainSessionId) {
                 ObservedSocket socket = sockets.get(event.connection);
-                if (event.command == 1 && socket.reservedFirst >= 0) {
-                    assertTrue(event.mid >= socket.reservedFirst && event.mid < socket.reservedEnd,
-                            "Every original-key binding input stays in its reserved interval");
-                }
                 if (event.connection == originalSocket || (event.command == 1 && (!event.server || event.status != 0))) {
                     key = originalKey;
                     role = "original";
@@ -167,7 +162,6 @@ final class GmacWireObserver extends SocketFactory {
                         event.preparedOnly ? "write-attempt" : "complete-frame");
             }
         }
-        assertFalse(originalApplicationTraffic, "Original key connection must not carry application traffic");
         assertTrue(operational >= minimumOperational, "Expected application traffic must be included in the independent verification");
         for (ObservedSocket socket : sockets) {
             assertTrue(socket.isClosed());
@@ -203,7 +197,7 @@ final class GmacWireObserver extends SocketFactory {
     @Override public Socket createSocket(InetAddress host, int port, InetAddress local, int localPort) throws IOException { return open(host.getHostAddress(), port, local, localPort); }
 
     private synchronized Socket open(String host, int port, InetAddress local, int localPort) throws IOException {
-        if (!"127.0.0.1".equals(host) || port != 36535) throw new IOException("Only the owned loopback research fixture is permitted");
+        if (!"127.0.0.1".equals(host) || port != GmacConcurrentBootstrapIT.fixturePort()) throw new IOException("Only the owned loopback research fixture is permitted");
         ObservedSocket socket = new ObservedSocket(sockets.size());
         sockets.add(socket);
         try {
@@ -228,8 +222,6 @@ final class GmacWireObserver extends SocketFactory {
         CountDownLatch entered, release;
         int cutAfterBytes = -1, partialClientBytes;
         boolean gated;
-        long reservedFirst = -1, reservedEnd;
-
         ObservedSocket(int id) { this.id = id; }
 
         @Override public InputStream getInputStream() throws IOException {
@@ -313,6 +305,11 @@ final class GmacWireObserver extends SocketFactory {
                     if (buffered.length - consumed < size + 4) break;
                     Event event = new Event(events.size() + 1, id, direction == 1,
                             Arrays.copyOfRange(buffered, consumed + 4, consumed + 4 + size));
+                    if (!event.server && event.command == 1 && event.sessionId == mainSessionId
+                            && (event.wire[66] & 1) != 0) originalKeyBindingRequests++;
+                    if (!event.server && event.command == 13 && event.sessionId == 0) unsignedEchoRequests++;
+                    if (!event.server && event.signed && event.connection == originalSocket && event.sessionId == mainSessionId
+                            && event.command != 1) originalApplicationTraffic = true;
                     assertEquals(0, ByteBuffer.wrap(event.wire).order(ByteOrder.LITTLE_ENDIAN).getInt(20), "Compound traffic is outside this prototype");
                     if (event.server) {
                         // A loopback response can be read before the writer records its completed write.

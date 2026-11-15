@@ -48,6 +48,10 @@ public class SequenceWindow {
         return get(1)[0];
     }
 
+    long nextMessageId() {
+        return lowestAvailable.get();
+    }
+
     synchronized long[] get(int credits) throws TransportException {
         if (credits <= 0 || credits > 0xFFFF) {
             throw new IllegalArgumentException("Credit charge must fit a positive unsigned 16-bit value");

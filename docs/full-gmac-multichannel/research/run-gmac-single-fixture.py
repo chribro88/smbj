@@ -20,6 +20,8 @@ profile.add_argument('--java8-home', type=Path)
 profile.add_argument('--async-cancel', action='store_true')
 profile.add_argument('--public-anchor-research', action='store_true')
 profile.add_argument('--bootstrap-abort-research', action='store_true')
+profile.add_argument('--unsigned-echo-research', action='store_true')
+profile.add_argument('--per-request-research', action='store_true')
 arguments = parser.parse_args()
 if not Path('gradlew').is_file():
     parser.error('Run from the SMBJ feature worktree')
@@ -35,8 +37,20 @@ if arguments.public_anchor_research:
 if arguments.bootstrap_abort_research:
     if os.environ.get('SMBJ_GMAC_AUX_RESEARCH') != 'true' or not Path('src/it/java/com/hierynomus/smbj/connection/GmacBootstrapAbortIT.java').is_file():
         parser.error('--bootstrap-abort-research requires the detached research checkout and explicit opt-in')
-if arguments.bootstrap_abort_research:
-    test_class, expected_count, marker, label = ('com.hierynomus.smbj.connection.GmacBootstrapAbortIT', 6,
+if arguments.unsigned_echo_research:
+    if os.environ.get('SMBJ_GMAC_UNSIGNED_ECHO_RESEARCH') != 'true' or not Path('src/it/java/com/hierynomus/smbj/connection/GmacUnsignedEchoIT.java').is_file():
+        parser.error('--unsigned-echo-research requires the detached research checkout and explicit opt-in')
+if arguments.per_request_research:
+    if os.environ.get('SMBJ_GMAC_AUX_RESEARCH') != 'true' or not Path('src/it/java/com/hierynomus/smbj/connection/GmacConcurrentBootstrapIT.java').is_file():
+        parser.error('--per-request-research requires the detached research checkout and explicit opt-in')
+if arguments.per_request_research:
+    test_class, expected_count, marker, label = ('com.hierynomus.smbj.connection.GmacConcurrentBootstrapIT', 7,
+                                               'AUXCON_COMPLETE ', 'per-request reservation research')
+elif arguments.unsigned_echo_research:
+    test_class, expected_count, marker, label = ('com.hierynomus.smbj.connection.GmacUnsignedEchoIT', 1,
+                                               'UNSIGNED_ECHO_COMPLETE ', 'unsigned-ECHO research')
+elif arguments.bootstrap_abort_research:
+    test_class, expected_count, marker, label = ('com.hierynomus.smbj.connection.GmacBootstrapAbortIT', 10,
                                                'BOOTSTRAP_ABORT_COMPLETE ', 'bootstrap-abort research')
 elif arguments.public_anchor_research:
     test_class, expected_count, marker, label = ('com.hierynomus.smbj.session.GmacPublicAnchorIT', 2,
@@ -126,14 +140,18 @@ try:
     assert all(int(root.attrib[name]) == 0 for name in ('failures', 'errors', 'skipped')), root.attrib
     metadata['suite'] = dict(root.attrib)
     text = '\n'.join(node.text or '' for node in root.iter('system-out'))
-    metadata['profiles'] = [line.strip() for line in text.splitlines() if line.startswith(marker)]
-    expected_profiles = 4 if arguments.bootstrap_abort_research else expected_count
+    markers = ('AUXCON_COMPLETE ', 'AUXCON_BOOTSTRAP_ABORT ', 'AUXCON_NEGATIVE_CONTROL ',
+               'AUXCON_BOOTSTRAP_NEGATIVE_CONTROL ') if arguments.per_request_research else (marker,)
+    metadata['profiles'] = [line.strip() for line in text.splitlines() if line.startswith(markers)]
+    expected_profiles = 8 if arguments.bootstrap_abort_research else expected_count
     assert len(metadata['profiles']) == expected_profiles, len(metadata['profiles'])
     assert len(set(metadata['profiles'])) == expected_profiles
     if arguments.bootstrap_abort_research:
         metadata['negative_controls'] = [line.strip() for line in text.splitlines() if line.startswith('BOOTSTRAP_ABORT_UNSAFE_CONTROL ')]
         assert len(metadata['negative_controls']) == 2
         assert all('result=expected_nonce_reuse_detected' in line for line in metadata['negative_controls'])
+    if arguments.per_request_research:
+        assert sum('result=expected_' in line and 'nonce_reuse_detected' in line for line in metadata['profiles']) == 2
     assert all('signing=AES_GMAC' in line for line in metadata['profiles'])
     assert all('cipher=AES_128_GCM' in line for line in metadata['profiles'] if 'encrypt=true' in line)
     if arguments.java8_home:

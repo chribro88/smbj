@@ -79,6 +79,7 @@ public class Session implements AutoCloseable {
     private final java.util.concurrent.atomic.AtomicBoolean channelsFailed = new java.util.concurrent.atomic.AtomicBoolean();
     private final java.util.concurrent.atomic.AtomicInteger nextChannel = new java.util.concurrent.atomic.AtomicInteger();
     private final java.util.concurrent.atomic.AtomicInteger channelSequence = new java.util.concurrent.atomic.AtomicInteger();
+    private final java.util.concurrent.atomic.AtomicLong originalKeyMessageIdReservation = new java.util.concurrent.atomic.AtomicLong();
     private volatile boolean multichannel;
     private final java.util.Set<Connection> pendingChannels = new java.util.HashSet<>();
     private boolean closing;
@@ -411,6 +412,26 @@ public class Session implements AutoCloseable {
         return leaseManager;
     }
 
+    public void initializeOriginalKeyMessageIdReservation(long nextMessageId) {
+        originalKeyMessageIdReservation.updateAndGet(current ->
+                Long.compareUnsigned(nextMessageId, current) > 0 ? nextMessageId : current);
+    }
+
+    public boolean reserveOriginalKeyMessageId(long messageId) {
+        if (messageId == -1L) {
+            return false;
+        }
+        while (true) {
+            long current = originalKeyMessageIdReservation.get();
+            if (Long.compareUnsigned(messageId, current) < 0) {
+                return false;
+            }
+            if (originalKeyMessageIdReservation.compareAndSet(current, messageId + 1)) {
+                return true;
+            }
+        }
+    }
+
     /**
      * send a packet.  The packet will be signed or not depending on the session's flags.
      *
@@ -470,7 +491,12 @@ public class Session implements AutoCloseable {
                 && packet.getHeader().getMessage() == com.hierynomus.mssmb2.SMB2MessageCommandCode.SMB2_WRITE) {
             return selected.send(packet);
         }
-        return selected.send(signatory.sign(packet, signingKey));
+        SMB2Packet signed = signatory.sign(packet, signingKey);
+        if (signingKey != null && selected == connection && connection.getConnectionContext() != null
+                && connection.getConnectionContext().getSigningAlgorithm() == SMB3SigningAlgorithm.AES_GMAC) {
+            return selected.sendOriginalKey(signed, this);
+        }
+        return selected.send(signed);
     }
 
     /**

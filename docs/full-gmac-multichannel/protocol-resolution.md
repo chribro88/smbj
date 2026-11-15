@@ -112,13 +112,16 @@ independent Windows/target ONTAP behavior remain unqualified. G0 stays open and
 the production GMAC binding guard remains intact.
 
 The [reserved-nonce bootstrap-abort follow-up](research/bootstrap-abort/README.md)
-passes four bad/lost-final cases and two unsafe controls. It reserves the private
+passes eight bad/lost-final cases and two unsafe controls. It reserves the private
 bootstrap's next native MID for possible original-key LOGOFF and keeps borrowed
 caller binding inputs above it. The private connection remains live and quiescent
-until cleanup. The observer independently verifies 184 signed inputs across four
-positive cases without distinct-message actual-key/nonce reuse; both controls
-without the reservation detect reuse. This qualifies only that bounded cleanup
-path. Root loss, LOGOFF failure, publication/close races, all key-lifetime paths
+until a normal LOGOFF cleanup. Four forced root-loss cases instead close the
+bootstrap first: session close raises `IOException`, the abort MID remains
+unallocated and no LOGOFF is exchanged. The observer independently verifies 360
+signed inputs across eight positive cases without distinct-message actual-key/nonce
+reuse; both controls without the reservation detect reuse. This qualifies only
+those bounded cleanup paths. LOGOFF failure, spontaneous/racing root loss,
+publication/close races, all key-lifetime paths
 and production integration remain open; G0 is unchanged. See
 [exact validation](validation-bootstrap-abort.json).
 
@@ -146,7 +149,7 @@ cleanup on borrowed U, and is not a selected production mechanism.
 | Reauthenticate to rotate the original key | Rejected as an assumed mechanism; [§3.3.5.5.2](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/5ecc02fb-0e60-4cba-afeb-f13100a6e65e) retains the existing session key. |
 | Advance MIDs with unauthenticated ECHO | Not portable: [§3.3.5.17](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/fa23e613-2768-49e5-aa68-97c4bba72379) says the server should disconnect when no session exists. |
 | Reuse an identical first signed request | Rejected as a general solution: later authentication bytes and server challenges still vary. |
-| Authenticate auxiliary sessions and consume MIDs under unrelated keys | Partially validated research candidate: sequential bootstrap/replacement and bounded concurrent NTLM binding/fault/abort cases pass on Samba 4.23.10. The [sequential](research/auxiliary-candidate.md) and [concurrent](research/concurrent/README.md) records expose costs, retired-original-connection API impact and unproven lifetime paths. Not selected; G0 remains open. |
+| Authenticate auxiliary sessions and consume MIDs under unrelated keys | Partially validated research candidate: per-request monotonic original-key reservations replace fixed 16-MID intervals. Seven detached Samba 4.23.10 cases pass, including concurrent binding, complete/partial loss, original-channel traffic and abort controls. The [concurrent record](research/concurrent/README.md) independently verifies 1,874 signed inputs without nonce reuse and reduces collision ECHOs to 23/29/30 from 96/160/160. Late-binding cost, auxiliary lifecycle and full key-lifetime coverage remain unbounded or unproven. Not selected; the production guard and G0 remain intact. |
 | Reject GMAC binding or force CMAC | Containment only; does not meet the agreed completion criterion. |
 
 ## 5. Related upstream evidence and wording issues

@@ -46,10 +46,9 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 /** Research only: bounded original-key reservations, never production binding orchestration. */
 @Timeout(90)
 class GmacConcurrentBootstrapIT {
-    private static final int AUTHENTICATION_SLOTS = 16;
     private final List<Connection> owned = new ArrayList<>();
-    private final AtomicLong reservationCursor = new AtomicLong();
-    private final AtomicInteger reservations = new AtomicInteger(), bindings = new AtomicInteger(), pumpRequests = new AtomicInteger();
+    private AtomicLong reservationCursor;
+    private final AtomicInteger bindings = new AtomicInteger();
     private final SMBEventBus bus = new SMBEventBus();
     private final ServerList servers = new ServerList();
     private final GmacWireObserver observer = new GmacWireObserver();
@@ -70,8 +69,10 @@ class GmacConcurrentBootstrapIT {
                 observer.original(main, original);
                 byte[] originalKey = main.getSessionContext().getSigningKey().getEncoded().clone();
                 long initialCursor = nextMessageId(original);
-                reservationCursor.set(initialCursor);
+                reservationCursor = reservationCursor(main);
                 bind(main, anchor, "none", null, null);
+                echo(main, original);
+                echo(main, original);
                 original.close(true);
                 assertEquals(1, main.getChannelCount());
                 assertFalse(main.getConnection().isConnected(), "Public connection ownership remains unresolved research work");
@@ -128,19 +129,20 @@ class GmacConcurrentBootstrapIT {
                         if (!"none".equals(fault)) {
                             long burned = reservationCursor.get();
                             bind(main, connect(), "none", null, null);
-                            assertEquals(burned + AUTHENTICATION_SLOTS, reservationCursor.get(), "Retry never releases or reuses a failed interval");
+                            assertEquals(burned + 2, reservationCursor.get(), "Retry burns both NTLM binding reservations");
                         }
                         assertEquals(4, main.getChannelCount());
                         assertEquals(4, bindings.get());
-                        int count = "none".equals(fault) ? 4 : 5;
-                        assertEquals(count, reservations.get());
-                        assertEquals(initialCursor + count * AUTHENTICATION_SLOTS, reservationCursor.get());
-                        assertEquals(AUTHENTICATION_SLOTS * count * (count - 1) / 2, pumpRequests.get());
+                        int expectedBindingRequests = "none".equals(fault) ? 8 : 9;
+                        assertEquals(expectedBindingRequests, observer.originalKeyBindingRequests());
+                        assertEquals(initialCursor + expectedBindingRequests + 2, reservationCursor.get());
+                        assertTrue(observer.originalApplicationTraffic(), "Original-channel signed traffic must use the same cursor");
+                        assertTrue(observer.unsignedEchoRequests() > 0, "Fresh concurrent candidates must burn colliding MIDs");
                         assertEquals("partial".equals(fault) ? 76 : 0, observer.partialClientBytes(candidates[0]));
                         assertArrayEquals(originalKey, main.getSessionContext().getSigningKey().getEncoded());
                         verifyContents(file, expected);
-                        System.out.printf("AUXCON_COMPLETE run=%s successfulBindings=%d reservations=%d pumpRequests=%d reservedEnd=%d originalConnectionClosed=true heldOpenVerifiedBytes=%d%n",
-                                run, bindings.get(), reservations.get(), pumpRequests.get(), reservationCursor.get(), expected.length * 11);
+                        System.out.printf("AUXCON_COMPLETE run=%s signing=AES_GMAC successfulBindings=%d bindingRequests=%d pumpRequests=%d reservedEnd=%d originalTraffic=true originalConnectionClosed=true heldOpenVerifiedBytes=%d%n",
+                                run, bindings.get(), observer.originalKeyBindingRequests(), observer.unsignedEchoRequests(), reservationCursor.get(), expected.length * 11);
                     } finally { share.rm(name); }
                 }
             }
@@ -158,6 +160,7 @@ class GmacConcurrentBootstrapIT {
             try (Session main = original.authenticate(authentication())) {
                 observer.original(main, original);
                 for (int i = 0; i < 2; i++) {
+                    reservationCursor(main).set(0);
                     Connection candidate = connect();
                     assertSame(main, candidate.bind(main)); observer.bound(main, candidate);
                 }
@@ -165,7 +168,7 @@ class GmacConcurrentBootstrapIT {
         } finally { closeOwned(); }
         AssertionError rejected = assertThrows(AssertionError.class, () -> observer.verifyAndReport("concurrent-unsafe-control", -1));
         assertTrue(rejected.getMessage().contains("Different authenticated bytes reused actual key/nonce"));
-        System.out.println("AUXCON_NEGATIVE_CONTROL successfulLegitimateBindings=2 result=expected_nonce_reuse_detected");
+        System.out.println("AUXCON_NEGATIVE_CONTROL signing=AES_GMAC successfulLegitimateBindings=2 result=expected_nonce_reuse_detected");
     }
 
     @ParameterizedTest
@@ -177,20 +180,21 @@ class GmacConcurrentBootstrapIT {
         try {
             Connection candidate = connect(), original = connect();
             main = original.authenticate(authentication()); observer.original(main, original);
-            reservationCursor.set(nextMessageId(original));
+            reservationCursor = reservationCursor(main);
+            long initialCursor = reservationCursor.get();
             Session session = main;
             assertThrows(IOException.class, () -> bind(session, candidate, fault, new CountDownLatch(1), new CountDownLatch(0)));
             assertTrue(observer.faultTriggered(candidate));
             assertEquals(1, main.getChannelCount(), "Failed candidate is never published");
             assertEquals(0, bindings.get());
-            assertEquals(1, reservations.get());
-            assertEquals(19, reservationCursor.get());
+            assertEquals(1, observer.originalKeyBindingRequests());
+            assertEquals(initialCursor + 1, reservationCursor.get());
             assertEquals("partial".equals(fault) ? 76 : 0, observer.partialClientBytes(candidate));
             // LOGOFF on the original connection would reuse a reserved original-key nonce.
             main.failChannels(new IOException("Unpublished bootstrap aborted"));
             original.close(true);
             assertTrue(original.isClosed());
-            System.out.printf("AUXCON_BOOTSTRAP_ABORT run=%s logoffSent=false originalConnectionClosed=true failedReservationBurned=true%n", run);
+            System.out.printf("AUXCON_BOOTSTRAP_ABORT run=%s signing=AES_GMAC logoffSent=false originalConnectionClosed=true failedReservationBurned=true%n", run);
         } finally {
             if (main != null) main.failChannels(new IOException("Research complete"));
             closeOwned();
@@ -205,10 +209,11 @@ class GmacConcurrentBootstrapIT {
         try {
             Connection candidate = connect(), original = connect();
             main = original.authenticate(authentication()); observer.original(main, original);
-            reservationCursor.set(nextMessageId(original));
+            reservationCursor = reservationCursor(main);
             Session session = main;
             assertThrows(IOException.class, () -> bind(session, candidate, "partial", new CountDownLatch(1), new CountDownLatch(0)));
             assertTrue(observer.faultTriggered(candidate));
+            reservationCursor(main).set(0);
             main.close();
         } finally {
             if (main != null) main.failChannels(new IOException("Research complete"));
@@ -216,7 +221,7 @@ class GmacConcurrentBootstrapIT {
         }
         AssertionError rejected = assertThrows(AssertionError.class, () -> observer.verifyAndReport("unsafe-bootstrap-logoff", 0, 0));
         assertTrue(rejected.getMessage().contains("Different authenticated bytes reused actual key/nonce"));
-        System.out.println("AUXCON_BOOTSTRAP_NEGATIVE_CONTROL result=expected_logoff_nonce_reuse_detected");
+        System.out.println("AUXCON_BOOTSTRAP_NEGATIVE_CONTROL signing=AES_GMAC result=expected_logoff_nonce_reuse_detected");
     }
 
     private void bind(Session main, Connection candidate, String fault, CountDownLatch entered, CountDownLatch release) throws Exception {
@@ -226,12 +231,7 @@ class GmacConcurrentBootstrapIT {
         try {
             observer.auxiliary(auxiliary, candidate);
             assertFalse(Arrays.equals(main.getSessionContext().getSigningKey().getEncoded(), auxiliary.getSessionContext().getSigningKey().getEncoded()));
-            long cursor = nextMessageId(candidate), first = reserve(cursor);
-            int pumped = 0;
-            while (nextMessageId(candidate) < first) { echo(auxiliary); pumped++; pumpRequests.incrementAndGet(); }
-            assertEquals(first, nextMessageId(candidate), "Native MID allocation must reach the reserved interval without skipping");
-            observer.reservation(candidate, first, AUTHENTICATION_SLOTS);
-            System.out.printf("AUXCON_RESERVE run=%s firstMID=%d reservedEnd=%d padding=%d fault=%s%n", run, first, first + AUTHENTICATION_SLOTS, pumped, fault);
+            long nativeStart = nextMessageId(candidate);
             if (entered != null) observer.gateBinding(candidate, entered, release, "partial".equals(fault));
             if ("complete".equals(fault)) observer.failNextBinding(candidate);
             assertSame(main, candidate.bind(main));
@@ -239,7 +239,7 @@ class GmacConcurrentBootstrapIT {
             // Successful intervals stay burned too; no global I/O lock or cursor-based tail release.
             bindings.incrementAndGet();
             echo(main, candidate);
-            System.out.printf("AUXCON_BIND run=%s firstMID=%d reservedEnd=%d elapsedMicros=%d%n", run, first, first + AUTHENTICATION_SLOTS,
+            System.out.printf("AUXCON_BIND run=%s firstMID=%d reservedEnd=%d elapsedMicros=%d%n", run, nativeStart, reservationCursor.get(),
                     TimeUnit.NANOSECONDS.toMicros(System.nanoTime() - started));
         } catch (Exception | Error failure) { primary = failure; throw failure; }
         finally {
@@ -253,26 +253,20 @@ class GmacConcurrentBootstrapIT {
         echo(main, candidate);
     }
 
-    private long reserve(long nativeCursor) {
-        while (true) {
-            long current = reservationCursor.get(), first = Math.max(current, nativeCursor);
-            assertTrue(first >= 0 && first - nativeCursor <= 256, "Bounded research prefix, not an arbitrary lifetime allocator");
-            if (reservationCursor.compareAndSet(current, first + AUTHENTICATION_SLOTS)) {
-                reservations.incrementAndGet(); return first;
-            }
-        }
-    }
-
     private Connection connect() throws IOException {
         // Setup and observer registration stay sequential; only authentication/binding/application traffic races.
         Connection connection = new Connection(config, null, bus, servers);
-        owned.add(connection); connection.connect("127.0.0.1", 36535); observer.register(connection);
+        owned.add(connection); connection.connect("127.0.0.1", fixturePort()); observer.register(connection);
         assertEquals(SMB3SigningAlgorithm.AES_GMAC, connection.getConnectionContext().getSigningAlgorithm());
         return connection;
     }
 
     private static AuthenticationContext authentication() {
-        return new AuthenticationContext("smbtest", "TestOnly123!".toCharArray(), "WORKGROUP");
+        return new AuthenticationContext("smbtest", System.getenv().getOrDefault("SMB_TEST_PASSWORD", "TestOnly123!").toCharArray(), "WORKGROUP");
+    }
+
+    static int fixturePort() {
+        return Integer.parseInt(System.getenv().getOrDefault("SMB_TEST_PORTS", "36535"));
     }
 
     private static void echo(Session session) throws Exception {
@@ -293,6 +287,11 @@ class GmacConcurrentBootstrapIT {
     private static long nextMessageId(Connection connection) throws ReflectiveOperationException {
         Field field = SequenceWindow.class.getDeclaredField("lowestAvailable"); field.setAccessible(true);
         return ((AtomicLong) field.get(connection.sequenceWindow)).get();
+    }
+
+    private static AtomicLong reservationCursor(Session session) throws ReflectiveOperationException {
+        Field field = Session.class.getDeclaredField("originalKeyMessageIdReservation"); field.setAccessible(true);
+        return (AtomicLong) field.get(session);
     }
 
     private void closeOwned() {

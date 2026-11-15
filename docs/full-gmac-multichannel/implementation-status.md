@@ -156,7 +156,7 @@ pool available; losing the last channel stops it.
 | Java 8 runtime compatibility | PASS: 40 cases on 8u512; 16 default Java 21 native regression cases | 24 unchanged local cases plus 16 forced-GMAC/GCM async profiles with an odd-length payload; actual test JVM recorded; same production JAR in both runs; all 511 production classes have Java 8 bytecode; isolated test tooling only; full feature remains incomplete |
 | Bounded auxiliary-session research | PASS: 5 tests, zero failures/skips | Detached checkout only; direct TCP, BC, NTLM, Samba 4.23.10; 0/3/7 replacements, lost-binding reservation, independent GMAC/MID verification and unsafe-flow negative control; G0 remains open |
 | Concurrent auxiliary-session research | PASS: 7 tests, zero failures/skips | Detached checkout only; direct TCP, BC, NTLM, Samba 4.23.10; four operational channels, concurrent held-open I/O, complete/partial binding loss and fresh retry, safe bootstrap abort and two nonce-reuse controls; G0 remains open |
-| Reserved-nonce bootstrap-abort research | PASS: 6 native cases, zero failures/skips | Detached checkout only; Samba 4.23.10, NTLM, Direct TCP, BC; four bad/lost-final cases preserve the older session/open and pooled connection after bootstrap closure, with two negative controls detecting nonce reuse when reservation is omitted; 184 independent tag checks, zero reuse in positives; root-loss and other lifecycle paths remain open |
+| Reserved-nonce bootstrap-abort research | PASS: 10 native cases, zero failures/skips | Detached checkout only; Samba 4.23.10, NTLM, Direct TCP, BC; eight bad/lost-final cases include four forced root-loss cleanups with no LOGOFF or abort-MID allocation; all preserve the older session/open and pooled connection; two controls detect nonce reuse without reservation; 360 independent tag checks, zero reuse in positives; other lifecycle paths remain open |
 | Independent legitimate-binding observation | NONCE REUSE CONFIRMED | Pinned Go donor + Samba 4.23.10: two successful bindings; 17 independently verified signed messages across three actual key domains; two distinct-message original-key/nonce reuses |
 
 The modern native source is `0be7f6f`; its production and unit-test trees remain
@@ -536,18 +536,50 @@ inject final binding loss. The six timeout regressions use Mockito on Java 21;
 they are not a full Java 8 authentication-failure matrix.
 
 The [reserved-nonce bootstrap-abort follow-up](research/bootstrap-abort/README.md)
-passes six native research cases: four bad/lost-final positive cases and two
+passes ten native research cases: eight bad/lost-final positive cases and two
 unsafe controls. The positive cases keep the private bootstrap live and quiescent,
 reserve its next native MID for possible original-key LOGOFF, and keep caller
 binding inputs above that nonce. The older pooled session/open and pooled
 connection remain usable after the private transport closes. The observer
-independently verifies 184 signed inputs with no distinct-message actual-key/nonce
-reuse; omitting the reservation reproduces reuse.
+independently verifies 360 signed inputs with no distinct-message actual-key/nonce
+reuse; omitting the reservation reproduces reuse. Four cases force root loss
+before cleanup: close raises `IOException`, neither allocates the reserved abort
+MID nor exchanges LOGOFF, and the caller/older session remain usable.
 
-This bounds one abort path after the peer completes binding but the client cannot
-accept its final reply. Root loss, LOGOFF failure, close/authentication/publication
+This bounds two abort paths after the peer completes binding but the client cannot
+accept its final reply. LOGOFF failure, spontaneous/racing root loss, close/authentication/publication
 races, production bootstrap integration and the complete actual-key lifetime
 argument remain required. G0 and the production GMAC binding guard remain open.
+
+The [per-request reservation follow-up](research/concurrent/README.md) replaces
+fixed 16-MID research intervals with a monotonic original-key high-water value.
+Each binding request reserves its actual native MID. A collision is consumed by
+an unsigned session-0 ECHO after auxiliary authentication, outside the allocation
+lock, and the request retries. Original-channel signed application traffic and
+LOGOFF share the same cursor. The first focused run passed 76 tests. Follow-up
+hardening narrows the public callback to a session-specific operation, retires
+timed-out collision ECHOs, prevents terminal-MID wraparound and limits each
+collision probe to one credit before a deferred multi-credit request. Local
+regressions also cover late timeout replies, abort cleanup and terminal-MID
+exhaustion. The resulting five focused suites pass 81 tests, and full `check`
+passes 889 tests in 102 suites with zero failures/errors/skips plus license and
+JaCoCo tasks.
+
+Seven detached Samba 4.23.10/Direct-TCP/BC/NTLM cases pass with the production
+guard removed only in that checkout. Three application cases and two abort cases
+independently verify 1,874 signed inputs with zero distinct-message nonce reuse.
+The application cases use 23, 28 and 30 collision ECHOs rather than the previous
+fixed-slot 96, 160 and 160, and each verifies 1,441,792 readback bytes plus
+original-channel signed traffic after binding. Both unsafe controls still detect
+the expected nonce reuse. Exact source hashes and results are in
+[validation-per-request.json](research/concurrent/validation-per-request.json).
+
+This does not close G0. A fresh candidate can require an unbounded number of
+collision ECHOs after substantial earlier original-key traffic. Automatic public
+auxiliary-session construction and cleanup, native cancellation/exhaustion and
+the complete key lifetime, Kerberos/variable GSS rounds, reauthentication, both
+providers/transports, independent Windows/target ONTAP behavior and production
+guard removal remain unqualified.
 
 ## Remaining contract and release gates
 
