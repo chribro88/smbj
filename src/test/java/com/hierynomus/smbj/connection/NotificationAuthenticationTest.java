@@ -43,7 +43,7 @@ class NotificationAuthenticationTest {
             Request outstanding = new Request(new SMB2Echo(SMB2Dialect.SMB_3_1_1), mid, UUID.randomUUID());
             f.connection.outstandingRequests.registerOutstanding(outstanding);
             f.connection.handle(new SMB2PacketData(notification(mid, true, 47)));
-            verify(f.leases).dispatchBreak(any());
+            verify(f.leases).dispatchBreak(any(), any());
             assertFalse(outstanding.getPromise().isFulfilled());
             assertEquals(1, f.connection.sequenceWindow.available());
         }
@@ -56,7 +56,7 @@ class NotificationAuthenticationTest {
             byte[] packet = notification(mid, true, 47);
             packet[80] ^= 1;
             f.connection.handle(new SMB2PacketData(packet));
-            verify(f.leases, never()).dispatchBreak(any());
+            verify(f.leases, never()).dispatchBreak(any(), any());
             assertEquals(1, f.connection.sequenceWindow.available());
         }
     }
@@ -66,7 +66,7 @@ class NotificationAuthenticationTest {
     void protocolPermitsUnsignedLeaseBreakWithoutSession(long mid) throws Exception {
         try (Fixture f = new Fixture()) {
             f.connection.handle(new SMB2PacketData(notification(mid, false, 0)));
-            verify(f.leases).dispatchBreak(any());
+            verify(f.leases).dispatchBreak(any(), any());
             assertEquals(1, f.connection.sequenceWindow.available());
         }
     }
@@ -76,7 +76,7 @@ class NotificationAuthenticationTest {
     void signedNotificationWithUnknownSessionIsRejected(long session) throws Exception {
         try (Fixture f = new Fixture()) {
             f.connection.handle(new SMB2PacketData(notification(123, true, session)));
-            verify(f.leases, never()).dispatchBreak(any());
+            verify(f.leases, never()).dispatchBreak(any(), any());
         }
     }
 
@@ -120,8 +120,11 @@ class NotificationAuthenticationTest {
             Field state = Connection.class.getDeclaredField("connectionContext");
             state.setAccessible(true); state.set(connection, context);
             Session session = mock(Session.class);
-            when(session.getLeaseManager()).thenReturn(leases);
+            when(session.getSessionId()).thenReturn(47L);
             when(session.getConnection()).thenReturn(connection);
+            LeaseEntry entry = new LeaseEntry(LeaseKey.random(), null, 3, "held");
+            entry.setOwner(session, 7, SMB2Dialect.SMB_3_1_1);
+            when(leases.lookup(any())).thenReturn(entry);
             when(session.getSigningKey(any(), eq(false), same(connection)))
                     .thenReturn(new SecretKeySpec(new byte[16], "AES-GMAC"));
             when(session.isSigningRequired()).thenReturn(true);

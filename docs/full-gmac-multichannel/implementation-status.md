@@ -21,6 +21,35 @@ an older validation record's temporary artifact directory.
 
 ## Current production integration
 
+The latest lease-lifecycle work fixes a native failure after canonical transport
+retirement: breaks arriving on a surviving bound channel previously reached an
+empty connection-local manager and were never acknowledged. Routing now resolves
+the exact logical Session and lease entry among the receiving channel's sessions.
+Its canonical manager survives transport retirement until its sessions release
+their state. Failed LOGOFF releases only the closing owner's leases and channel
+registrations. Queued breaks retain their entry/Session identities, shutdown
+rejects late publication after last-channel loss, and late executor dispatch
+cannot abort another live transport.
+
+The validation record specifies the tested runtimes, independent cryptographic
+checks and remaining notification variants:
+[validation-lease-lifetime.json](validation-lease-lifetime.json).
+The frozen patch passes 1,005 local cases in 109 suites and 27 native cases:
+eight lease profiles across Java 21/actual Java 8, eleven public NTLM cases and
+eight real Kerberos cases. The Java 8 profile also passes thirty local compatibility
+cases. Independent audits verify 5,479 GMAC tags and 813 GCM transforms with no
+observed actual-key/nonce reuse. Evidence is byte-verified in a 4.4 MB archive;
+loose task artifacts are removed and all twenty fixture containers across the
+retained attempts are confirmed removed. The final local run uses smaller fresh
+test forks after preserving two writer timeouts under host memory pressure;
+assertions and time limits are unchanged.
+Samba's observed native breaks are unsigned plaintext with SessionId 0 and
+MessageId -1, including on the optionally encrypted session. Their ACKs use the
+surviving channel's normal signed/encrypted send path. This is concrete lease
+acceptance, without claiming native signed/random-MID or encrypted unsolicited
+notifications. Cross-session/share cache namespaces, grant/break races and
+notification-queue pressure still need qualification. G0 remains open.
+
 Client-managed GMAC authentication establishes the target session on a private
 root, reserves its next MID for abort LOGOFF, and binds back onto the caller
 before returning. The caller's verified channel key carries application I/O;

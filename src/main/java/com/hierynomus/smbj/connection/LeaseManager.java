@@ -38,11 +38,12 @@ import org.slf4j.LoggerFactory;
 import com.hierynomus.mssmb2.LeaseKey;
 import com.hierynomus.mssmb2.messages.SMB2LeaseBreakAcknowledgment;
 import com.hierynomus.mssmb2.messages.SMB2LeaseBreakNotification;
-import com.hierynomus.smbj.share.Directory;
+import com.hierynomus.smbj.session.Session;
 
 /**
- * Lease table owned by a logical session, with a connection-local table for legacy callers.
- * Receiving channels resolve an inbound break through their registered sessions. A directory's lease key is minted <b>once per node
+ * Lease table retained by a session's canonical {@link Connection}, including while bound
+ * channels survive its transport. A break's lease key resolves to its owning {@link LeaseEntry}
+ * (spec 06). A directory's lease key is minted <b>once per node
  * (path)</b> and reused (Apple's per-node key); the {@code path -> key} map also lets a
  * child open thread its parent directory's own lease key.
  */
@@ -241,6 +242,16 @@ public class LeaseManager implements Closeable {
         }
     }
 
+    /** Invalidate only the leases belonging to this exact session owner. */
+    public void releaseSession(Session session) {
+        for (LeaseEntry entry : byKey.values()) {
+            if (entry.getSession() == session && byKey.remove(entry.getLeaseKey(), entry)) {
+                entry.setBroken(true);
+                entry.invalidateCache();
+            }
+        }
+    }
+
     /** Number of lease breaks fully handled (test/diagnostic hook). */
     public int getBreaksHandled() {
         return breaksHandled.get();
@@ -275,6 +286,7 @@ public class LeaseManager implements Closeable {
         breakExecutor.shutdownNow();
         closeExecutor.shutdownNow();
         for (LeaseEntry entry : entries) {
+            entry.setBroken(true);
             if (closeHandles) {
                 entry.invalidateCache();
             } else {
@@ -288,31 +300,38 @@ public class LeaseManager implements Closeable {
      * work OFF the read thread.
      */
     public void dispatchBreak(final SMB2LeaseBreakNotification notification) {
-        if (closed.get()) {
-            return;
-        }
+        dispatchBreak(notification, lookup(notification.getLeaseKey()));
+    }
+
+    /** Preserve the resolved owner if session cleanup races queued break handling. */
+    public void dispatchBreak(final SMB2LeaseBreakNotification notification, final LeaseEntry entry) {
+        if (closed.get() || entry == null) return;
+        final Session owner = entry.getSession();
         try {
             breakExecutor.execute(new Runnable() {
                 @Override
                 public void run() {
                     try {
-                        onBreak(notification);
+                        onBreak(notification, entry, owner);
                     } catch (Exception t) {
                         logger.error("Lease-break handling failed for {}", notification.getLeaseKey(), t);
                     }
                 }
             });
         } catch (RejectedExecutionException e) {
-            if (!closed.get()) {
-                throw e;
-            }
+            if (!closed.get() && !breakExecutor.isShutdown()) throw e;
+            logger.debug("Ignoring lease break after owner shutdown: {}", notification.getLeaseKey());
         }
     }
 
     /** Resolve → epoch-check → invalidate → update state → ack (runs on {@link #breakExecutor}). */
     void onBreak(SMB2LeaseBreakNotification n) throws Exception {
         LeaseEntry entry = byKey.get(n.getLeaseKey());
-        if (entry == null) {
+        onBreak(n, entry, entry == null ? null : entry.getSession());
+    }
+
+    private void onBreak(SMB2LeaseBreakNotification n, LeaseEntry entry, Session owner) throws Exception {
+        if (entry == null || byKey.get(n.getLeaseKey()) != entry || entry.getSession() != owner) {
             logger.debug("Lease break for unknown key {}, ignoring", n.getLeaseKey());
             return;
         }
@@ -333,11 +352,11 @@ public class LeaseManager implements Closeable {
         }
 
         // Acknowledge if required (the RH-directory case). Ack state is a subset of NewLeaseState.
-        if (n.isAckRequired() && entry.getSession() != null) {
+        if (n.isAckRequired() && owner != null) {
             SMB2LeaseBreakAcknowledgment ack = new SMB2LeaseBreakAcknowledgment(
-                entry.getDialect(), entry.getSession().getSessionId(), entry.getTreeId(),
+                entry.getDialect(), owner.getSessionId(), entry.getTreeId(),
                 n.getLeaseKey(), n.getNewLeaseState());
-            entry.getSession().send(ack); // normal (signed) send path; reply observed by the chain
+            owner.send(ack); // normal (signed) send path; reply observed by the chain
             logger.debug("Acknowledged lease break for {} -> state {}", n.getLeaseKey(), n.getNewLeaseState());
         }
         breaksHandled.incrementAndGet();

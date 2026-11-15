@@ -15,6 +15,8 @@
  */
 package com.hierynomus.smbj.connection.packet;
 
+import java.util.function.Consumer;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -23,7 +25,9 @@ import com.hierynomus.mssmb2.messages.SMB2LeaseBreakNotification;
 import com.hierynomus.protocol.commons.buffer.Buffer;
 import com.hierynomus.protocol.transport.TransportException;
 import com.hierynomus.smbj.connection.LeaseManager;
-import java.util.function.Consumer;
+import com.hierynomus.smbj.connection.LeaseEntry;
+import com.hierynomus.smbj.connection.SessionTable;
+import com.hierynomus.smbj.session.Session;
 
 /**
  * Intercepts server-pushed SMB2 break notifications (unsolicited, {@code MessageId = 0xFFFF…},
@@ -41,13 +45,23 @@ public class SMB2LeaseBreakPacketHandler extends SMB2PacketHandler {
     private static final int OPLOCK_BREAK_NOTIFICATION_SIZE = 24;
 
     private final Consumer<SMB2LeaseBreakNotification> dispatch;
+    private final LeaseManager leaseManager;
+    private final SessionTable sessionTable;
 
     public SMB2LeaseBreakPacketHandler(LeaseManager leaseManager) {
-        this(leaseManager::dispatchBreak);
+        this(leaseManager, null);
+    }
+
+    public SMB2LeaseBreakPacketHandler(LeaseManager leaseManager, SessionTable sessionTable) {
+        this.dispatch = null;
+        this.leaseManager = leaseManager;
+        this.sessionTable = sessionTable;
     }
 
     public SMB2LeaseBreakPacketHandler(Consumer<SMB2LeaseBreakNotification> dispatch) {
         this.dispatch = dispatch;
+        this.leaseManager = null;
+        this.sessionTable = null;
     }
 
     @Override
@@ -71,11 +85,33 @@ public class SMB2LeaseBreakPacketHandler extends SMB2PacketHandler {
             SMB2LeaseBreakNotification notification = new SMB2LeaseBreakNotification().parse(packetData);
             logger.debug("Lease break for {} {}->{} ackRequired={}", notification.getLeaseKey(),
                 notification.getCurrentLeaseState(), notification.getNewLeaseState(), notification.isAckRequired());
-            dispatch.accept(notification); // resolve/ack happens OFF this read thread
+            if (dispatch != null) {
+                dispatch.accept(notification);
+            } else {
+                dispatchBreak(notification, packetData.getHeader().getSessionId());
+            }
         } catch (Buffer.BufferException e) {
             logger.warn("Malformed lease break notification, dropping", e);
         }
         // consume: never call next.handle(...) for a genuine break notification
+    }
+
+    private void dispatchBreak(SMB2LeaseBreakNotification notification, long sessionId) {
+        if (sessionTable != null) {
+            for (Session session : sessionTable.activeSessions()) {
+                if (sessionId != 0 && session.getSessionId() != sessionId) continue;
+                if (session.getConnection() == null) continue;
+                LeaseManager owner = session.getConnection().getLeaseManager();
+                LeaseEntry entry = owner.lookup(notification.getLeaseKey());
+                if (entry != null && entry.getSession() == session) {
+                    owner.dispatchBreak(notification, entry);
+                    return;
+                }
+            }
+            logger.debug("No owning session for lease break {}", notification.getLeaseKey());
+            return;
+        }
+        leaseManager.dispatchBreak(notification);
     }
 
     private static int peekStructureSize(SMB2PacketData packetData) {

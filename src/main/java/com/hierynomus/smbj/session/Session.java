@@ -62,7 +62,6 @@ public class Session implements AutoCloseable {
     private long sessionId;
 
     private volatile Connection connection;
-    private final com.hierynomus.smbj.connection.LeaseManager leaseManager = new com.hierynomus.smbj.connection.LeaseManager();
     private volatile Connection originalSigningConnection;
     private volatile Connection bootstrapAnchor;
     private final java.util.Set<Long> bootstrapMessageIds = java.util.concurrent.ConcurrentHashMap.newKeySet();
@@ -325,7 +324,6 @@ public class Session implements AutoCloseable {
     public void logoff() throws TransportException {
         stopAsyncWrites();
         try {
-            leaseManager.close();
             logger.info("Logging off session {} from host {}", sessionId, connection.getRemoteHostname());
             for (Share share : treeConnectTable.getOpenTreeConnects()) {
                 try {
@@ -384,12 +382,14 @@ public class Session implements AutoCloseable {
     @Override
     public void close() throws IOException {
         java.util.List<Connection> pending;
+        java.util.List<Connection> established;
         java.util.Set<Connection> owned;
         synchronized (channels) {
             if (closing) {
                 return;
             }
             closing = true;
+            established = new java.util.ArrayList<>(channels);
             pending = new java.util.ArrayList<>();
             for (java.util.Map.Entry<Connection, Boolean> entry : pendingChannels.entrySet()) {
                 if (entry.getValue()) pending.add(entry.getKey());
@@ -399,9 +399,6 @@ public class Session implements AutoCloseable {
         }
         // Close pending transports before LOGOFF so authentication cannot publish a late channel.
         for (Connection channel : pending) {
-            if (channel.getOwningSession() != this) {
-                continue;
-            }
             try {
                 channel.close(true);
             } catch (IOException failure) {
@@ -426,9 +423,13 @@ public class Session implements AutoCloseable {
                 channelKeys.clear();
                 ownedChannels.clear();
             }
-            leaseManager.abort();
-            if (bus != null) {
-                bus.unsubscribe(this);
+            try {
+                connection.releaseSessionLeases(this);
+                for (Connection channel : established) {
+                    if (channel != connection) channel.releaseSessionLeases(this);
+                }
+            } finally {
+                if (bus != null) bus.unsubscribe(this);
             }
         }
     }
@@ -447,7 +448,11 @@ public class Session implements AutoCloseable {
             ownedChannels.clear();
         }
         stopAsyncWrites();
-        bus.unsubscribe(this);
+        try {
+            connection.releaseSessionLeases(this);
+        } finally {
+            bus.unsubscribe(this);
+        }
     }
 
     /** Checks that a channel can carry the requests sized by this session's existing and future Shares. */
@@ -505,7 +510,7 @@ public class Session implements AutoCloseable {
     }
 
     public com.hierynomus.smbj.connection.LeaseManager getLeaseManager() {
-        return leaseManager;
+        return connection.getLeaseManager();
     }
 
     public void initializeOriginalKeyMessageIdReservation(long nextMessageId) {
@@ -647,7 +652,7 @@ public class Session implements AutoCloseable {
             throw new IllegalStateException("SMB channel disconnected before binding completed");
         }
         synchronized (channels) {
-            if (closing || channelsFailed.get() || channel.isClosed()) {
+            if (closing || channelsFailed.get() || (multichannel && getChannelCount() == 0) || channel.isClosed()) {
                 throw new IllegalStateException("SMB session or candidate channel is closing or closed");
             }
             channelKeys.put(channel, key);
@@ -678,7 +683,7 @@ public class Session implements AutoCloseable {
 
     public boolean isBindingInProgress(Connection channel) {
         synchronized (channels) {
-            return pendingChannels.contains(channel) && !channels.contains(channel);
+            return pendingChannels.containsKey(channel) && !channels.contains(channel);
         }
     }
 
@@ -695,7 +700,6 @@ public class Session implements AutoCloseable {
         }
         if (channels.isEmpty()) {
             channelsFailed.set(true);
-            leaseManager.abort();
         }
     }
 
@@ -711,10 +715,12 @@ public class Session implements AutoCloseable {
             lastChannel = channels.isEmpty();
             if (lastChannel) {
                 channelsFailed.set(true);
-                leaseManager.abort();
             }
         }
-        if (lastChannel) stopAsyncWrites();
+        if (lastChannel) {
+            stopAsyncWrites();
+            connection.releaseSessionLeases(this);
+        }
     }
 
     // CUSTOM ADDED: abandon an uncertain write generation and release every outstanding request.

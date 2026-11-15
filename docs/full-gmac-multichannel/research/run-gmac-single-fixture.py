@@ -19,6 +19,7 @@ parser.add_argument('--config', type=Path, default=Path('docs/full-gmac-multicha
 profile = parser.add_mutually_exclusive_group()
 parser.add_argument('--java8-home', type=Path)
 profile.add_argument('--async-cancel', action='store_true')
+profile.add_argument('--lease-break', action='store_true')
 profile.add_argument('--public-binding', action='store_true')
 profile.add_argument('--churn', action='store_true')
 parser.add_argument('--churn-cycles', type=int, default=64)
@@ -36,7 +37,7 @@ if not Path('gradlew').is_file():
 if arguments.java8_home:
     if any((arguments.public_anchor_research, arguments.bootstrap_abort_research,
             arguments.unsigned_echo_research, arguments.per_request_research)):
-        parser.error('--java8-home supports the default matrix, --public-binding, --async-cancel or --churn')
+        parser.error('--java8-home supports the default matrix, --public-binding, --async-cancel, --lease-break or --churn')
     if not os.environ.get('JAVA_HOME'):
         parser.error('Select the Java 21 build JDK with JAVA_HOME when using --java8-home')
     arguments.java8_home = arguments.java8_home.resolve()
@@ -54,7 +55,12 @@ if arguments.unsigned_echo_research:
 if arguments.per_request_research:
     if os.environ.get('SMBJ_GMAC_AUX_RESEARCH') != 'true' or not Path('src/it/java/com/hierynomus/smbj/connection/GmacConcurrentBootstrapIT.java').is_file():
         parser.error('--per-request-research requires the detached research checkout and explicit opt-in')
-if arguments.churn:
+if arguments.lease_break:
+    test_class, expected_count, marker, label = ('com.hierynomus.smbj.connection.GmacLeaseBreakIT', 4,
+                                               'GMAC_LEASE ', 'lease notification')
+    if arguments.config == Path('docs/full-gmac-multichannel/research/smb-gmac-gcm.conf'):
+        arguments.config = Path('docs/full-gmac-multichannel/research/smb-gmac-dirleases.conf')
+elif arguments.churn:
     test_class, expected_count, marker, label = ('com.hierynomus.smbj.MultichannelPerformanceIT', 8,
                                                'GMAC_CHURN_COMPLETE ', 'channel churn')
 elif arguments.public_binding:
@@ -142,6 +148,7 @@ try:
         client_environment['SMBJ_JAVA8_PUBLIC_BINDING'] = str(arguments.public_binding).lower()
         client_environment['SMBJ_JAVA8_ASYNC_CANCEL'] = str(arguments.async_cancel).lower()
         client_environment['SMBJ_JAVA8_CHURN'] = str(arguments.churn).lower()
+        client_environment['SMBJ_JAVA8_LEASE_BREAK'] = str(arguments.lease_break).lower()
         command += ['-Porg.gradle.java.installations.paths=' + str(arguments.java8_home) + ',' + os.environ['JAVA_HOME'],
                     '-Porg.gradle.java.installations.auto-detect=false', '-Porg.gradle.java.installations.auto-download=false',
                     '--init-script', 'docs/full-gmac-multichannel/research/java8-runtime-profile.gradle', 'java8RuntimeTest']
@@ -182,6 +189,12 @@ try:
         assert sum('result=expected_' in line and 'nonce_reuse_detected' in line for line in metadata['profiles']) == 2
     assert all('signing=AES_GMAC' in line for line in metadata['profiles'])
     assert all('cipher=AES_128_GCM' in line for line in metadata['profiles'] if 'encrypt=true' in line)
+    if arguments.lease_break:
+        for key, prefix, count in (('lease_audits', 'AUXWIRE_LEASE ', 4),
+                                   ('wire_audits', 'AUXWIRE_COMPLETE ', 4),
+                                   ('gcm_audits', 'AUXWIRE_GCM ', 2)):
+            metadata[key] = [line.strip() for line in text.splitlines() if line.startswith(prefix)]
+            assert len(metadata[key]) == count, (key, metadata[key])
     if arguments.java8_home:
         assert all('java=1.8.' in line for line in metadata['profiles'])
         expected = {'PromiseBackedFutureTest': 5, 'RequestCancellationTest': 9,

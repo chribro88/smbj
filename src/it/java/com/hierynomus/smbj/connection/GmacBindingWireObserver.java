@@ -155,6 +155,11 @@ final class GmacBindingWireObserver extends SocketFactory {
     }
 
     synchronized void verifyAndReport(String run, int replacements, int minimumOperational) throws GeneralSecurityException {
+        verifyAndReport(run, replacements, minimumOperational, 32, 4);
+    }
+
+    synchronized void verifyAndReport(String run, int replacements, int minimumOperational,
+                                      int minimumTransforms, int minimumLogoffs) throws GeneralSecurityException {
         Map<String, String> authenticatedInputs = new HashMap<>();
         Set<String> actualKeys = new HashSet<>();
         Set<String> bindingRequests = new HashSet<>();
@@ -237,6 +242,11 @@ final class GmacBindingWireObserver extends SocketFactory {
         assertTrue(operational + encryptedOperational >= minimumOperational, "Expected application traffic must be included in the independent verification");
         for (ObservedSocket socket : sockets) {
             assertTrue(socket.isClosed());
+            long next = 0;
+            for (Map.Entry<Long, Integer> range : socket.requestRanges.entrySet()) {
+                assertEquals(next, range.getKey().longValue(), "Native allocation ranges must have no gaps or overlaps");
+                next += range.getValue();
+            }
             if (socket.injectedClose) {
                 System.out.printf("AUXWIRE_FAULT run=%s connection=%d partialClientBytes=%d partialServerBytes=%d%n",
                         run, socket.id, socket.pending[0].size() + socket.partialClientBytes, socket.pending[1].size());
@@ -249,11 +259,36 @@ final class GmacBindingWireObserver extends SocketFactory {
         System.out.printf("AUXWIRE_COMPLETE run=%s replacements=%d observedEvents=%d independentlyVerified=%d preparedOnly=%d operationalSignedMessages=%d actualKeyDomains=%d distinctMessageNonceReuses=0 transcriptFingerprint=%s%n",
                 run, replacements, events.size(), verified, preparedOnly, operational, actualKeys.size(), hex(transcript.digest()));
         if (!encryptionKeys.isEmpty()) {
-            assertTrue(verifiedTransforms >= 32); assertTrue(encryptedOperational >= minimumOperational);
-            assertTrue(encryptedLogoffs >= 4, "Abort LOGOFF requests and their real replies must be encrypted");
+            assertTrue(verifiedTransforms >= minimumTransforms); assertTrue(encryptedOperational >= minimumOperational);
+            assertTrue(encryptedLogoffs >= minimumLogoffs, "Expected LOGOFF requests and replies must be encrypted");
             System.out.printf("AUXWIRE_GCM run=%s verifiedTransforms=%d encryptedOperationalMessages=%d encryptedLogoffFrames=%d distinctMessageNonceReuses=0%n",
                     run, verifiedTransforms, encryptedOperational, encryptedLogoffs);
         }
+    }
+
+    synchronized void verifyLeaseBreaks(Connection survivingChannel) {
+        int survivor = owners.get(survivingChannel).id;
+        int notifications = 0, acknowledgments = 0;
+        int unsignedPlaintext = 0, zeroSession = 0, sentinelMid = 0;
+        Set<String> survivingBreaks = new HashSet<>(), survivingAcks = new HashSet<>();
+        for (Event event : events) {
+            if (event.leaseNotification()) {
+                notifications++;
+                if (!event.signed && !event.encrypted) unsignedPlaintext++;
+                if (event.sessionId == 0) zeroSession++;
+                if (event.mid == -1) sentinelMid++;
+                if (event.connection == survivor) survivingBreaks.add(hex(Arrays.copyOfRange(event.wire, 72, 88)));
+            } else if (!event.server && event.command == 18) {
+                assertTrue(event.encrypted || event.signed, "Every lease acknowledgment must be authenticated");
+                acknowledgments++;
+                if (event.connection == survivor) survivingAcks.add(hex(Arrays.copyOfRange(event.wire, 72, 88)));
+            }
+        }
+        assertTrue(notifications >= 2); assertTrue(acknowledgments >= 2);
+        assertFalse(survivingBreaks.isEmpty(), "Native break must arrive on the surviving transport");
+        assertTrue(survivingAcks.containsAll(survivingBreaks), "Each surviving-channel break key must be acknowledged");
+        System.out.printf("AUXWIRE_LEASE notifications=%d authenticatedAcknowledgments=%d survivingBreakKeys=%d unsignedPlaintextNotifications=%d zeroSessionNotifications=%d sentinelMidNotifications=%d%n",
+                notifications, acknowledgments, survivingBreaks.size(), unsignedPlaintext, zeroSession, sentinelMid);
     }
 
     private String fingerprint(byte[] bytes) throws GeneralSecurityException {
@@ -292,9 +327,10 @@ final class GmacBindingWireObserver extends SocketFactory {
     private final class ObservedSocket extends Socket {
         final int id;
         final ByteArrayOutputStream[] pending = {new ByteArrayOutputStream(), new ByteArrayOutputStream()};
-        long next;
+        long grantedEnd = 1;
         long credits = 1;
         final Set<Long> requests = new HashSet<>();
+        final java.util.SortedMap<Long, Integer> requestRanges = new java.util.TreeMap<>();
         final Map<Long, Integer> earlyGrants = new HashMap<>();
         boolean failBinding;
         volatile boolean injectedClose;
@@ -408,18 +444,20 @@ final class GmacBindingWireObserver extends SocketFactory {
                     if (!event.server && event.signed && event.connection == originalSocket && event.sessionId == mainSessionId
                             && event.command != 1) originalApplicationTraffic = true;
                     assertEquals(0, ByteBuffer.wrap(event.wire).order(ByteOrder.LITTLE_ENDIAN).getInt(20), "Compound traffic is outside this prototype");
-                    if (event.server) {
+                    if (event.server && !event.leaseNotification()) {
+                        grantedEnd += event.creditGrant;
                         // A loopback response can be read before the writer records its completed write.
                         if (requests.contains(event.mid)) credits += event.creditGrant;
                         else earlyGrants.merge(event.mid, event.creditGrant, Integer::sum);
                     }
-                    else if (event.command != 12) {
-                        assertEquals(next, event.mid, "Every request must consume the lowest native sequence range");
+                    else if (!event.server && event.command != 12) {
                         int charge = Math.max(1, event.creditCharge);
+                        assertTrue(event.mid >= 0 && event.mid <= grantedEnd - charge,
+                                "A request's range must already have been granted by this connection");
                         assertTrue(credits >= charge, "Native per-connection credits must not be exceeded");
-                        next += charge;
                         credits -= charge;
                         assertTrue(requests.add(event.mid));
+                        requestRanges.put(event.mid, charge);
                         Integer grant = earlyGrants.remove(event.mid);
                         if (grant != null) credits += grant;
                     }
@@ -444,6 +482,11 @@ final class GmacBindingWireObserver extends SocketFactory {
         final byte[] wire;
         boolean preparedOnly;
         boolean encrypted;
+
+        boolean leaseNotification() {
+            return server && command == 18 && wire.length >= 108
+                    && ByteBuffer.wrap(wire).order(ByteOrder.LITTLE_ENDIAN).getShort(64) == 44;
+        }
 
         Event(int id, int connection, boolean server, byte[] wire) {
             this.id = id; this.connection = connection; this.server = server; this.wire = wire;

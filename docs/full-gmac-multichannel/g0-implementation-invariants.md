@@ -143,6 +143,17 @@ cannot become a numeric broadcast. Existing numeric constructors and event value
 equality remain compatible; SDK emitters use the scoped constructors. See
 [validation-cleanup-event-identity.json](validation-cleanup-event-identity.json).
 
+Directory lease state stays with the logical session's canonical connection
+while any bound channel survives. Receive dispatch resolves the lease key among
+the receiving channel's established sessions and checks the exact Session owner;
+a nonzero header SessionId additionally restricts that search. Queued work keeps
+the resolved entry and Session identities so queued work cannot switch to a
+replacement owner. Session closure removes only that owner's leases and channel
+registrations, including after failed LOGOFF. Last-channel loss releases the
+retired canonical manager; an in-flight binding cannot republish a multichannel
+session after last-channel loss. The native notification variant and remaining lease
+limits are recorded in [validation-lease-lifetime.json](validation-lease-lifetime.json).
+
 An unmanaged direct Session can retain its original connection. Its original-key
 sends, including reauthentication, use the same monotonic reservation callback
 as binding. This preserves uniqueness while allowing original traffic to raise H;

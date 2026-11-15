@@ -138,7 +138,7 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
 
         this.packetHandlerChain = new SMB3DecryptingPacketHandler(sessionTable, encryptor).setNext(
             new SMB2CompoundedPacketHandler(outstandingRequests, sessionTable, signatory, this).setNext(
-                new SMB2LeaseBreakPacketHandler(this::dispatchLeaseBreak).setNext(
+                new SMB2LeaseBreakPacketHandler(leaseManager, sessionTable).setNext(
                     new SMB2CreditGrantingPacketHandler(sequenceWindow).setNext(
                         new SMB2AsyncResponsePacketHandler(outstandingRequests).setNext(
                             new SMB2ProcessResponsePacketHandler(messageConverter, outstandingRequests).setNext(
@@ -255,7 +255,7 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
             transport.disconnect();
         } finally {
             try {
-                leaseManager.abort();
+                closeLeaseManagerIfUnused();
             } finally {
                 bus.unsubscribe(this);
                 if (connectionContext != null) {
@@ -673,20 +673,20 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
         return owningSession;
     }
 
-    private void dispatchLeaseBreak(com.hierynomus.mssmb2.messages.SMB2LeaseBreakNotification notification) {
+    /** Release a logical session's leases after its last channel or its owner closes. */
+    public void releaseSessionLeases(Session session) {
+        if (session.getChannelCount() != 0) return;
+        sessionTable.removeSession(session.getSessionId(), session);
+        if (session.getConnection() == this) leaseManager.releaseSession(session);
+        closeLeaseManagerIfUnused();
+    }
+
+    private void closeLeaseManagerIfUnused() {
+        if (!isClosed()) return;
         for (Session session : sessionTable.activeSessions()) {
-            LeaseManager owner = session.getLeaseManager();
-            if (owner.lookup(notification.getLeaseKey()) != null) {
-                owner.dispatchBreak(notification);
-                return;
-            }
-            owner = session.getConnection().getLeaseManager();
-            if (owner.lookup(notification.getLeaseKey()) != null) {
-                owner.dispatchBreak(notification);
-                return;
-            }
+            if (session.getConnection() == this && session.getChannelCount() > 0) return;
         }
-        leaseManager.dispatchBreak(notification);
+        leaseManager.abort();
     }
 
     @Handler
@@ -695,6 +695,8 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
         Session session = sessionTable.find(loggedOff.getSessionId());
         if (loggedOff.matchesSession(session)) {
             sessionTable.removeSession(loggedOff.getSessionId(), session);
+            if (session.getConnection() == this) leaseManager.releaseSession(session);
+            closeLeaseManagerIfUnused();
         }
         logger.debug("Session << {} >> logged off", loggedOff.getSessionId());
     }
