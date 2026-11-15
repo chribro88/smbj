@@ -63,11 +63,15 @@ class ResponseAuthenticationTest {
 
     @ParameterizedTest
     @ValueSource(longs = {0, 47, 48, 999})
-    void signedReplyUsesRequestSessionKeyDespiteResponseSession(long responseSession) throws Exception {
+    void signedReplyRequiresMatchingRequestSessionAndItsKey(long responseSession) throws Exception {
         try (Fixture f = new Fixture(true)) {
             f.connection.handle(new SMB2PacketData(response(responseSession, new byte[16])));
-            assertTrue(f.request.getPromise().isFulfilled());
-            assertEquals(8, f.connection.sequenceWindow.available());
+            if (responseSession == 47) {
+                assertTrue(f.request.getPromise().isFulfilled());
+                assertEquals(8, f.connection.sequenceWindow.available());
+            } else {
+                f.assertRejected();
+            }
         }
     }
 
@@ -82,31 +86,38 @@ class ResponseAuthenticationTest {
 
     @ParameterizedTest
     @ValueSource(longs = {0, 47, 48, 999})
-    void optionalSigningStillAllowsUnsignedReply(long responseSession) throws Exception {
+    void optionalSigningAllowsUnsignedReplyOnlyForItsRequestSession(long responseSession) throws Exception {
         try (Fixture f = new Fixture(false)) {
             f.connection.handle(new SMB2PacketData(response(responseSession, null)));
-            assertTrue(f.request.getPromise().isFulfilled());
-            assertEquals(8, f.connection.sequenceWindow.available());
+            if (responseSession == 47) {
+                assertTrue(f.request.getPromise().isFulfilled());
+                assertEquals(8, f.connection.sequenceWindow.available());
+            } else {
+                f.assertRejected();
+            }
         }
     }
 
     @Test
     void optionalSigningStillRejectsAnInvalidSignature() throws Exception {
         try (Fixture f = new Fixture(false)) {
-            byte[] wire = response(0, new byte[16]); wire[48] ^= 1;
+            byte[] wire = response(47, new byte[16]); wire[48] ^= 1;
             f.connection.handle(new SMB2PacketData(wire));
             f.assertRejected();
         }
     }
 
     @ParameterizedTest
-    @ValueSource(longs = {0, 48, 999})
-    void signedErrorReplyUsesRequestSessionKey(long responseSession) throws Exception {
+    @ValueSource(longs = {0, 47, 48, 999})
+    void signedErrorReplyRequiresMatchingRequestSessionAndItsKey(long responseSession) throws Exception {
         try (Fixture f = new Fixture(true)) {
             f.connection.handle(new SMB2PacketData(response(responseSession, new byte[16], 0xc0000022)));
-            assertTrue(f.request.getPromise().isFulfilled());
-            assertEquals(0xc0000022L, f.request.getPromise().future().get().getHeader().getStatusCode());
-            assertEquals(8, f.connection.sequenceWindow.available());
+            if (responseSession == 47) {
+                assertEquals(0xc0000022L, f.request.getPromise().future().get().getHeader().getStatusCode());
+                assertEquals(8, f.connection.sequenceWindow.available());
+            } else {
+                f.assertRejected();
+            }
         }
     }
 
@@ -122,7 +133,7 @@ class ResponseAuthenticationTest {
     @Test
     void unsignedInterimReplyRemainsPermitted() throws Exception {
         try (Fixture f = new Fixture(true)) {
-            byte[] wire = response(0, null);
+            byte[] wire = response(47, null, 0x103);
             ByteBuffer header = ByteBuffer.wrap(wire).order(ByteOrder.LITTLE_ENDIAN);
             header.putInt(8, 0x103); header.putInt(16, 3); header.putLong(32, 19);
             f.connection.handle(new SMB2PacketData(wire));
@@ -196,9 +207,9 @@ class ResponseAuthenticationTest {
     @ValueSource(booleans = {false, true})
     void encryptedReplyWithMismatchedInnerSessionSignalsTransportFailure(boolean jce) throws Exception {
         try (Fixture f = new Fixture(true, jce)) {
-            assertThrows(TransportException.class,
+            TransportException failure = assertThrows(TransportException.class,
                     () -> f.connection.handle(new SMB3EncryptedPacketData(encrypted(response(48, null), 47))));
-            f.assertRejected();
+            f.assertAborted(failure, f.request);
         }
     }
 
@@ -219,18 +230,19 @@ class ResponseAuthenticationTest {
     void encryptedCompoundRejectsForeignMemberBeforeCompletingAnyRequest(boolean jce) throws Exception {
         try (Fixture f = new Fixture(true, jce)) {
             Request second = f.register(124, 48);
-            assertThrows(TransportException.class, () -> f.connection.handle(
+            TransportException failure = assertThrows(TransportException.class, () -> f.connection.handle(
                     new SMB3EncryptedPacketData(encrypted(compound(123, 47, 124, 48), 47))));
-            f.assertRejected();
-            assertFalse(second.getPromise().isFulfilled());
+            f.assertAborted(failure, f.request, second);
         }
     }
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void encryptedCompoundCanDiscardFirstReplyAndStillReadNextMember(boolean jce) throws Exception {
+    void encryptedCompoundRejectsWholeFrameIfFirstReplyIsUnknown(boolean jce) throws Exception {
         try (Fixture f = new Fixture(true, jce)) {
             f.connection.handle(new SMB3EncryptedPacketData(encrypted(compound(999, 47, 123, 47), 47)));
+            f.assertRejected();
+            f.connection.handle(new SMB3EncryptedPacketData(encrypted(response(47, null), 47)));
             assertTrue(f.request.getPromise().isFulfilled());
             assertEquals(8, f.connection.sequenceWindow.available());
         }
@@ -242,9 +254,9 @@ class ResponseAuthenticationTest {
         try (Fixture f = new Fixture(true)) {
             byte[] plain = compound(123, 47, 124, 47);
             ByteBuffer.wrap(plain).order(ByteOrder.LITTLE_ENDIAN).putInt(20, next);
-            assertThrows(Exception.class,
+            TransportException failure = assertThrows(TransportException.class,
                     () -> f.connection.handle(new SMB3EncryptedPacketData(encrypted(plain, 47))));
-            f.assertRejected();
+            f.assertAborted(failure, f.request);
         }
     }
 
@@ -252,9 +264,9 @@ class ResponseAuthenticationTest {
     void encryptedCompoundRejectsTruncatedHeaderBeforeCompletingFirstRequest() throws Exception {
         try (Fixture f = new Fixture(true)) {
             byte[] plain = Arrays.copyOf(compound(123, 47, 124, 47), 132);
-            assertThrows(Exception.class,
+            TransportException failure = assertThrows(TransportException.class,
                     () -> f.connection.handle(new SMB3EncryptedPacketData(encrypted(plain, 47))));
-            f.assertRejected();
+            f.assertAborted(failure, f.request);
         }
     }
 
@@ -361,6 +373,16 @@ class ResponseAuthenticationTest {
             assertFalse(request.getPromise().isFulfilled());
             assertSame(request, connection.outstandingRequests.getRequestByMessageId(123L));
             assertEquals(1, connection.sequenceWindow.available());
+        }
+
+        void assertAborted(TransportException failure, Request... requests) throws Exception {
+            assertTrue(connection.isClosed());
+            assertEquals(1, connection.sequenceWindow.available());
+            for (Request pending : requests) {
+                assertSame(failure, AbortTestConnection.transportFailure(pending.getPromise().future()));
+                assertNull(connection.outstandingRequests.getRequestByMessageId(pending.getMessageId()));
+                assertNull(connection.outstandingRequests.getRequestByCancelId(pending.getCancelId()));
+            }
         }
 
         @Override public void close() throws Exception { connection.close(true); }

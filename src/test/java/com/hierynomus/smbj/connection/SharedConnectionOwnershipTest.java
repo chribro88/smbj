@@ -153,10 +153,11 @@ class SharedConnectionOwnershipTest {
             set(managedContext, "negotiatedProtocol", new NegotiatedProtocol(SMB2Dialect.SMB_3_0, 65536, 65536, 65536, true));
             set(managedContext, "preauthIntegrityHashValue", new byte[0]);
             set(managed, "connectionContext", managedContext);
-            assertSame(a, managed.bind(a));
-            assertThrows(IllegalStateException.class,
-                    () -> managed.authenticate(new AuthenticationContext("B", new char[0], "review")));
-            assertThrows(java.io.IOException.class, () -> managed.bind(b));
+            assertSame(a, managed.bind(a, true));
+            Session auxiliary = managed.authenticate(new AuthenticationContext("B", new char[0], "review"));
+            echo(auxiliary);
+            auxiliary.close();
+            assertThrows(java.io.IOException.class, () -> managed.bind(b, true));
             echo(b);
             transports.get(1).holdBinding = pendingBinding;
             Future<Session> binding;
@@ -182,7 +183,7 @@ class SharedConnectionOwnershipTest {
             echo(b);
             assertNull(callerOwned.getSessionTable().find(a.getSessionId()));
             assertSame(b, callerOwned.getSessionTable().find(b.getSessionId()));
-            assertEquals(1, transports.stream().mapToInt(transport -> transport.logoffs.get()).sum());
+            assertEquals(2, transports.stream().mapToInt(transport -> transport.logoffs.get()).sum());
         } finally {
             try {
                 if (owned != null) owned.close(true);

@@ -367,6 +367,7 @@ public class LeaseManager implements Closeable {
      * work OFF the read thread.
      */
     public void dispatchBreak(final SMB2LeaseBreakNotification notification) {
+        if (closed.get()) return;
         dispatchBreak(notification, lookup(notification.getLeaseKey()));
     }
 

@@ -93,13 +93,9 @@ class MultichannelLeaseLifecycleTest {
                 assertTrue(fixture.primary.isClosed());
                 assertTrue(fixture.secondary.isConnected());
                 assertEquals(0, fixture.second.closes.get());
-                if (legacyRegistry) {
-                    assertNull(lease.getCacheDirectory());
-                    assertNull(owner.lookup(lease.getLeaseKey()));
-                } else {
-                    assertSame(directory, lease.getCacheDirectory());
-                    assertSame(lease, owner.lookup(lease.getLeaseKey()));
-                }
+                assertSame(fixture.primary.getLeaseManager(), fixture.session.getLeaseManager());
+                assertSame(directory, lease.getCacheDirectory());
+                assertSame(lease, owner.lookup(lease.getLeaseKey()));
                 fixture.secondary.close(true);
                 assertNull(lease.getCacheDirectory());
                 assertNull(owner.lookup(lease.getLeaseKey()));
