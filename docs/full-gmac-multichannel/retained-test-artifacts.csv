@@ -131,3 +131,13 @@ original_path,archive,sha256,original_allocated_bytes,archive_allocated_bytes
 /tmp/smbj-native-rebase-3d55cce,/tmp/smbj-retained-evidence/smbj-native-development-8131d13.tar.gz,a10329db579688b4666f34f1950e12c1afacdc612e3be1756f2f206e29718c22,28504064,3096576
 /tmp/smbj-kerberos-cache-expiry-158164c,/tmp/smbj-retained-evidence/smbj-kerberos-cache-expiry-e5b98c0.tar.gz,b3a111ad3765a83bfe48083c49eb91c1894d646d9ddd0344718ea03e9a03c836,454656,65536
 /tmp/smbj-kerberos-cache-expiry-disposal-e5b98c0,/tmp/smbj-retained-evidence/smbj-kerberos-cache-expiry-disposal-3c7f65d.tar.gz,92dc3094cac6fc68a4ef8768f38256268d3cc081aba7f0dda3bdaecc851908a0,471040,69632
+/tmp/smbj-peer-denial-validation-e145831,/tmp/smbj-retained-evidence/smbj-peer-denial-32680d9.tar.gz,fa827d13a9916fc245e26d21f914dcec5564602af653ca1847076e0199040979,14336000,1540096
+/tmp/smbj-kerberos-peer-rejection-a837df6,/tmp/smbj-retained-evidence/smbj-peer-denial-negative-e145831.tar.gz,afe2de508bf1b1368ff10687109cc692e6f43a17a9f897dbf72213cb27a3ead4,,258048
+/tmp/smbj-kerberos-peer-rejection-retry-46c241b,/tmp/smbj-retained-evidence/smbj-peer-denial-negative-e145831.tar.gz,afe2de508bf1b1368ff10687109cc692e6f43a17a9f897dbf72213cb27a3ead4,,258048
+/tmp/smbj-kerberos-damaged-token-46c241b,/tmp/smbj-retained-evidence/smbj-peer-denial-negative-e145831.tar.gz,afe2de508bf1b1368ff10687109cc692e6f43a17a9f897dbf72213cb27a3ead4,,258048
+/tmp/smbj-kerberos-damaged-token-byteorder-93306b4,/tmp/smbj-retained-evidence/smbj-peer-denial-negative-e145831.tar.gz,afe2de508bf1b1368ff10687109cc692e6f43a17a9f897dbf72213cb27a3ead4,,258048
+/tmp/smbj-kerberos-peer-error-diagnostic-98a9cd3,/tmp/smbj-retained-evidence/smbj-peer-denial-negative-e145831.tar.gz,afe2de508bf1b1368ff10687109cc692e6f43a17a9f897dbf72213cb27a3ead4,,258048
+/tmp/smbj-kerberos-peer-error-resume-2300ea8,/tmp/smbj-retained-evidence/smbj-peer-denial-negative-e145831.tar.gz,afe2de508bf1b1368ff10687109cc692e6f43a17a9f897dbf72213cb27a3ead4,,258048
+/tmp/smbj-kerberos-peer-error-focused-e145831,/tmp/smbj-retained-evidence/smbj-peer-denial-negative-e145831.tar.gz,afe2de508bf1b1368ff10687109cc692e6f43a17a9f897dbf72213cb27a3ead4,,258048
+/tmp/smbj-g0-spec-pins-93306b4,/tmp/smbj-retained-evidence/smbj-peer-denial-negative-e145831.tar.gz,afe2de508bf1b1368ff10687109cc692e6f43a17a9f897dbf72213cb27a3ead4,,258048
+/tmp/smbj-peer-denial-negative-manifest.json,/tmp/smbj-retained-evidence/smbj-peer-denial-negative-e145831.tar.gz,afe2de508bf1b1368ff10687109cc692e6f43a17a9f897dbf72213cb27a3ead4,,258048

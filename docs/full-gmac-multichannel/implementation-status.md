@@ -65,6 +65,24 @@ an expired ticket on the wire. See
 [the cache-expiry validation](validation-kerberos-cache-expiry.json) for the
 fixture, boundary, source hashes and compact evidence. Full G0 remains open.
 
+The verified peer-denial follow-up at `b526103` fixes a separate lifetime defect:
+after a signed Kerberos `STATUS_LOGON_FAILURE`, the server has deleted the remote
+session, but SMBJ previously admitted old-handle I/O until it timed out. The
+verified rejection now fences and retires that logical Session through the
+existing ownership cleanup, without target LOGOFF. Borrowed connections and
+older unrelated sessions survive; recovery uses a fresh Session and open.
+Local credential errors and unauthenticated responses do not trigger this path.
+The full local check at `95ab68c` passes **1,177 tests in 118 suites**; all eight
+BC/Direct/Java 21 native Kerberos profiles pass at `32680d9`, including signing
+and GCM, both key sizes and caller ownership modes. All **236** created GSS
+contexts are disposed, including **16** pre-key failures. Independent per-profile
+audits verify **804 GMAC inputs and 454 GCM transforms** with no observed
+distinct-message nonce reuse. All eight owned containers are removed. The new
+513-class production JAR still targets Java 8. See
+[the peer-denial validation](validation-peer-reauthentication-denial.json) for
+the reproduced failure, exact revisions, artifact hash and compact evidence.
+Longer-history cost and the remaining complete G0 matrix stay open.
+
 Directory lease keys, parent-key lookups and cached listings now use the exact
 TreeConnect identity and normalized path. Two sessions, two shares or a reused
 numeric TreeId cannot borrow another tree's cache. Scoped entries keep an

@@ -82,6 +82,25 @@ five established keys, preauthentication value, original-key reservations and
 encryption-counter owner remain unchanged. Later binding still uses K. Closeable
 authentication attempts are disposed on success and failure.
 
+A verified peer rejection has a different lifetime boundary from a local GSS
+credential failure. The [pinned specification](research/ms-smb2-revision-pin.md)
+requires server-side GSS failure to delete the remote session and its opens.
+After verifying the response's SessionId and signature, the client accepts its
+credits and fences the logical Session before releasing its local ownership.
+Pending and established owned channels are closed, borrowed transports survive,
+and the scoped SessionLoggedOff event removes only this Session's table entries.
+Async writes, leases and nested-session cleanup use the existing close lifecycle;
+no target LOGOFF is sent to the already deleted remote session.
+
+The established key material and burned signing inputs are not reset. The old
+Session cannot reauthenticate, bind another channel or admit new I/O; recovery
+requires a fresh authenticated Session and fresh opens. Local credential errors,
+an authenticator throwing an SMBApiException, and unauthenticated response errors
+do not invoke this peer-rejection retirement path. The peer status remains the
+primary exception if retirement or authentication-context cleanup fails.
+The focused and eight-profile native evidence is recorded in
+[peer-denial validation](validation-peer-reauthentication-denial.json).
+
 Selected Closeable authenticators also belong to the initial-authentication or
 binding attempt, starting before initialization. Their GSS contexts are released
 after the final token/key/signature checks and before local session/channel
