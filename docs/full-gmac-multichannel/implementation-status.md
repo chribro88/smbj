@@ -96,6 +96,20 @@ the peer-denial artifact. See [the longer churn record](validation-churn-1000.js
 This supplies the longer-history operating point; comparative throughput,
 cancellation pressure and allocation profiling remain under the release gates.
 
+The planned concurrent-binding counts now pass at `fadf285`/`99812a1`: the public
+NTLM harness holds **two, four and eight** binds concurrently on Direct and Async,
+with independent tag and credit-window checks. The Java 21 suite passes **16/16**;
+the actual Java 8 run passes the same **16 native cases plus 34 runtime tests**.
+Seven successful traces per runtime verify **9,888 GMAC inputs in total** with
+zero observed distinct-message nonce reuse. The nine rejection/cleanup cases per
+runtime are separate checks and are not included in that tag count. Async capture
+uses serializer inputs and received frames; Direct capture uses socket streams.
+The acceptance harness checks the exact scenario and audit set. All three owned
+fixtures, including the earlier compile-only diagnostic, are removed. See
+[the concurrency qualification](validation-concurrent-binding-matrix.json).
+The G0-03 matrix row is complete for its named variants. The original-key terminal
+cursor's immediate-failure behavior and the remaining G0 evidence audit stay open.
+
 Directory lease keys, parent-key lookups and cached listings now use the exact
 TreeConnect identity and normalized path. Two sessions, two shares or a reused
 numeric TreeId cannot borrow another tree's cache. Scoped entries keep an
