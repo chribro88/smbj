@@ -31,7 +31,6 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.*;
 
-/** Same socket-level regressions run unchanged on baseline, #907, #910 and the feature stack. */
 @Timeout(15)
 class TransportLifecycleReviewTest {
     static final PacketHandlers<SMBPacketData<?>, SMBPacket<?, ?>> HANDLERS = new PacketHandlers<>(

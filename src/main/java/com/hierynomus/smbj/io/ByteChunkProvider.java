@@ -61,7 +61,7 @@ public abstract class ByteChunkProvider implements Closeable {
         }
     }
 
-    // CUSTOM ADDED: WRITE Length bounds bytes consumed, independently of credit rounding.
+    // WRITE Length bounds bytes consumed, independently of credit rounding.
     public void writeBytes(Buffer<?> buffer, int length) {
         lastWriteSize = 0;
         while (lastWriteSize < length) {

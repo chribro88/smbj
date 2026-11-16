@@ -164,7 +164,7 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
         connect(hostname, new InetSocketAddress(hostname, port));
     }
 
-    // CUSTOM ADDED: preserve the authentication hostname while selecting another server interface.
+    // preserve the authentication hostname while selecting another server interface.
     public void connect(String hostname, InetSocketAddress address) throws IOException {
         final int port = address.getPort();
         if (isConnected()) {
@@ -411,7 +411,7 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
         }).establish(authContext);
     }
 
-    // CUSTOM ADDED: bind this independent physical connection to an existing logical session.
+    // bind this independent physical connection to an existing logical session.
     public Session bind(Session session) throws IOException {
         return bind(session, false);
     }

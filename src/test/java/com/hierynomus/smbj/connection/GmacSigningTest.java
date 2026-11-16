@@ -126,7 +126,7 @@ class GmacSigningTest {
     }
 
     // smb-rs f4524d032c8951cc288e1c8231ad68588583abda, signer.rs.
-    // The vector's MIT notice is retained in docs/gmac-test-vector-notices.md.
+    // MIT test-vector notice: META-INF/NOTICE-gmac.txt.
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void fixedLogoffVectorAtNonzeroOffset(boolean jce) {

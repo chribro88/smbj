@@ -76,7 +76,7 @@ public class Session implements AutoCloseable {
     private ReentrantReadWriteLock nestedSessionsRwLock = new ReentrantReadWriteLock();
     private AuthenticationContext userCredentials;
     private SessionContext sessionContext;
-    // CUSTOM ADDED: one session/tree/open namespace, independent physical channel credits and signing keys.
+    // one session/tree/open namespace, independent physical channel credits and signing keys.
     private final java.util.concurrent.CopyOnWriteArrayList<Connection> channels = new java.util.concurrent.CopyOnWriteArrayList<>();
     private final java.util.concurrent.ConcurrentMap<Connection, SecretKey> channelKeys = new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.concurrent.atomic.AtomicBoolean channelsFailed = new java.util.concurrent.atomic.AtomicBoolean();
@@ -588,7 +588,7 @@ public class Session implements AutoCloseable {
         return selected;
     }
 
-    // CUSTOM ADDED: CANCEL must use the connection that allocated its MessageId.
+    // CANCEL must use the connection that allocated its MessageId.
     public <T extends SMB2Packet> Future<T> send(SMB2Packet packet, Connection selected) throws TransportException {
         return send(packet, selected, false);
     }
@@ -762,7 +762,7 @@ public class Session implements AutoCloseable {
         }
     }
 
-    // CUSTOM ADDED: abandon an uncertain write generation and release every outstanding request.
+    // abandon an uncertain write generation and release every outstanding request.
     public void failChannels(Throwable failure) {
         if (!channelsFailed.compareAndSet(false, true)) {
             return;

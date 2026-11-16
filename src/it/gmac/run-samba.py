@@ -15,7 +15,7 @@ import xml.etree.ElementTree as ET
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--output', type=Path, required=True)
-parser.add_argument('--config', type=Path, default=Path('docs/full-gmac-multichannel/research/smb-gmac-gcm.conf'))
+parser.add_argument('--config', type=Path, default=Path('src/it/gmac/smb-gmac-gcm.conf'))
 profile = parser.add_mutually_exclusive_group()
 parser.add_argument('--java8-home', type=Path)
 profile.add_argument('--async-cancel', action='store_true')
@@ -24,10 +24,6 @@ profile.add_argument('--lease-isolation', action='store_true')
 profile.add_argument('--public-binding', action='store_true')
 profile.add_argument('--churn', action='store_true')
 parser.add_argument('--churn-cycles', type=int, default=64)
-profile.add_argument('--public-anchor-research', action='store_true')
-profile.add_argument('--bootstrap-abort-research', action='store_true')
-profile.add_argument('--unsigned-echo-research', action='store_true')
-profile.add_argument('--per-request-research', action='store_true')
 arguments = parser.parse_args()
 if not 1 <= arguments.churn_cycles <= 10000:
     parser.error('--churn-cycles must be between 1 and 10000')
@@ -36,54 +32,27 @@ if arguments.churn_cycles != 64 and not arguments.churn:
 if not Path('gradlew').is_file():
     parser.error('Run from the SMBJ feature worktree')
 if arguments.java8_home:
-    if any((arguments.public_anchor_research, arguments.bootstrap_abort_research,
-            arguments.unsigned_echo_research, arguments.per_request_research)):
-        parser.error('--java8-home supports the default matrix, --public-binding, --async-cancel, --lease-break, --lease-isolation or --churn')
     if not os.environ.get('JAVA_HOME'):
         parser.error('Select the Java 21 build JDK with JAVA_HOME when using --java8-home')
     arguments.java8_home = arguments.java8_home.resolve()
     if not (arguments.java8_home / 'bin/java').is_file():
         parser.error('--java8-home must contain bin/java')
-if arguments.public_anchor_research:
-    if os.environ.get('SMBJ_GMAC_AUX_RESEARCH') != 'true' or not Path('src/it/java/com/hierynomus/smbj/session/GmacPublicAnchorIT.java').is_file():
-        parser.error('--public-anchor-research requires the detached research checkout and explicit opt-in')
-if arguments.bootstrap_abort_research:
-    if os.environ.get('SMBJ_GMAC_AUX_RESEARCH') != 'true' or not Path('src/it/java/com/hierynomus/smbj/connection/GmacBootstrapAbortIT.java').is_file():
-        parser.error('--bootstrap-abort-research requires the detached research checkout and explicit opt-in')
-if arguments.unsigned_echo_research:
-    if os.environ.get('SMBJ_GMAC_UNSIGNED_ECHO_RESEARCH') != 'true' or not Path('src/it/java/com/hierynomus/smbj/connection/GmacUnsignedEchoIT.java').is_file():
-        parser.error('--unsigned-echo-research requires the detached research checkout and explicit opt-in')
-if arguments.per_request_research:
-    if os.environ.get('SMBJ_GMAC_AUX_RESEARCH') != 'true' or not Path('src/it/java/com/hierynomus/smbj/connection/GmacConcurrentBootstrapIT.java').is_file():
-        parser.error('--per-request-research requires the detached research checkout and explicit opt-in')
 if arguments.lease_isolation:
     test_class, expected_count, marker, label = ('com.hierynomus.smbj.connection.GmacLeaseIsolationIT', 4,
                                                'GMAC_LEASE_ISOLATION ', 'lease isolation')
-    if arguments.config == Path('docs/full-gmac-multichannel/research/smb-gmac-gcm.conf'):
-        arguments.config = Path('docs/full-gmac-multichannel/research/smb-gmac-lease-isolation.conf')
+    if arguments.config == Path('src/it/gmac/smb-gmac-gcm.conf'):
+        arguments.config = Path('src/it/gmac/smb-gmac-lease-isolation.conf')
 elif arguments.lease_break:
     test_class, expected_count, marker, label = ('com.hierynomus.smbj.connection.GmacLeaseBreakIT', 4,
                                                'GMAC_LEASE ', 'lease notification')
-    if arguments.config == Path('docs/full-gmac-multichannel/research/smb-gmac-gcm.conf'):
-        arguments.config = Path('docs/full-gmac-multichannel/research/smb-gmac-dirleases.conf')
+    if arguments.config == Path('src/it/gmac/smb-gmac-gcm.conf'):
+        arguments.config = Path('src/it/gmac/smb-gmac-dirleases.conf')
 elif arguments.churn:
     test_class, expected_count, marker, label = ('com.hierynomus.smbj.MultichannelPerformanceIT', 8,
                                                'GMAC_CHURN_COMPLETE ', 'channel churn')
 elif arguments.public_binding:
     test_class, expected_count, marker, label = ('com.hierynomus.smbj.connection.PublicGmacBindingIT', 17,
                                                'PUBLIC_GMAC_COMPLETE ', 'public multichannel')
-elif arguments.per_request_research:
-    test_class, expected_count, marker, label = ('com.hierynomus.smbj.connection.GmacConcurrentBootstrapIT', 7,
-                                               'AUXCON_COMPLETE ', 'per-request reservation research')
-elif arguments.unsigned_echo_research:
-    test_class, expected_count, marker, label = ('com.hierynomus.smbj.connection.GmacUnsignedEchoIT', 1,
-                                               'UNSIGNED_ECHO_COMPLETE ', 'unsigned-ECHO research')
-elif arguments.bootstrap_abort_research:
-    test_class, expected_count, marker, label = ('com.hierynomus.smbj.connection.GmacBootstrapAbortIT', 10,
-                                               'BOOTSTRAP_ABORT_COMPLETE ', 'bootstrap-abort research')
-elif arguments.public_anchor_research:
-    test_class, expected_count, marker, label = ('com.hierynomus.smbj.session.GmacPublicAnchorIT', 2,
-                                               'PUBLIC_ANCHOR_COMPLETE ', 'public-anchor research')
 elif arguments.async_cancel:
     test_class, expected_count, marker, label = ('com.hierynomus.smbj.connection.GmacAsyncCancellationIT', 8,
                                                'GMAC_ASYNC ', 'async cancellation')
@@ -101,7 +70,7 @@ init.write_text("""allprojects { tasks.withType(Test).configureEach {
     CHURN_LOGGING
     outputs.upToDateWhen { false }
 } }
-""".replace('CHURN_LOGGING', "systemProperty 'logback.configurationFile', rootProject.file('docs/full-gmac-multichannel/research/kerberos-native/logging-off.xml').absolutePath" if arguments.churn else ''))
+""".replace('CHURN_LOGGING', "systemProperty 'logback.configurationFile', rootProject.file('src/it/gmac/kerberos/logging-off.xml').absolutePath" if arguments.churn else ''))
 image = 'dockurr/samba@sha256:2a0452a12b7a244a22f18d0f233101bb8d4952b5500ae263905e3b9dad3bf2ae'
 config = arguments.config.resolve()
 owner = 'smbj-late-response-' + str(uuid.uuid4())
@@ -167,7 +136,7 @@ try:
         client_environment['SMBJ_JAVA8_LEASE_ISOLATION'] = str(arguments.lease_isolation).lower()
         command += ['-Porg.gradle.java.installations.paths=' + str(arguments.java8_home) + ',' + os.environ['JAVA_HOME'],
                     '-Porg.gradle.java.installations.auto-detect=false', '-Porg.gradle.java.installations.auto-download=false',
-                    '--init-script', 'docs/full-gmac-multichannel/research/java8-runtime-profile.gradle', 'java8RuntimeTest']
+                    '--init-script', 'src/it/gmac/java8-runtime.gradle', 'java8RuntimeTest']
     else:
         selection = test_class + '.sustainedBindingChurnKeepsResourcesBounded' if arguments.churn else test_class
         command += ['integrationTest', '--tests', selection]
@@ -187,22 +156,13 @@ try:
     assert all(int(root.attrib[name]) == 0 for name in ('failures', 'errors', 'skipped')), root.attrib
     metadata['suite'] = dict(root.attrib)
     text = '\n'.join(node.text or '' for node in root.iter('system-out'))
-    markers = ('AUXCON_COMPLETE ', 'AUXCON_BOOTSTRAP_ABORT ', 'AUXCON_NEGATIVE_CONTROL ',
-               'AUXCON_BOOTSTRAP_NEGATIVE_CONTROL ') if arguments.per_request_research else (marker,)
-    metadata['profiles'] = [line.strip() for line in text.splitlines() if line.startswith(markers)]
+    metadata['profiles'] = [line.strip() for line in text.splitlines() if line.startswith(marker)]
     if arguments.churn:
         metadata['samples'] = [line.strip() for line in text.splitlines() if line.startswith('GMAC_CHURN_SAMPLE ')]
         assert len(metadata['samples']) == expected_count * arguments.churn_cycles
         assert all('cycles=' + str(arguments.churn_cycles) + ' ' in line for line in metadata['profiles'])
-    expected_profiles = 8 if arguments.bootstrap_abort_research else expected_count
-    assert len(metadata['profiles']) == expected_profiles, len(metadata['profiles'])
-    assert len(set(metadata['profiles'])) == expected_profiles
-    if arguments.bootstrap_abort_research:
-        metadata['negative_controls'] = [line.strip() for line in text.splitlines() if line.startswith('BOOTSTRAP_ABORT_UNSAFE_CONTROL ')]
-        assert len(metadata['negative_controls']) == 2
-        assert all('result=expected_nonce_reuse_detected' in line for line in metadata['negative_controls'])
-    if arguments.per_request_research:
-        assert sum('result=expected_' in line and 'nonce_reuse_detected' in line for line in metadata['profiles']) == 2
+    assert len(metadata['profiles']) == expected_count, len(metadata['profiles'])
+    assert len(set(metadata['profiles'])) == expected_count
     assert all('signing=AES_GMAC' in line for line in metadata['profiles'])
     assert all('cipher=AES_128_GCM' in line for line in metadata['profiles'] if 'encrypt=true' in line)
     if arguments.lease_break:

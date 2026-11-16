@@ -15,7 +15,7 @@ if not Path('gradlew').is_file():
     parser.error('Run from the SMBJ feature worktree')
 output = arguments.output.resolve()
 output.mkdir(mode=0o700, parents=True, exist_ok=False)
-fixture = Path('docs/full-gmac-multichannel/research/kerberos-native').resolve()
+fixture = Path('src/it/gmac/kerberos').resolve()
 image = 'smbj/kerberos-dc:e097023'
 image_id = 'sha256:9501aa40203bf661632ee44df2bf2a2b1642dd62c6a77f062e9780dc8a23ade9'
 actual = subprocess.check_output(['docker', 'image', 'inspect', '--format', '{{.Id}}', image], text=True).strip()

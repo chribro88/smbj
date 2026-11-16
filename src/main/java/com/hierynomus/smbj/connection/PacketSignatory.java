@@ -186,7 +186,7 @@ public class PacketSignatory implements Signatory {
             }
         }
 
-        // CUSTOM ADDED: preauthentication hashes must cover the actual signed wire bytes.
+        // preauthentication hashes must cover the actual signed wire bytes.
         @Override
         public SMBBuffer getBuffer() {
             return serializedBuffer;

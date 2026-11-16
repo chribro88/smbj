@@ -86,7 +86,7 @@ public class SMBClient implements Closeable {
         return getEstablishedOrConnect(hostname, port);
     }
 
-    // CUSTOM ADDED: pooled connect() cannot create a second TCP channel to the same endpoint.
+    // pooled connect() cannot create a second TCP channel to the same endpoint.
     public Connection openChannel(com.hierynomus.smbj.session.Session session, String hostname, int port) throws IOException {
         java.util.Objects.requireNonNull(session, "session");
         Connection channel = new Connection(config, this, bus, serverList, session);

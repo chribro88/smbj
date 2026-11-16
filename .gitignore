@@ -28,10 +28,3 @@ test-output/
 .metals
 .bloop
 MacIntegrationTest.*
-
-.work/
-*.class
-*.jar
-*.zip
-*.hprof
-*.jfr

@@ -424,7 +424,7 @@ public final class SmbConfig {
             return this;
         }
 
-        // CUSTOM ADDED: control/session binding and server-required signing remain enabled.
+        // control/session binding and server-required signing remain enabled.
         public Builder withOptionalWriteSigning(boolean enabled) {
             config.optionalWriteSigning = enabled;
             return this;

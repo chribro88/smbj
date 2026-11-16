@@ -156,7 +156,7 @@ public class SMBSessionBuilder {
         }
     }
 
-    // CUSTOM ADDED BEGIN: MS-SMB2 3.2.4.2.3 / 3.3.5.5.3, SMB 3.x channel binding.
+    // MS-SMB2 3.2.4.2.3 / 3.3.5.5.3, SMB 3.x channel binding.
     public Session bind(Session session, Signatory signatory) throws IOException {
         return bind(session, signatory, true, null);
     }
@@ -364,7 +364,6 @@ public class SMBSessionBuilder {
             throw new IOException("Malformed SMB " + phase + " response (exchange=" + exchange + ")", e);
         }
     }
-    // CUSTOM ADDED END
 
     private BuilderContext newContext(AuthenticationContext authContext, Authenticator authenticator) {
         BuilderContext ctx = new BuilderContext();

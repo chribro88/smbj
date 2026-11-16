@@ -1,8 +1,8 @@
-# Third-party test-vector notices
+Third-party test-vector notices
 
-The skeleton source is offered under Apache-2.0; the following donor notices apply to the adapted vectors and scenarios described in README.md.
+These notices apply to adapted GMAC test vectors and scenarios.
 
-## hirochachacha/go-smb2 — BSD-2-Clause
+hirochachacha/go-smb2 — BSD-2-Clause
 
 Copyright (c) 2016 Hiroshi Ioka. All rights reserved.
 
@@ -29,9 +29,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-## afiffon/smb-rs — MIT
-
-<!-- markdownlint-disable -->
+afiffon/smb-rs — MIT
 
 Copyright 2025 AVIV N
 

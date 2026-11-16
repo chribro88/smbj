@@ -104,7 +104,7 @@ public class SMB2SessionSetup extends SMB2Packet {
         this.sessionFlags = sessionFlags;
     }
 
-    // CUSTOM ADDED: binding is independent of reconnecting a previous session.
+    // binding is independent of reconnecting a previous session.
     public void setBinding(boolean binding) {
         this.binding = binding;
     }

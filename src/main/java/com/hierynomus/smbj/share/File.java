@@ -149,7 +149,7 @@ public class File extends DiskEntry {
         return writer.writeAsync(provider);
     }
 
-    // CUSTOM ADDED: a single exact request exposes its real status/count for bounded callers.
+    // a single exact request exposes its real status/count for bounded callers.
     public int getWriteRequestSize() {
         return share.getWriteBufferSize();
     }

@@ -1,1 +1,0 @@
-allprojects { tasks.withType(Test).configureEach { maxHeapSize = '384m'; maxParallelForks = 1; jvmArgs '-XX:ActiveProcessorCount=2'; outputs.upToDateWhen { false } } }
