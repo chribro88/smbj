@@ -94,7 +94,7 @@ class DirectoryLeaseIsolationTest {
                 TreeConnect tree = f.tree(owner, variant == 1 ? "other" : "share", 7);
                 LeaseEntry entry = f.entry(tree, "dir");
                 List<FileIdBothDirectoryInformation> own = Collections.singletonList(mock(FileIdBothDirectoryInformation.class));
-                entry.getCache().populate("dir", FileIdBothDirectoryInformation.class, null, own);
+                entry.getCache().populate(tree.getShareName(), "dir", FileIdBothDirectoryInformation.class, null, own);
                 assertEquals(own, f.share(tree).list("dir", FileIdBothDirectoryInformation.class));
                 assertEquals(f.listing, f.share(f.source).list("dir", FileIdBothDirectoryInformation.class));
             }
@@ -217,7 +217,7 @@ class DirectoryLeaseIsolationTest {
             when(context.getNegotiatedProtocol()).thenReturn(new NegotiatedProtocol(
                     SMB2Dialect.SMB_3_1_1, 65536, 65536, 65536, true));
             owner = session(47); source = tree(owner, "share", 7); entry = entry(source, "dir");
-            entry.getCache().populate("dir", FileIdBothDirectoryInformation.class, null, listing);
+            entry.getCache().populate(source.getShareName(), "dir", FileIdBothDirectoryInformation.class, null, listing);
         }
 
         Session session(long id) {

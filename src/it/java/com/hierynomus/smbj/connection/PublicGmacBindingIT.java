@@ -210,6 +210,97 @@ class PublicGmacBindingIT {
     }
 
     @Test
+    void partialBindingWriteBurnsItsNonceAndFreshRetryPreservesTheOpen() throws Exception {
+        String portValue = System.getenv("SMB_TEST_PORTS");
+        assumeTrue(portValue != null, "Dedicated GMAC fixture required");
+        int port = Integer.parseInt(portValue);
+        GmacBindingWireObserver observer = new GmacBindingWireObserver();
+        Map<Long, byte[]> actualKeys = new ConcurrentHashMap<>();
+        AtomicBoolean recordPartial = new AtomicBoolean();
+        AtomicLong failedMessageId = new AtomicLong(-1);
+        AtomicLong targetSessionId = new AtomicLong();
+        AtomicReference<byte[]> failedKey = new AtomicReference<>();
+        Field keyField = PacketSignatory.SignedPacketWrapper.class.getDeclaredField("secretKey");
+        keyField.setAccessible(true);
+        SmbConfig config = SmbConfig.builder().withDialects(SMB2Dialect.SMB_3_1_1)
+                .withSigningAlgorithms(SMB3SigningAlgorithm.AES_GMAC).withSigningRequired(true)
+                .withAuthenticators(new NtlmAuthenticator.Factory()).withSecurityProvider(new BCSecurityProvider())
+                .withSocketFactory(observer).withTimeout(10, TimeUnit.SECONDS)
+                .withTransportLayerFactory((handlers, settings) -> {
+                    TransportLayer<SMBPacket<?, ?>> delegate = new DirectTcpTransport<>(
+                            settings.getSocketFactory(), settings.getSoTimeout(), handlers);
+                    return new TransportLayer<SMBPacket<?, ?>>() {
+                        public void connect(InetSocketAddress address) throws IOException { delegate.connect(address); }
+                        public void disconnect() throws IOException { delegate.disconnect(); }
+                        public boolean isConnected() { return delegate.isConnected(); }
+                        public void write(SMBPacket<?, ?> packet) throws TransportException {
+                            if (packet instanceof PacketSignatory.SignedPacketWrapper) {
+                                try {
+                                    SecretKey key = (SecretKey) keyField.get(packet);
+                                    SMB2Packet smb = (SMB2Packet) packet;
+                                    actualKeys.putIfAbsent(smb.getHeader().getSessionId(), key.getEncoded().clone());
+                                    if (smb.getHeader().getMessage() == SMB2MessageCommandCode.SMB2_SESSION_SETUP
+                                            && smb.getHeader().getSessionId() == targetSessionId.get()
+                                            && recordPartial.compareAndSet(true, false)) {
+                                        failedMessageId.set(smb.getHeader().getMessageId());
+                                        failedKey.set(key.getEncoded().clone());
+                                    }
+                                } catch (IllegalAccessException failure) { throw new AssertionError(failure); }
+                            }
+                            delegate.write(packet);
+                        }
+                    };
+                }).build();
+        SMBEventBus bus = new SMBEventBus();
+        try (SMBClient client = new SMBClient(config, bus);
+             Connection primary = client.connect("127.0.0.1", port)) {
+            observer.register(primary);
+            try (Session main = primary.authenticate(authentication())) {
+                observer.original(main, primary);
+                observer.bound(main, primary);
+                targetSessionId.set(main.getSessionId());
+                try (DiskShare share = (DiskShare) main.connectShare("share")) {
+                    String name = "gmac-partial-binding-" + UUID.randomUUID() + ".bin";
+                    try (File file = share.openFile(name, EnumSet.of(AccessMask.GENERIC_READ, AccessMask.GENERIC_WRITE),
+                            EnumSet.of(FileAttributes.FILE_ATTRIBUTE_NORMAL), SMB2ShareAccess.ALL,
+                            SMB2CreateDisposition.FILE_CREATE, EnumSet.noneOf(SMB2CreateOptions.class))) {
+                        byte[] expected = new byte[131077]; new Random(59).nextBytes(expected);
+                        verifyContents(file, expected);
+                        try (Connection failed = new Connection(config, client, bus, client.getServerList())) {
+                            failed.connect("127.0.0.1", port); observer.register(failed);
+                            CountDownLatch entered = new CountDownLatch(1);
+                            observer.gateBinding(failed, entered, new CountDownLatch(0), true);
+                            recordPartial.set(true);
+                            assertThrows(IOException.class, () -> failed.bind(main));
+                            assertEquals(0, entered.getCount());
+                            assertEquals(76, observer.partialClientBytes(failed));
+                            assertTrue(observer.faultTriggered(failed));
+                            assertTrue(failedMessageId.get() >= 0);
+                            assertArrayEquals(main.getSessionContext().getSigningKey().getEncoded(), failedKey.get());
+                            assertFalse(main.reserveOriginalKeyMessageId(failedMessageId.get()),
+                                    "A signed partial-write reservation must remain burned");
+                            assertEquals(1, main.getChannelCount());
+                            assertTrue(failed.getPreauthSessionTable().activeSessions().isEmpty());
+                            assertTrue(failed.getSessionTable().activeSessions().isEmpty());
+                        }
+                        expected[0] ^= 1; verifyContents(file, expected);
+                        Connection retry = client.openChannel(main, "127.0.0.1", port);
+                        observer.register(retry); observer.bound(main, retry);
+                        assertEquals(2, main.getChannelCount());
+                        assertFalse(main.reserveOriginalKeyMessageId(failedMessageId.get()));
+                        expected[1] ^= 1; verifyContents(file, expected);
+                    } finally { share.rm(name); }
+                }
+            }
+        }
+        observer.auxiliaryKeys(actualKeys);
+        // The observer verifies the complete signed write attempt; only its 76-byte prefix reached the peer.
+        observer.verifyAndReport("public-partial-write-retry", 1, 8);
+        System.out.println("PUBLIC_GMAC_COMPLETE run=partial-write-retry signing=AES_GMAC partialClientBytes=76"
+                + " preparedOnly=1 reservationBurned=true retry=true existingOpen=true java=" + System.getProperty("java.version"));
+    }
+
+    @Test
     void failedAuxiliaryContinuationDiscardsOnlyTheAttemptAndCanRetry() throws Exception {
         String portValue = System.getenv("SMB_TEST_PORTS");
         assumeTrue(portValue != null, "Dedicated GMAC fixture required");

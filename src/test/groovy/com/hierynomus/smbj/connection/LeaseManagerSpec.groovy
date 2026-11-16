@@ -445,7 +445,7 @@ class LeaseManagerSpec extends Specification {
         lm.register(shareEntry)
 
         when:
-        lm.invalidateDirectoryAndDescendants(null, "")
+        lm.invalidateDirectoryAndDescendants((String) null, "")
 
         then:
         lm.leaseKeyForExistingPath("") == null

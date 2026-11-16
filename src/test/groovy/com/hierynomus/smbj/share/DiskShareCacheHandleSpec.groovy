@@ -58,8 +58,8 @@ class DiskShareCacheHandleSpec extends Specification {
         given:
         def share = connectLeasingShare()
         def manager = connection.sessionTable.activeSessions().first().leaseManager
-        def entry = new LeaseEntry(manager.leaseKeyForPath("share", "docs"), null,
-            SMB2LeaseState.readHandle(), "share", "docs")
+        def entry = new LeaseEntry(manager.leaseKeyForPath(share.treeConnect, "docs"), null,
+            SMB2LeaseState.readHandle(), "docs", share.treeConnect)
         entry.granted = true
         entry.grantedState = SMB2LeaseState.readHandle()
         entry.setOwner(share.session, share.treeConnect.treeId, share.treeConnect.negotiatedProtocol.dialect)
@@ -115,8 +115,8 @@ class DiskShareCacheHandleSpec extends Specification {
         given:
         def share = connectLeasingShare()
         def manager = connection.sessionTable.activeSessions().first().leaseManager
-        def entry = new LeaseEntry(manager.leaseKeyForPath("share", "docs"), null,
-            SMB2LeaseState.readHandle(), "share", "docs")
+        def entry = new LeaseEntry(manager.leaseKeyForPath(share.treeConnect, "docs"), null,
+            SMB2LeaseState.readHandle(), "docs", share.treeConnect)
         entry.granted = true
         entry.grantedState = SMB2LeaseState.readHandle()
         entry.setOwner(share.session, share.treeConnect.treeId, share.treeConnect.negotiatedProtocol.dialect)
@@ -190,8 +190,8 @@ class DiskShareCacheHandleSpec extends Specification {
             null
         }
         def manager = connection.sessionTable.activeSessions().first().leaseManager
-        def entry = new LeaseEntry(manager.leaseKeyForPath("share", "docs"), null,
-            SMB2LeaseState.readHandle(), "share", "docs")
+        def entry = new LeaseEntry(manager.leaseKeyForPath(ownerShare.treeConnect, "docs"), null,
+            SMB2LeaseState.readHandle(), "docs", ownerShare.treeConnect)
         entry.granted = true
         entry.grantedState = SMB2LeaseState.readHandle()
         entry.setOwner(ownerShare.session, ownerShare.treeConnect.treeId,
@@ -216,8 +216,8 @@ class DiskShareCacheHandleSpec extends Specification {
         creates[0].header.sessionId == otherSession.sessionId
         creates[0].requestedOplockLevel == SMB2OplockLevel.SMB2_OPLOCK_LEVEL_LEASE
         creates[0].createContexts.size() == 1
-        otherSession.leaseManager.lookup(entry.leaseKey) == null
-        otherSession.leaseManager.getByPath("share", "docs") == null
+        otherSession.leaseManager.lookup(entry.leaseKey).is(entry)
+        otherSession.leaseManager.getByPath(otherShare.treeConnect, "docs") == null
         0 * ownerDirectory.list(_, _)
 
         and: "the original session retains its lease, handle, and routing reservation"
@@ -227,7 +227,7 @@ class DiskShareCacheHandleSpec extends Specification {
         entry.cacheGeneration == 0
         entry.cache.populates == (cachePopulated ? 1 : 0)
         manager.lookup(entry.leaseKey).is(entry)
-        manager.getByPath("share", "docs").is(entry)
+        manager.getByPath(ownerShare.treeConnect, "docs").is(entry)
 
         where:
         cachePopulated | cachedState

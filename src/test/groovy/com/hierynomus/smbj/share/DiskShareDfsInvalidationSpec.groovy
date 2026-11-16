@@ -40,7 +40,6 @@ import com.hierynomus.smbj.auth.AuthenticationContext
 import com.hierynomus.smbj.common.SmbPath
 import com.hierynomus.smbj.connection.Connection
 import com.hierynomus.smbj.connection.LeaseEntry
-import com.hierynomus.smbj.connection.LeaseManager
 import com.hierynomus.smbj.paths.PathResolver
 import com.hierynomus.smbj.testing.PacketProcessor.DefaultPacketProcessor
 import com.hierynomus.smbj.testing.StubAuthenticator
@@ -121,9 +120,9 @@ class DiskShareDfsInvalidationSpec extends Specification {
             }
         }
         def redirected = new DiskShare(original.smbPath, original.treeConnect, resolver)
-        def originalParent = cachedParent(connection.sessionTable.activeSessions().first().leaseManager, "source", "alias")
-        def resolvedParent = cachedParent(connection.sessionTable.activeSessions().first().leaseManager, "target", "actual")
-        def unrelatedParent = cachedParent(connection.sessionTable.activeSessions().first().leaseManager, "source", "unrelated")
+        def originalParent = cachedParent(original, "alias")
+        def resolvedParent = cachedParent(resolvedShare, "actual")
+        def unrelatedParent = cachedParent(original, "unrelated")
 
         when:
         def opened = directory
@@ -138,7 +137,7 @@ class DiskShareDfsInvalidationSpec extends Specification {
         requestedLeases == (reactive ? [directory, false] : [false])
         opened.diskShare.is(resolvedShare)
         opened.path == "actual\\entry"
-        connection.sessionTable.activeSessions().first().leaseManager.getByPath("source", "alias\\entry") == null
+        connection.sessionTable.activeSessions().first().leaseManager.getByPath(original.treeConnect, "alias\\entry") == null
         originalParent.cacheGeneration == (action == SMB2CreateAction.FILE_OPENED ? 0 : 1)
         (originalParent.cache.serve("source", "alias", FileIdBothDirectoryInformation, null) == null) ==
             (action != SMB2CreateAction.FILE_OPENED)
@@ -163,12 +162,13 @@ class DiskShareDfsInvalidationSpec extends Specification {
         kind = directory ? "directory open with leasing" : "file open"
     }
 
-    private static LeaseEntry cachedParent(LeaseManager manager, String share, String path) {
-        def entry = new LeaseEntry(manager.leaseKeyForPath(share, path), null,
-            SMB2LeaseState.readHandle(), share, path)
+    private static LeaseEntry cachedParent(DiskShare share, String path) {
+        def manager = share.session.leaseManager
+        def entry = new LeaseEntry(manager.leaseKeyForPath(share.treeConnect, path), null,
+            SMB2LeaseState.readHandle(), path, share.treeConnect)
         entry.granted = true
         entry.grantedState = SMB2LeaseState.readHandle()
-        entry.cache.populate(share, path, FileIdBothDirectoryInformation, null, [])
+        entry.cache.populate(share.smbPath.shareName, path, FileIdBothDirectoryInformation, null, [])
         manager.register(entry)
         entry
     }

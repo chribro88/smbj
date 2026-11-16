@@ -121,6 +121,8 @@ public class StubTransportLayerFactory<D extends PacketData<?>, P extends Packet
         }
 
         private SMB2SessionSetup authenticationResponse(SMB2SessionSetup response) throws TransportException {
+            // A parsed response already carries its peer's exact bytes and signature.
+            if (response.getBuffer() != null) return response;
             long flags = EnumWithValue.EnumUtils.toLong(response.getSessionFlags());
             if ((flags & 3) != 0) return response;
             if (dialect == SMB2Dialect.SMB_3_1_1) {

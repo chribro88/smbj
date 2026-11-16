@@ -123,8 +123,11 @@ class SMBChannelAdmissionTest {
             set(fixture.primary.getConnectionContext(), "signingAlgorithm", SMB3SigningAlgorithm.AES_GMAC);
             set(fixture.candidate.getConnectionContext(), "signingAlgorithm", SMB3SigningAlgorithm.AES_GMAC);
             fixture.session.getSessionContext().setSigningKey(new SecretKeySpec(new byte[16], "AES-GMAC"));
-            IOException failure = assertThrows(IOException.class, () -> fixture.candidate.bind(fixture.session));
-            assertTrue(failure.getMessage().contains("auxiliary authentication"));
+            doReturn(new com.hierynomus.smbj.auth.AuthenticationContext("fixture", new char[0], "WORKGROUP"))
+                    .when(fixture.session).getAuthenticationContext();
+            com.hierynomus.smbj.common.SMBRuntimeException failure = assertThrows(
+                    com.hierynomus.smbj.common.SMBRuntimeException.class, () -> fixture.candidate.bind(fixture.session));
+            assertTrue(failure.getMessage().contains("signature verification failed"));
             assertEquals(1, fixture.candidateWire.bindings, "Only auxiliary authentication reached the peer");
             verifyNoInteractions(fixture.candidateSigner);
             assertTrue(fixture.candidateTable().activeSessions().isEmpty());

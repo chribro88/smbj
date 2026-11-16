@@ -456,12 +456,6 @@ public class SMBSessionBuilder {
             verifySessionSetupSignature(ctx, session, dialect);
             validateAndSetSigning(ctx, context);
 
-            if (dialect == SMB2Dialect.SMB_3_1_1 || !unauthenticated
-                    || response.getHeader().isFlagSet(com.hierynomus.mssmb2.SMB2MessageFlag.SMB2_FLAGS_SIGNED)) {
-                verifySessionSetupResponse(response, dialect.isSmb3x() ? context.getSigningKey() : context.getSessionKey(),
-                        new PacketSignatory(config.getSecurityProvider()), "authentication", ctx.exchange);
-            }
-
             context.established(response);
             connection.sessionSetupAccepted(response);
             session.initializeOriginalKeyMessageIdReservation(connection.nextMessageId());

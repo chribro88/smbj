@@ -412,7 +412,7 @@ class DiskShareListSpec extends Specification {
         def manager = connection.sessionTable.activeSessions().first().leaseManager
         if (handleState != "first open") {
             share.list("parent")
-            def entry = manager.getByPath("share", "parent")
+            def entry = manager.getByPath(share.treeConnect, "parent")
             if (handleState == "reopened handle") {
                 entry.invalidateCache()
             } else {
@@ -423,11 +423,11 @@ class DiskShareListSpec extends Specification {
         LeaseEntry queriedEntry = null
         long previousPopulates = 0
         duringQuery = {
-            queriedEntry = manager.getByPath("share", "parent")
+            queriedEntry = manager.getByPath(share.treeConnect, "parent")
             previousPopulates = queriedEntry.cache.populates
             switch (change) {
                 case "invalidation":
-                    manager.invalidateDirectoryCache("share", "parent")
+                    manager.invalidateDirectoryCache(share.treeConnect, "parent")
                     break
                 case "lease break":
                     queriedEntry.broken = true
@@ -446,7 +446,7 @@ class DiskShareListSpec extends Specification {
         queriedEntry != null
         queriedEntry.cache.populates == previousPopulates
         queriedEntry.cache.serve("share", "parent", FileIdBothDirectoryInformation, null) == null
-        manager.getByPath("share", "parent")?.cache?.serve("share", "parent", FileIdBothDirectoryInformation, null) == null
+        manager.getByPath(share.treeConnect, "parent")?.cache?.serve("share", "parent", FileIdBothDirectoryInformation, null) == null
         queriedEntry.cacheDirectory == null
         closeCount.get() > 0
 
@@ -496,8 +496,8 @@ class DiskShareListSpec extends Specification {
         })
         def share = connectLeasingShare(processor)
         def manager = connection.sessionTable.activeSessions().first().leaseManager
-        def entry = new LeaseEntry(manager.leaseKeyForPath("share", "parent"), null,
-            SMB2LeaseState.readHandle(), "share", "parent")
+        def entry = new LeaseEntry(manager.leaseKeyForPath(share.treeConnect, "parent"), null,
+            SMB2LeaseState.readHandle(), "parent", share.treeConnect)
         entry.setOwner(share.session, share.treeConnect.treeId, SMB2Dialect.SMB_3_0)
         entry.granted = true
         entry.grantedState = SMB2LeaseState.readHandle()

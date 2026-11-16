@@ -348,7 +348,7 @@ class SMBSessionBuilderSpec extends Specification {
         then:
         def failure = thrown(SMBRuntimeException)
         assertSecurityFailure(failure)
-        failure.message == "SESSION_SETUP response signature verification failed: no signing key"
+        failure.message.contains("SMB authentication did not export a session key")
         assertRejectedSession(fixture)
 
         cleanup:

@@ -70,7 +70,7 @@ elif arguments.churn:
     test_class, expected_count, marker, label = ('com.hierynomus.smbj.MultichannelPerformanceIT', 8,
                                                'GMAC_CHURN_COMPLETE ', 'channel churn')
 elif arguments.public_binding:
-    test_class, expected_count, marker, label = ('com.hierynomus.smbj.connection.PublicGmacBindingIT', 16,
+    test_class, expected_count, marker, label = ('com.hierynomus.smbj.connection.PublicGmacBindingIT', 17,
                                                'PUBLIC_GMAC_COMPLETE ', 'public multichannel')
 elif arguments.per_request_research:
     test_class, expected_count, marker, label = ('com.hierynomus.smbj.connection.GmacConcurrentBootstrapIT', 7,
@@ -221,7 +221,11 @@ try:
         metadata['wire_audits'] = [line for line in text.splitlines() if line.startswith('AUXWIRE_COMPLETE ')]
         audits = {entry['run']: entry for entry in (
             dict(word.split('=', 1) for word in line.split()[1:]) for line in metadata['wire_audits'])}
-        assert set(audits) == {'public-' + entry['run'] for entry in concurrent}
+        assert set(audits) == {'public-' + entry['run'] for entry in concurrent} | {'public-partial-write-retry'}
+        assert int(audits['public-partial-write-retry']['preparedOnly']) == 1
+        partial = [line for line in metadata['profiles'] if 'run=partial-write-retry ' in line]
+        assert len(partial) == 1 and all(marker in partial[0] for marker in (
+            'partialClientBytes=76', 'preparedOnly=1', 'reservationBurned=true', 'retry=true', 'existingOpen=true'))
         assert all(entry['distinctMessageNonceReuses'] == '0' and int(entry['independentlyVerified']) > 0
                    for entry in audits.values())
     if arguments.lease_isolation:

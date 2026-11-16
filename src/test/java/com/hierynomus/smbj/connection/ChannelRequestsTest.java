@@ -268,11 +268,14 @@ class ChannelRequestsTest {
                 ConnectionContext state = mock(ConnectionContext.class);
                 when(state.getNegotiatedProtocol()).thenReturn(new NegotiatedProtocol(SMB2Dialect.SMB_3_1_1, 65536, 65536, 65536, true));
                 when(state.getServer()).thenReturn(new Server("localhost", 445));
+                when(state.getCipherId()).thenReturn(com.hierynomus.mssmb2.SMB3EncryptionCipher.AES_128_GCM);
                 context.set(connection, state);
             }
             when(primaryTransport.isConnected()).thenReturn(true);
             when(secondaryTransport.isConnected()).thenReturn(true);
-            session = new Session(primary, config, null, bus, null, new NoSignatory(), null);
+            PacketEncryptor encryptor = new PacketEncryptor(config.getSecurityProvider());
+            encryptor.init(primary.getConnectionContext());
+            session = new Session(primary, config, null, bus, null, new NoSignatory(), encryptor);
             session.setSessionId(47);
             session.getSessionContext().setSigningKey(new SecretKeySpec(new byte[16], "AesCmac"));
             session.addChannel(secondary, new SecretKeySpec(new byte[16], "AesCmac"));

@@ -36,6 +36,7 @@ import spock.lang.Unroll
 
 class DiskShareCreateLifecycleSpec extends Specification {
     private Connection connection
+    private DiskShare share
     private final List<SMB2FileId> closedIds = []
     private final List<SMB2LeaseBreakAcknowledgment> acknowledgments = []
 
@@ -46,12 +47,12 @@ class DiskShareCreateLifecycleSpec extends Specification {
     def "a detached pending CREATE keeps routing until its failed response releases the reservation"() {
         given:
         LeaseEntry pending = null
-        def share = connectLeasingShare {
+        share = connectLeasingShare {
             def manager = connection.sessionTable.activeSessions().first().leaseManager
-            pending = manager.getByPath("share", "docs")
+            pending = manager.getByPath(share.treeConnect, "docs")
             assert pending.handleReferences == 1
-            manager.invalidateDirectoryAndDescendants("share", "docs")
-            assert manager.getByPath("share", "docs") == null
+            manager.invalidateDirectoryAndDescendants(share.treeConnect, "docs")
+            assert manager.getByPath(share.treeConnect, "docs") == null
             assert manager.lookup(pending.leaseKey).is(pending)
             return deniedCreate()
         }
@@ -64,16 +65,16 @@ class DiskShareCreateLifecycleSpec extends Specification {
         pending != null
         pending.handleReferences == 0
         connection.sessionTable.activeSessions().first().leaseManager.lookup(pending.leaseKey) == null
-        connection.sessionTable.activeSessions().first().leaseManager.leaseKeyForPath("share", "docs") != pending.leaseKey
+        connection.sessionTable.activeSessions().first().leaseManager.leaseKeyForPath(share.treeConnect, "docs") != pending.leaseKey
         closedIds.empty
     }
 
     def "a lease break before CREATE completes is acknowledged and its state survives the older grant"() {
         given:
         LeaseEntry pending = null
-        def share = connectLeasingShare {
+        share = connectLeasingShare {
             def manager = connection.sessionTable.activeSessions().first().leaseManager
-            pending = manager.getByPath("share", "docs")
+            pending = manager.getByPath(share.treeConnect, "docs")
             def notification = Stub(SMB2LeaseBreakNotification) {
                 getLeaseKey() >> pending.leaseKey
                 getNewEpoch() >> 1
@@ -107,8 +108,8 @@ class DiskShareCreateLifecycleSpec extends Specification {
         LeaseEntry sharedEntry = null
         def firstId = fileId(1)
         def secondId = fileId(2)
-        def share = connectLeasingShare {
-            def entry = connection.sessionTable.activeSessions().first().leaseManager.getByPath("share", "docs")
+        share = connectLeasingShare {
+            def entry = connection.sessionTable.activeSessions().first().leaseManager.getByPath(share.treeConnect, "docs")
             if (++creates == 1) {
                 sharedEntry = entry
                 return createResponse(firstId, [SMB2LeaseCreateContext.v2(entry.leaseKey,
@@ -138,7 +139,7 @@ class DiskShareCreateLifecycleSpec extends Specification {
         (second != null) == (outcome == "no lease")
         second?.leaseEntry == null
         connection.sessionTable.activeSessions().first().leaseManager.lookup(sharedEntry.leaseKey).is(sharedEntry)
-        connection.sessionTable.activeSessions().first().leaseManager.getByPath("share", "docs").is(sharedEntry)
+        connection.sessionTable.activeSessions().first().leaseManager.getByPath(share.treeConnect, "docs").is(sharedEntry)
         sharedEntry.handleReferences == 1
         sharedEntry.granted
         closedIds == (outcome == "malformed lease" ? [secondId] : [])

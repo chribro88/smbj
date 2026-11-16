@@ -365,6 +365,7 @@ public class Session implements AutoCloseable {
                     releaseNestedConnection(nestedSession);
                 }
             }
+            nestedSessionsByHost.clear();
         } finally {
             nestedSessionsRwLock.writeLock().unlock();
         }
@@ -518,6 +519,9 @@ public class Session implements AutoCloseable {
                 && bootstrapAbortMessageId.compareAndSet(messageId, -1)) {
             return true;
         }
+        if (originalKeyMessageIdReservation.get() == -1L) {
+            throw new IllegalStateException("Original signing key MessageId space exhausted");
+        }
         if (sender == bootstrapAnchor) {
             if (Long.compareUnsigned(messageId, originalKeyMessageIdReservation.get()) < 0) return false;
             if (bootstrapMessageIds.size() >= 16) throw new IllegalStateException("Bootstrap authentication exceeded exchange limit");
@@ -546,6 +550,9 @@ public class Session implements AutoCloseable {
         }
         while (true) {
             long current = originalKeyMessageIdReservation.get();
+            if (current == -1L) {
+                throw new IllegalStateException("Original signing key MessageId space exhausted");
+            }
             if (Long.compareUnsigned(messageId, current) < 0) {
                 return false;
             }

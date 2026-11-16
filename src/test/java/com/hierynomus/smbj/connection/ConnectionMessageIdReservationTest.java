@@ -110,8 +110,80 @@ class ConnectionMessageIdReservationTest {
         session.initializeOriginalKeyMessageIdReservation(-2);
         assertTrue(session.reserveOriginalKeyMessageId(-2));
         assertFalse(session.reserveOriginalKeyMessageId(-1));
-        assertFalse(session.reserveOriginalKeyMessageId(0));
-        assertFalse(session.reserveOriginalKeyMessageId(-2));
+        assertThrows(IllegalStateException.class, () -> session.reserveOriginalKeyMessageId(0));
+        assertThrows(IllegalStateException.class, () -> session.reserveOriginalKeyMessageId(-2));
+    }
+
+    @Test
+    void exhaustedOriginalKeyFailsBeforeAllocatingCreditsOrWritingOnABorrowedConnection() throws Exception {
+        TransportLayer<SMBPacket<?, ?>> transport = mock(TransportLayer.class);
+        when(transport.isConnected()).thenReturn(true);
+        Connection connection = connectionWithTransport(transport);
+        Session session = new Session(null, null, null, null, null, null, null);
+        session.initializeOriginalKeyMessageIdReservation(-1);
+        try {
+            int credits = connection.sequenceWindow.available();
+            long nextMessageId = connection.nextMessageId();
+            assertThrows(IllegalStateException.class,
+                    () -> connection.sendOriginalKey(new SMB2Echo(SMB2Dialect.SMB_3_1_1), session));
+            assertEquals(credits, connection.sequenceWindow.available());
+            assertEquals(nextMessageId, connection.nextMessageId());
+            assertNoOutstandingRequests(connection);
+            verify(transport, never()).write(any());
+            verify(transport, never()).disconnect();
+            assertTrue(connection.isConnected());
+        } finally {
+            connection.close(true);
+        }
+    }
+
+    @Test
+    void exhaustedOriginalKeyStillAllowsItsReservedBootstrapAbortExactlyOnce() {
+        Connection primary = mock(Connection.class);
+        Connection caller = mock(Connection.class);
+        Session session = new Session(primary, null, null, null, null, null, null);
+        session.initializeOriginalKeyMessageIdReservation(3);
+        session.prepareBootstrapChannel(caller);
+        session.initializeOriginalKeyMessageIdReservation(-1);
+        assertThrows(IllegalStateException.class, () -> session.reserveOriginalKeyMessageId(caller, 5, false));
+        assertThrows(IllegalStateException.class, () -> session.reserveOriginalKeyMessageId(primary, 3, false));
+        assertTrue(session.reserveOriginalKeyMessageId(primary, 3, true));
+        assertThrows(IllegalStateException.class, () -> session.reserveOriginalKeyMessageId(primary, 3, true));
+        assertThrows(IllegalStateException.class, () -> session.reserveOriginalKeyMessageId(mock(Connection.class), 0, false));
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {2, 4, 8})
+    void concurrentLastOriginalKeyClaimExhaustsWithoutWrapping(int senders) throws Exception {
+        Session session = new Session(null, null, null, null, null, null, null);
+        session.initializeOriginalKeyMessageIdReservation(-2);
+        ExecutorService workers = Executors.newFixedThreadPool(senders);
+        CountDownLatch ready = new CountDownLatch(senders);
+        CountDownLatch start = new CountDownLatch(1);
+        List<Future<Boolean>> claims = new ArrayList<>();
+        try {
+            for (int i = 0; i < senders; i++) {
+                claims.add(workers.submit(() -> {
+                    ready.countDown();
+                    assertTrue(start.await(5, TimeUnit.SECONDS));
+                    try {
+                        return session.reserveOriginalKeyMessageId(-2);
+                    } catch (IllegalStateException exhausted) {
+                        return false;
+                    }
+                }));
+            }
+            assertTrue(ready.await(5, TimeUnit.SECONDS));
+            start.countDown();
+            int successes = 0;
+            for (Future<Boolean> claim : claims) if (claim.get(5, TimeUnit.SECONDS)) successes++;
+            assertEquals(1, successes);
+            assertThrows(IllegalStateException.class, () -> session.reserveOriginalKeyMessageId(0));
+            assertThrows(IllegalStateException.class, () -> session.reserveOriginalKeyMessageId(-2));
+        } finally {
+            start.countDown();
+            workers.shutdownNow();
+        }
     }
 
     @Test

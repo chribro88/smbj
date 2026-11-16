@@ -363,10 +363,18 @@ class SMBBindingResponseTest {
 
     // Behavioral regression: go-smb2 7f69f658, TestBindChannelMultiRoundAuthentication.
     @ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
-    void authenticatesSeveralRoundsWithTheKeyExportedOnlyAtCompletion(boolean corruptContinuation) throws Exception {
+    @CsvSource({"false,success", "false,continuation", "true,success", "true,continuation", "true,final", "true,denied"})
+    void authenticatesSeveralRoundsWithTheKeyExportedOnlyAtCompletion(boolean gmac, String failurePhase) throws Exception {
+        if (gmac) {
+            algorithm = SMB3SigningAlgorithm.AES_GMAC;
+            originalKey = new SecretKeySpec(new byte[16], algorithm.getAlgorithmName());
+            when(secondary.hasIndependentSigningSession(session)).thenReturn(true);
+            when(session.reserveOriginalKeyMessageId(eq(secondary), anyLong(), eq(false))).thenReturn(true);
+        }
         java.util.concurrent.atomic.AtomicInteger authentications = new java.util.concurrent.atomic.AtomicInteger();
-        StubAuthenticator authenticator = new StubAuthenticator() {
+        AtomicInteger disposals = new AtomicInteger();
+        class BindingAuthenticator extends StubAuthenticator implements java.io.Closeable {
+            @Override public void close() { disposals.incrementAndGet(); }
             @Override
             public com.hierynomus.smbj.auth.AuthenticateResponse authenticate(
                     com.hierynomus.smbj.auth.AuthenticationContext context, byte[] token, ConnectionContext connection) throws IOException {
@@ -374,36 +382,66 @@ class SMBBindingResponseTest {
                 if (authentications.incrementAndGet() < 4) result.setSessionKey(null);
                 return result;
             }
-        };
+        }
+        StubAuthenticator authenticator = new BindingAuthenticator();
         SMBSessionBuilder builder = builder(true, new StubAuthenticator.Factory() {
             @Override
             public StubAuthenticator create() { return authenticator; }
         });
         byte[][] transcript = {new byte[64]};
         java.util.concurrent.atomic.AtomicInteger exchanges = new java.util.concurrent.atomic.AtomicInteger();
-        when(secondary.sendAndReceive(any())).thenAnswer(call -> {
+        org.mockito.stubbing.Answer<SMB2SessionSetup> peer = call -> {
+            if (gmac) {
+                java.util.function.LongPredicate reservation = call.getArgument(1);
+                assertTrue(reservation.test(messageId), "The original-key MID is claimed before request signing");
+            }
+            byte[] request = requestBytes(call.getArgument(0));
+            byte[] normalized = request.clone();
+            Arrays.fill(normalized, 48, 64, (byte) 0);
+            assertArrayEquals(independentSignature(originalKey.getEncoded(), normalized), Arrays.copyOfRange(request, 48, 64));
             MessageDigest hash = MessageDigest.getInstance("SHA-512");
             hash.update(transcript[0]);
-            transcript[0] = hash.digest(requestBytes(call.getArgument(0)));
+            transcript[0] = hash.digest(request);
             int exchange = exchanges.incrementAndGet();
-            if (exchange == 3) return response(0, true, false, channelKey(transcript[0]), 7);
+            if (exchange == 3) {
+                if ("denied".equals(failurePhase)) {
+                    return response(NtStatus.STATUS_ACCESS_DENIED.getValue(), true, false, originalKey.getEncoded(), 7);
+                }
+                return response(0, true, "final".equals(failurePhase), channelKey(transcript[0]), 7);
+            }
             SMB2SessionSetup challenge = response(NtStatus.STATUS_MORE_PROCESSING_REQUIRED.getValue(), true,
-                    corruptContinuation && exchange == 2, originalKey.getEncoded(), 7);
+                    "continuation".equals(failurePhase) && exchange == 2, originalKey.getEncoded(), 7);
             hash.update(transcript[0]);
             transcript[0] = hash.digest(com.hierynomus.smb.Packets.getPacketBytes(challenge));
             return challenge;
-        });
-        if (corruptContinuation) {
-            IOException failure = assertThrows(IOException.class, () -> builder.bind(session, new PacketSignatory(new BCSecurityProvider())));
-            assertTrue(failure.getMessage().contains("exchange=2"));
-            assertEquals(2, authentications.get());
+        };
+        if (gmac) when(secondary.sendAndReceive(any(), any(java.util.function.LongPredicate.class))).thenAnswer(peer);
+        else when(secondary.sendAndReceive(any())).thenAnswer(peer);
+        if (!"success".equals(failurePhase)) {
+            Exception failure = assertThrows(Exception.class, () -> builder.bind(session, new PacketSignatory(provider)));
+            if ("denied".equals(failurePhase)) assertInstanceOf(SMBApiException.class, failure);
+            else {
+                assertInstanceOf(IOException.class, failure);
+                assertTrue(failure.getMessage().contains("exchange=" + ("continuation".equals(failurePhase) ? 2 : 3)));
+            }
+            assertEquals("continuation".equals(failurePhase) ? 2 : "denied".equals(failurePhase) ? 3 : 4, authentications.get());
             verify(session, never()).addChannel(any(), any());
+            assertNull(bindingSessions.find(47L));
         } else {
-            assertSame(session, builder.bind(session, new PacketSignatory(new BCSecurityProvider())));
+            assertSame(session, builder.bind(session, new PacketSignatory(provider)));
             assertEquals(4, authentications.get());
             assertEquals(3, exchanges.get());
-            verify(session).addChannel(eq(secondary), any());
+            org.mockito.ArgumentCaptor<SecretKey> derived = org.mockito.ArgumentCaptor.forClass(SecretKey.class);
+            verify(session).addChannel(eq(secondary), derived.capture());
+            assertArrayEquals(channelKey(transcript[0]), derived.getValue().getEncoded());
+            assertEquals(originalKey.getAlgorithm(), derived.getValue().getAlgorithm());
+            assertSame(session, bindingSessions.find(47L));
         }
+        int accepted = "continuation".equals(failurePhase) ? 1 : "final".equals(failurePhase) ? 2 : 3;
+        verify(secondary, times(accepted)).sessionSetupAccepted(any());
+        if (gmac) verify(session, times(exchanges.get())).reserveOriginalKeyMessageId(eq(secondary), anyLong(), eq(false));
+        verify(secondary, never()).close(anyBoolean());
+        assertEquals(1, disposals.get());
         assertSame(originalKey, keys.getSigningKey());
     }
 
@@ -604,6 +642,16 @@ class SMBBindingResponseTest {
     }
 
     private byte[] independentSignature(byte[] key, byte[] wire) throws Exception {
+        if (algorithm == SMB3SigningAlgorithm.AES_GMAC) {
+            byte[] nonce = new byte[12];
+            System.arraycopy(wire, 24, nonce, 0, 8);
+            nonce[8] = (byte) (wire[16] & 1);
+            javax.crypto.Cipher cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding", "SunJCE");
+            cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, new SecretKeySpec(key, "AES"),
+                    new javax.crypto.spec.GCMParameterSpec(128, nonce));
+            cipher.updateAAD(wire);
+            return cipher.doFinal();
+        }
         CMac mac = new CMac(AESEngine.newInstance());
         mac.init(new KeyParameter(key)); mac.update(wire, 0, wire.length);
         byte[] signature = new byte[16]; mac.doFinal(signature, 0);

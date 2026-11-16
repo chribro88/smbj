@@ -99,8 +99,11 @@ class SMBInitialAuthenticationTest {
         if (phase.equals("success")) assertSame(fixture.session, fixture.establish());
         else {
             Throwable failure = assertThrows(Throwable.class, fixture::establish);
-            if (failure instanceof SMBRuntimeException) failure = failure.getCause();
-            if (phase.equals("final")) assertTrue(failure.getMessage().contains("signature is invalid"));
+            if (failure instanceof SMBRuntimeException && failure.getCause() != null) failure = failure.getCause();
+            if (phase.equals("final")) {
+                assertInstanceOf(SMBRuntimeException.class, failure);
+                assertTrue(failure.getMessage().contains("SESSION_SETUP response signature verification failed"));
+            }
             else assertSame(phase.startsWith("cleanup") ? cleanupFailure : primary, failure);
             int suppressed = phase.startsWith("same-") || phase.startsWith("cleanup") ? 0 : 1;
             if (phase.equals("cleanup-logoff-failure") || phase.equals("cleanup-collision")) suppressed = 1;
@@ -147,9 +150,7 @@ class SMBInitialAuthenticationTest {
             fixture.fault = fault;
             fixture.rounds = 2;
             SMBRuntimeException failure = assertThrows(SMBRuntimeException.class, fixture::establish, fault);
-            assertInstanceOf(IOException.class, failure.getCause());
-            assertTrue(failure.getCause().getMessage().contains("authentication response signature"), fault);
-            assertTrue(failure.getCause().getMessage().contains("exchange=2"), fault);
+            assertTrue(failure.getMessage().contains("SESSION_SETUP response signature verification failed"), fault);
             assertTrue(fixture.sessions.activeSessions().isEmpty(), fault);
             assertTrue(fixture.preauth.activeSessions().isEmpty(), fault);
             verify(fixture.keys, never()).established(any());
@@ -403,6 +404,8 @@ class SMBInitialAuthenticationTest {
             when(context.getPreauthIntegrityHashId()).thenReturn(SMB3HashAlgorithm.SHA_512);
             when(session.getSessionId()).thenReturn(47L);
             when(session.getSessionContext()).thenReturn(keys);
+            when(session.getSigningKey(any(), anyBoolean())).thenAnswer(call -> dialect.isSmb3x()
+                    ? keys.getSigningKey() : keys.getSessionKey());
             SecurityProvider provider = jce ? new JceSecurityProvider(new BouncyCastleProvider()) : new BCSecurityProvider();
             config = SmbConfig.builder().withSigningRequired(false).withSecurityProvider(provider)
                     .withAuthenticators(new StubAuthenticator.Factory() {

@@ -101,7 +101,7 @@ class SessionEncryptionNonceTest {
             assertEquals(2, f.session.getChannelCount());
             assertTrue(f.usedChannels.contains(replacement));
             assertEquals(130, f.nonces.size());
-            for (long nonce = 0; nonce < 130; nonce++) assertTrue(f.nonces.contains(nonce));
+            for (long offset = 0; offset < 130; offset++) assertTrue(f.nonces.contains(f.initialNonce + offset));
         }
     }
 
@@ -119,7 +119,7 @@ class SessionEncryptionNonceTest {
             assertThrows(SMBRuntimeException.class, f::send);
             assertTrue(f.nonces.isEmpty());
             f.send();
-            assertEquals(java.util.Collections.singleton(1L), f.nonces);
+            assertEquals(java.util.Collections.singleton(f.initialNonce + 1), f.nonces);
             assertTrue(f.usedChannels.contains(f.secondary));
         }
     }
@@ -132,7 +132,10 @@ class SessionEncryptionNonceTest {
             Field field = PacketEncryptor.class.getDeclaredField("nonceCounter");
             field.setAccessible(true);
             AtomicLong counter = (AtomicLong) field.get(f.encryptor);
-            counter.set(Long.MAX_VALUE);
+            Field limitField = PacketEncryptor.class.getDeclaredField("nonceCounterLimit");
+            limitField.setAccessible(true);
+            long limit = limitField.getLong(f.encryptor);
+            counter.set(limit - 1);
             ExecutorService workers = Executors.newFixedThreadPool(4);
             AtomicInteger accepted = new AtomicInteger();
             CountDownLatch ready = new CountDownLatch(4), start = new CountDownLatch(1);
@@ -144,7 +147,7 @@ class SessionEncryptionNonceTest {
                         start.await();
                         try { f.send(); accepted.incrementAndGet(); }
                         catch (IllegalStateException expected) {
-                            assertTrue(expected.getMessage().contains("nonce space exhausted"));
+                            assertTrue(expected.getMessage().contains("nonce counter exhausted"));
                         }
                         return null;
                     });
@@ -157,9 +160,9 @@ class SessionEncryptionNonceTest {
                 assertTrue(workers.awaitTermination(5, TimeUnit.SECONDS));
             }
             assertEquals(1, accepted.get());
-            assertEquals(java.util.Collections.singleton(Long.MAX_VALUE), f.nonces);
+            assertEquals(java.util.Collections.singleton(limit - 1), f.nonces);
             for (int i = 0; i < 4; i++) assertThrows(IllegalStateException.class, f::send);
-            assertEquals(Long.MIN_VALUE, counter.get());
+            assertEquals(limit, counter.get());
         }
     }
 
@@ -175,8 +178,8 @@ class SessionEncryptionNonceTest {
             f.send();
             f.session.getSessionContext().setEncryptionKey(new SecretKeySpec(new byte[16], "AES"));
             f.send();
-            assertEquals(2, f.noncesByKey.get(f.key).size());
-            assertEquals(1, f.noncesByKey.get(other).size());
+            assertEquals(new java.util.HashSet<>(Arrays.asList(f.initialNonce, f.initialNonce + 2)), f.noncesByKey.get(f.key));
+            assertEquals(java.util.Collections.singleton(f.initialNonce + 1), f.noncesByKey.get(other));
         }
     }
 
@@ -190,6 +193,8 @@ class SessionEncryptionNonceTest {
         final ConnectionContext context = mock(ConnectionContext.class);
         final SMB3EncryptionCipher cipher;
         final PacketEncryptor encryptor;
+        final long initialNonce;
+        final byte[] nonceSuffix;
         final Connection primary, secondary;
         final Session session;
 
@@ -199,6 +204,12 @@ class SessionEncryptionNonceTest {
             when(context.getCipherId()).thenReturn(cipher);
             encryptor = new PacketEncryptor(provider);
             encryptor.init(context);
+            Field counterField = PacketEncryptor.class.getDeclaredField("nonceCounter");
+            counterField.setAccessible(true);
+            initialNonce = ((AtomicLong) counterField.get(encryptor)).get();
+            Field suffixField = PacketEncryptor.class.getDeclaredField("nonceSuffix");
+            suffixField.setAccessible(true);
+            nonceSuffix = Arrays.copyOf((byte[]) suffixField.get(encryptor), cipher.getNonceLength() - 8);
             primary = channel(); secondary = channel();
             session = new Session(primary, SmbConfig.builder().withSecurityProvider(provider).build(),
                     null, null, null, null, encryptor);
@@ -218,6 +229,7 @@ class SessionEncryptionNonceTest {
                 SMBBuffer buffer = new SMBBuffer(); packet.write(buffer);
                 byte[] wire = buffer.getCompactData();
                 byte[] nonce = Arrays.copyOfRange(wire, 20, 20 + cipher.getNonceLength());
+                assertArrayEquals(nonceSuffix, Arrays.copyOfRange(nonce, 8, nonce.length));
                 for (int i = 20 + cipher.getNonceLength(); i < 36; i++) assertEquals(0, wire[i]);
                 byte[] tagged = Arrays.copyOfRange(wire, 52, wire.length + 16);
                 System.arraycopy(wire, 4, tagged, tagged.length - 16, 16);
