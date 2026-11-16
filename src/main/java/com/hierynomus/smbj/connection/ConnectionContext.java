@@ -15,6 +15,7 @@
  */
 package com.hierynomus.smbj.connection;
 
+import com.hierynomus.mssmb2.SMB3SigningAlgorithm;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.Set;
@@ -59,6 +60,7 @@ public class ConnectionContext {
     private SMB3HashAlgorithm preauthIntegrityHashId;
     private byte[] preauthIntegrityHashValue;
     private SMB3EncryptionCipher cipherId;
+    private SMB3SigningAlgorithm signingAlgorithm;
     private Set<SMB3CompressionAlgorithm> compressionIds;
     // How much the SMB server clock is off from client clock
     private Long timeOffsetMillis;
@@ -80,6 +82,7 @@ public class ConnectionContext {
         this.server = negotiationContext.getServer();
         this.negotiatedProtocol = new NegotiatedProtocol(response.getDialect(), response.getMaxTransactSize(), response.getMaxReadSize(), response.getMaxWriteSize(), supportsMultiCredit());
         this.cipherId = negotiationContext.getCipher();
+        this.signingAlgorithm = negotiationContext.getSigningAlgorithm();
         this.compressionIds = negotiationContext.getCompressionIds();
         this.preauthIntegrityHashId = negotiationContext.getPreauthIntegrityHashId();
         this.preauthIntegrityHashValue = negotiationContext.getPreauthIntegrityHashValue() != null ? negotiationContext.getPreauthIntegrityHashValue() : new byte[0];
@@ -145,6 +148,8 @@ public class ConnectionContext {
     public void setNetBiosName(String netBiosName) {
         this.netBiosName = netBiosName;
     }
+
+    public SMB3SigningAlgorithm getSigningAlgorithm() { return signingAlgorithm; }
 
     public SMB3EncryptionCipher getCipherId() {
         return cipherId;

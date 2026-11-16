@@ -208,7 +208,7 @@ public class DiskShare extends Share {
     private Directory openDirectoryWithLease(String path, Set<AccessMask> accessMask, Set<FileAttributes> attributes,
                                              Set<SMB2ShareAccess> shareAccesses, SMB2CreateDisposition createDisposition,
                                              Set<SMB2CreateOptions> createOptions) {
-        LeaseManager lm = session.getConnection().getLeaseManager();
+        LeaseManager lm = session.getLeaseManager();
         SmbPath full = new SmbPath(smbPath, path);
         String rel = full.getPath() == null ? "" : full.getPath();
         String shareName = smbPath.getShareName();
@@ -444,7 +444,7 @@ public class DiskShare extends Share {
         // and populate. With leasing off / no lease / a real searchPattern this is the unchanged
         // open-enumerate-close behaviour.
         if (getConnectionContext().supportsDirectoryLeasing() && LeasedDirectoryCache.isCacheable(searchPattern)) {
-            LeaseManager lm = session.getConnection().getLeaseManager();
+            LeaseManager lm = session.getLeaseManager();
             SmbPath full = new SmbPath(smbPath, path);
             String rel = full.getPath() == null ? "" : full.getPath();
             String shareName = smbPath.getShareName();
@@ -698,13 +698,13 @@ public class DiskShare extends Share {
             }
         }
         SmbPath full = new SmbPath(smbPath, cleanPath);
-        session.getConnection().getLeaseManager().invalidateDirectoryCache(smbPath.getShareName(), full.getParent().getPath());
+        session.getLeaseManager().invalidateDirectoryCache(smbPath.getShareName(), full.getParent().getPath());
     }
 
     void invalidateDirectoryAndDescendants(String path) {
         if (getConnectionContext().supportsDirectoryLeasing()) {
             SmbPath full = new SmbPath(smbPath, path);
-            session.getConnection().getLeaseManager().invalidateDirectoryAndDescendants(smbPath.getShareName(), full.getPath());
+            session.getLeaseManager().invalidateDirectoryAndDescendants(smbPath.getShareName(), full.getPath());
         }
     }
 

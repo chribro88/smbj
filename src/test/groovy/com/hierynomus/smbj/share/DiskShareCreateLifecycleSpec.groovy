@@ -47,7 +47,7 @@ class DiskShareCreateLifecycleSpec extends Specification {
         given:
         LeaseEntry pending = null
         def share = connectLeasingShare {
-            def manager = connection.leaseManager
+            def manager = connection.sessionTable.activeSessions().first().leaseManager
             pending = manager.getByPath("share", "docs")
             assert pending.handleReferences == 1
             manager.invalidateDirectoryAndDescendants("share", "docs")
@@ -63,8 +63,8 @@ class DiskShareCreateLifecycleSpec extends Specification {
         thrown(SMBApiException)
         pending != null
         pending.handleReferences == 0
-        connection.leaseManager.lookup(pending.leaseKey) == null
-        connection.leaseManager.leaseKeyForPath("share", "docs") != pending.leaseKey
+        connection.sessionTable.activeSessions().first().leaseManager.lookup(pending.leaseKey) == null
+        connection.sessionTable.activeSessions().first().leaseManager.leaseKeyForPath("share", "docs") != pending.leaseKey
         closedIds.empty
     }
 
@@ -72,7 +72,7 @@ class DiskShareCreateLifecycleSpec extends Specification {
         given:
         LeaseEntry pending = null
         def share = connectLeasingShare {
-            def manager = connection.leaseManager
+            def manager = connection.sessionTable.activeSessions().first().leaseManager
             pending = manager.getByPath("share", "docs")
             def notification = Stub(SMB2LeaseBreakNotification) {
                 getLeaseKey() >> pending.leaseKey
@@ -108,7 +108,7 @@ class DiskShareCreateLifecycleSpec extends Specification {
         def firstId = fileId(1)
         def secondId = fileId(2)
         def share = connectLeasingShare {
-            def entry = connection.leaseManager.getByPath("share", "docs")
+            def entry = connection.sessionTable.activeSessions().first().leaseManager.getByPath("share", "docs")
             if (++creates == 1) {
                 sharedEntry = entry
                 return createResponse(firstId, [SMB2LeaseCreateContext.v2(entry.leaseKey,
@@ -137,8 +137,8 @@ class DiskShareCreateLifecycleSpec extends Specification {
         failure?.class == expectedFailure
         (second != null) == (outcome == "no lease")
         second?.leaseEntry == null
-        connection.leaseManager.lookup(sharedEntry.leaseKey).is(sharedEntry)
-        connection.leaseManager.getByPath("share", "docs").is(sharedEntry)
+        connection.sessionTable.activeSessions().first().leaseManager.lookup(sharedEntry.leaseKey).is(sharedEntry)
+        connection.sessionTable.activeSessions().first().leaseManager.getByPath("share", "docs").is(sharedEntry)
         sharedEntry.handleReferences == 1
         sharedEntry.granted
         closedIds == (outcome == "malformed lease" ? [secondId] : [])
@@ -149,7 +149,7 @@ class DiskShareCreateLifecycleSpec extends Specification {
 
         then:
         sharedEntry.handleReferences == 0
-        connection.leaseManager.lookup(sharedEntry.leaseKey) == null
+        connection.sessionTable.activeSessions().first().leaseManager.lookup(sharedEntry.leaseKey) == null
         closedIds.contains(firstId)
 
         where:

@@ -149,7 +149,7 @@ class DiskEntrySpec extends Specification {
         then:
         1 * cachedHandle.closeSilently()
         [parent, source, child, destination, destinationChild].every { it.cache.size() == 0 }
-        ["a", "a\\child", "b", "b\\child"].every { connection.leaseManager.getByPath("share", it) == null }
+        ["a", "a\\child", "b", "b\\child"].every { connection.sessionTable.activeSessions().first().leaseManager.getByPath("share", it) == null }
         sibling.cache.size() == 1
         otherShare.cache.size() == 1
         entry.path == "b"
@@ -218,8 +218,8 @@ class DiskEntrySpec extends Specification {
         1 * cachedHandle.closeSilently()
         directory.cacheDirectory == null
         [parent, directory, child].every { it.cache.size() == 0 }
-        connection.leaseManager.getByPath("share", "parent\\dir") == null
-        connection.leaseManager.getByPath("share", "parent\\dir\\child") == null
+        connection.sessionTable.activeSessions().first().leaseManager.getByPath("share", "parent\\dir") == null
+        connection.sessionTable.activeSessions().first().leaseManager.getByPath("share", "parent\\dir\\child") == null
 
         when:
         entry.close()
@@ -249,7 +249,7 @@ class DiskEntrySpec extends Specification {
     }
 
     private LeaseEntry cacheDirectory(String shareName, String path) {
-        def manager = connection.leaseManager
+        def manager = connection.sessionTable.activeSessions().first().leaseManager
         def entry = new LeaseEntry(manager.leaseKeyForPath(shareName, path), null,
             SMB2LeaseState.readHandle(), shareName, path)
         entry.setOwner(share.session, share.treeConnect.treeId, SMB2Dialect.SMB_3_0)

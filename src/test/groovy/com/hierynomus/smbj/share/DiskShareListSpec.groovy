@@ -216,7 +216,7 @@ class DiskShareListSpec extends Specification {
 
         // Pre-seed the LeaseManager with a valid RH entry for "testdir" but no cacheDirectory.
         // This forces list() into the existing-lease path with no retained cache handle.
-        def lm = connection.getLeaseManager()
+        def lm = session.getLeaseManager()
         def key = lm.leaseKeyForPath("share", "testdir")
         def seededEntry = new LeaseEntry(key, null, SMB2LeaseState.readHandle(), "share", "testdir")
         seededEntry.setOwner(session, share.treeConnect.treeId, SMB2Dialect.SMB_3_0)
@@ -409,7 +409,7 @@ class DiskShareListSpec extends Specification {
             null
         })
         def share = connectLeasingShare(processor)
-        def manager = connection.leaseManager
+        def manager = connection.sessionTable.activeSessions().first().leaseManager
         if (handleState != "first open") {
             share.list("parent")
             def entry = manager.getByPath("share", "parent")
@@ -495,7 +495,7 @@ class DiskShareListSpec extends Specification {
             null
         })
         def share = connectLeasingShare(processor)
-        def manager = connection.leaseManager
+        def manager = connection.sessionTable.activeSessions().first().leaseManager
         def entry = new LeaseEntry(manager.leaseKeyForPath("share", "parent"), null,
             SMB2LeaseState.readHandle(), "share", "parent")
         entry.setOwner(share.session, share.treeConnect.treeId, SMB2Dialect.SMB_3_0)

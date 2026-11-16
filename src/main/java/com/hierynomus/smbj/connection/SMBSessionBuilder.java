@@ -20,6 +20,7 @@ import com.hierynomus.mserref.NtStatus;
 import com.hierynomus.mssmb2.SMB2Dialect;
 import com.hierynomus.mssmb2.SMB2Packet;
 import com.hierynomus.mssmb2.SMB2PacketData;
+import com.hierynomus.mssmb2.SMB3SigningAlgorithm;
 import com.hierynomus.mssmb2.SMBApiException;
 import com.hierynomus.mssmb2.messages.SMB2SessionSetup;
 import com.hierynomus.protocol.commons.Factory;
@@ -107,6 +108,9 @@ public class SMBSessionBuilder {
      * @return a (new) Session that is authenticated for the user.
      */
     public Session establish(AuthenticationContext authContext) {
+        if (connection.getOwningSession() != null) {
+            throw new IllegalStateException("A session-owned SMB channel cannot authenticate another session");
+        }
         try {
             Authenticator authenticator = getAuthenticator(authContext);
             if (authenticator instanceof NtlmAuthenticator && config.getNtlmConfig().isIntegrityEnabled() && !(authContext.isAnonymous() && !(authContext.isGuest()))) {
@@ -126,6 +130,112 @@ public class SMBSessionBuilder {
             throw new SMBRuntimeException(e);
         }
     }
+
+    // CUSTOM ADDED BEGIN: MS-SMB2 3.2.4.2.3 / 3.3.5.5.3, SMB 3.x channel binding.
+    public Session bind(Session session, Signatory signatory) throws IOException {
+        if (connection.getOwningSession() != null && connection.getOwningSession() != session) {
+            throw new IOException("SMB channel belongs to a different session");
+        }
+        ConnectionContext original = session.getConnection().getConnectionContext();
+        SMB2Dialect dialect = original.getNegotiatedProtocol().getDialect();
+        if (!dialect.isSmb3x()
+                || connectionContext.getNegotiatedProtocol().getDialect() != dialect
+                || !original.getServerGuid().equals(connectionContext.getServerGuid())
+                || !original.getClientGuid().equals(connectionContext.getClientGuid())
+                || original.getCipherId() != connectionContext.getCipherId()
+                || signingAlgorithm(original) != signingAlgorithm(connectionContext)
+                || original.isServerRequiresSigning() != connectionContext.isServerRequiresSigning()
+                || !connectionContext.getServerCapabilities().contains(com.hierynomus.mssmb2.SMB2GlobalCapability.SMB2_GLOBAL_CAP_MULTI_CHANNEL)
+                || !config.isSigningEnabled()
+                || session.isGuest() || session.isAnonymous() || session.getSessionContext().getSigningKey() == null) {
+            throw new IOException("SMB channel does not match the established authenticated SMB 3.x server/session policy");
+        }
+        if (signingAlgorithm(original) == SMB3SigningAlgorithm.AES_GMAC) {
+            throw new IOException("GMAC session binding is unsupported: signing nonce uniqueness cannot be guaranteed");
+        }
+        session.validateChannelLimits(connectionContext.getNegotiatedProtocol());
+        if (sessionTable.find(session.getSessionId()) != null) {
+            throw new IOException("Connection already contains this SMB session");
+        }
+        boolean bound = false;
+        // As in go-smb2 sessionSetupBinding, install established cipher keys before reading binding replies.
+        sessionTable.registerSession(session.getSessionId(), session);
+        try {
+            Authenticator authenticator = getAuthenticator(session.getAuthenticationContext());
+            if (authenticator instanceof NtlmAuthenticator && config.getNtlmConfig().isIntegrityEnabled()) {
+                authenticator = new NtlmSealer((NtlmAuthenticator) authenticator);
+            }
+            authenticator.init(config);
+            BuilderContext ctx = newContext(session.getAuthenticationContext(), authenticator);
+            ctx.sessionId = session.getSessionId();
+            SessionContext transcript = new SessionContext();
+            transcript.setPreauthIntegrityHashValue(connectionContext.getPreauthIntegrityHashValue());
+            processAuthenticationToken(ctx, connectionContext.getGssNegotiateToken());
+            for (int exchange = 0; exchange < 16; exchange++) {
+                SMB2SessionSetup request = new SMB2SessionSetup(dialect,
+                        EnumSet.of(config.isSigningRequired() ? SMB2_NEGOTIATE_SIGNING_REQUIRED : SMB2_NEGOTIATE_SIGNING_ENABLED),
+                        connectionContext.getClientCapabilities());
+                request.setBinding(true);
+                request.setSecurityBuffer(ctx.securityContext);
+                request.getHeader().setSessionId(ctx.sessionId);
+                SMB2Packet wire = signatory.sign(request, session.getSessionContext().getSigningKey());
+                SMB2SessionSetup response = connection.sendAndReceive(wire);
+                if (dialect == SMB2Dialect.SMB_3_1_1) updatePreauthIntegrityValue(ctx, transcript, wire);
+                if (response.getHeader().getSessionId() != ctx.sessionId) {
+                    throw new IOException("SMB binding response changed SessionId");
+                }
+                long status = response.getHeader().getStatusCode();
+                if ((status == NtStatus.STATUS_MORE_PROCESSING_REQUIRED.getValue() || status == NtStatus.STATUS_SUCCESS.getValue())
+                        && (response.getSessionFlags().contains(SMB2SessionSetup.SMB2SessionFlags.SMB2_SESSION_FLAG_IS_GUEST)
+                        || response.getSessionFlags().contains(SMB2SessionSetup.SMB2SessionFlags.SMB2_SESSION_FLAG_IS_NULL))) {
+                    throw new IOException("SMB channel binding changed the authenticated session to guest or anonymous");
+                }
+                if (status == NtStatus.STATUS_MORE_PROCESSING_REQUIRED.getValue()) {
+                    verifyBindingResponse(response, session.getSessionContext().getSigningKey(), signatory, exchange + 1);
+                    if (dialect == SMB2Dialect.SMB_3_1_1) updatePreauthIntegrityValue(ctx, transcript, response);
+                    processAuthenticationToken(ctx, response.getSecurityBuffer());
+                } else if (status == NtStatus.STATUS_SUCCESS.getValue()) {
+                    processAuthenticationToken(ctx, response.getSecurityBuffer());
+                    if (ctx.sessionKey == null || ctx.sessionKey.length == 0) {
+                        throw new IOException("SMB binding authentication did not export a channel key");
+                    }
+                    // The binding GSS context supplies the channel KDF key; established session cipher keys stay unchanged.
+                    SecretKey channelKey = deriveKey(new SecretKeySpec(java.util.Arrays.copyOf(ctx.sessionKey, 16), HMAC_SHA256_ALGORITHM),
+                            dialect == SMB2Dialect.SMB_3_1_1 ? KDF_SIGN_LABEL_SMB311 : KDF_SIGN_LABEL,
+                            dialect == SMB2Dialect.SMB_3_1_1 ? transcript.getPreauthIntegrityHashValue() : KDF_SIGN_CONTEXT,
+                            dialect == SMB2Dialect.SMB_3_1_1 ? signingAlgorithm() : AES_128_CMAC_ALGORITHM);
+                    verifyBindingResponse(response, channelKey, signatory, exchange + 1);
+                    session.addChannel(connection, channelKey);
+                    bound = true;
+                    return session;
+                } else {
+                    throw new SMBApiException(response.getHeader(), "SMB channel binding failed");
+                }
+            }
+            throw new IOException("SMB channel binding exceeded authentication exchange limit");
+        } catch (SpnegoException e) {
+            throw new IOException("SMB channel authentication failed", e);
+        } finally {
+            if (!bound) {
+                sessionTable.removeSession(session.getSessionId());
+            }
+        }
+    }
+
+    private void verifyBindingResponse(SMB2SessionSetup response, SecretKey key, Signatory signatory, int exchange) throws IOException {
+        try {
+            boolean signed = response.getHeader().isFlagSet(com.hierynomus.mssmb2.SMB2MessageFlag.SMB2_FLAGS_SIGNED);
+            if (!signed || !signatory.verify(new com.hierynomus.mssmb2.SMB2PacketData(Packets.getPacketBytes(response)), key)) {
+                throw new IOException(String.format("SMB channel binding response signature is %s "
+                                + "(exchange=%d, status=0x%08x, flags=0x%08x, messageId=%d)",
+                        signed ? "invalid" : "missing", exchange, response.getHeader().getStatusCode(),
+                        response.getHeader().getFlags(), response.getHeader().getMessageId()));
+            }
+        } catch (Buffer.BufferException e) {
+            throw new IOException("Malformed SMB binding response (exchange=" + exchange + ")", e);
+        }
+    }
+    // CUSTOM ADDED END
 
     private BuilderContext newContext(AuthenticationContext authContext, Authenticator authenticator) {
         BuilderContext ctx = new BuilderContext();
@@ -361,9 +471,17 @@ public class SMBSessionBuilder {
 
     private SecretKey deriveSigningKey(SMB2Dialect dialect, SessionContext context) {
         if (dialect == SMB2Dialect.SMB_3_1_1) {
-            return deriveKey(context.getSessionKey(), KDF_SIGN_LABEL_SMB311, context.getPreauthIntegrityHashValue(), AES_128_CMAC_ALGORITHM);
+            return deriveKey(context.getSessionKey(), KDF_SIGN_LABEL_SMB311, context.getPreauthIntegrityHashValue(), signingAlgorithm());
         }
         return deriveKey(context.getSessionKey(), KDF_SIGN_LABEL, KDF_SIGN_CONTEXT, AES_128_CMAC_ALGORITHM);
+    }
+
+    private static SMB3SigningAlgorithm signingAlgorithm(ConnectionContext context) {
+        return context.getSigningAlgorithm() == null ? SMB3SigningAlgorithm.AES_CMAC : context.getSigningAlgorithm();
+    }
+
+    private String signingAlgorithm() {
+        return signingAlgorithm(connectionContext).getAlgorithmName();
     }
 
     private SecretKey deriveKey(SecretKey derivationKey, byte[] label, byte[] context, String algorithm) {

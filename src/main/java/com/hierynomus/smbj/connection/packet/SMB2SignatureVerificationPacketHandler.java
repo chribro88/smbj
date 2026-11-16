@@ -73,6 +73,7 @@ public class SMB2SignatureVerificationPacketHandler extends SMB2PacketHandler {
     private SessionTable sessionTable;
     private Signatory signatory;
     private OutstandingRequests outstandingRequests;
+    private com.hierynomus.smbj.connection.Connection connection;
 
     /**
      * Creates a verifier that trusts the session ID in each response header.
@@ -80,7 +81,7 @@ public class SMB2SignatureVerificationPacketHandler extends SMB2PacketHandler {
      */
     @Deprecated
     public SMB2SignatureVerificationPacketHandler(SessionTable sessionTable, Signatory signatory) {
-        this(sessionTable, signatory, null);
+        this(sessionTable, signatory, (OutstandingRequests) null);
     }
 
     /**
@@ -90,6 +91,18 @@ public class SMB2SignatureVerificationPacketHandler extends SMB2PacketHandler {
      * @param outstandingRequests the requests awaiting responses
      */
     public SMB2SignatureVerificationPacketHandler(SessionTable sessionTable, Signatory signatory, OutstandingRequests outstandingRequests) {
+        this(sessionTable, signatory, outstandingRequests, null);
+    }
+
+    public SMB2SignatureVerificationPacketHandler(SessionTable sessionTable, Signatory signatory,
+            com.hierynomus.smbj.connection.Connection connection) {
+        this(sessionTable, signatory);
+        this.connection = connection;
+    }
+
+    public SMB2SignatureVerificationPacketHandler(SessionTable sessionTable, Signatory signatory,
+            OutstandingRequests outstandingRequests, com.hierynomus.smbj.connection.Connection connection) {
+        this.connection = connection;
         this.sessionTable = sessionTable;
         this.signatory = signatory;
         this.outstandingRequests = outstandingRequests;
@@ -132,7 +145,7 @@ public class SMB2SignatureVerificationPacketHandler extends SMB2PacketHandler {
                 logger.warn("Could not find session << {} >> for packet {}.", sessionId, packetData);
                 return false;
             }
-            SecretKey key = session.getSigningKey(packetData.getHeader(), false);
+            SecretKey key = session.getSigningKey(packetData.getHeader(), false, connection);
             if (key == null || !signatory.verify(packetData, key)) {
                 logger.warn("Invalid packet signature for packet {}", packetData);
                 return false;

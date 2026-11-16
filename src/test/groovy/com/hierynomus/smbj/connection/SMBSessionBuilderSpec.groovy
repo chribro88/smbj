@@ -584,6 +584,7 @@ class SMBSessionBuilderSpec extends Specification {
         def initialHash = new byte[64]
         def testContext = Stub(ConnectionContext) {
             getNegotiatedProtocol() >> protocol
+            getSigningAlgorithm() >> com.hierynomus.mssmb2.SMB3SigningAlgorithm.AES_CMAC
             getClientCapabilities() >> EnumSet.noneOf(SMB2GlobalCapability)
             getGssNegotiateToken() >> new byte[0]
             getPreauthIntegrityHashValue() >> initialHash

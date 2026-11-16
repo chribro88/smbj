@@ -208,7 +208,16 @@ public class LeaseEntry {
         return invalidateCache(true);
     }
 
+    /** Discard local cache state when no live transport remains. */
+    int discardCache() {
+        return invalidateCache(false, false);
+    }
+
     private int invalidateCache(boolean closeNoWait) {
+        return invalidateCache(closeNoWait, true);
+    }
+
+    private int invalidateCache(boolean closeNoWait, boolean closeHandle) {
         Directory old;
         int generation;
         // Cache publication uses this same monitor for its generation check and populate.
@@ -219,7 +228,7 @@ public class LeaseEntry {
             cacheDirectory = null;
         }
         // CLOSE performs network I/O and must not hold up cache publication or invalidation.
-        if (old != null) {
+        if (closeHandle && old != null) {
             if (closeNoWait) {
                 try {
                     old.closeNoWait();

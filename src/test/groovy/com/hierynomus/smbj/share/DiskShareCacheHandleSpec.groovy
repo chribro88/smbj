@@ -57,7 +57,7 @@ class DiskShareCacheHandleSpec extends Specification {
     def "concurrent cache misses complete one enumeration before restarting the same handle"() {
         given:
         def share = connectLeasingShare()
-        def manager = connection.leaseManager
+        def manager = connection.sessionTable.activeSessions().first().leaseManager
         def entry = new LeaseEntry(manager.leaseKeyForPath("share", "docs"), null,
             SMB2LeaseState.readHandle(), "share", "docs")
         entry.granted = true
@@ -114,7 +114,7 @@ class DiskShareCacheHandleSpec extends Specification {
     def "a selected cache handle detached before enumeration cannot be reinstalled while its close is blocked"() {
         given:
         def share = connectLeasingShare()
-        def manager = connection.leaseManager
+        def manager = connection.sessionTable.activeSessions().first().leaseManager
         def entry = new LeaseEntry(manager.leaseKeyForPath("share", "docs"), null,
             SMB2LeaseState.readHandle(), "share", "docs")
         entry.granted = true
@@ -189,7 +189,7 @@ class DiskShareCacheHandleSpec extends Specification {
             }
             null
         }
-        def manager = connection.leaseManager
+        def manager = connection.sessionTable.activeSessions().first().leaseManager
         def entry = new LeaseEntry(manager.leaseKeyForPath("share", "docs"), null,
             SMB2LeaseState.readHandle(), "share", "docs")
         entry.granted = true
@@ -209,13 +209,15 @@ class DiskShareCacheHandleSpec extends Specification {
         when:
         otherShare.list("docs")
 
-        then: "the server checks the caller's permissions on an ordinary CREATE"
+        then: "the server checks the caller's permissions using its own session and lease"
         def failure = thrown(SMBApiException)
         failure.status == NtStatus.STATUS_ACCESS_DENIED
         creates.size() == 1
         creates[0].header.sessionId == otherSession.sessionId
-        creates[0].requestedOplockLevel == SMB2OplockLevel.SMB2_OPLOCK_LEVEL_NONE
-        creates[0].createContexts.empty
+        creates[0].requestedOplockLevel == SMB2OplockLevel.SMB2_OPLOCK_LEVEL_LEASE
+        creates[0].createContexts.size() == 1
+        otherSession.leaseManager.lookup(entry.leaseKey) == null
+        otherSession.leaseManager.getByPath("share", "docs") == null
         0 * ownerDirectory.list(_, _)
 
         and: "the original session retains its lease, handle, and routing reservation"

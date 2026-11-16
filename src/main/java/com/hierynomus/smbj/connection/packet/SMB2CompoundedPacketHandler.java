@@ -68,8 +68,13 @@ public class SMB2CompoundedPacketHandler extends SMB2PacketHandler {
      * @param signatory the signature verifier
      */
     public SMB2CompoundedPacketHandler(OutstandingRequests outstandingRequests, SessionTable sessionTable, Signatory signatory) {
+        this(outstandingRequests, sessionTable, signatory, null);
+    }
+
+    public SMB2CompoundedPacketHandler(OutstandingRequests outstandingRequests, SessionTable sessionTable,
+            Signatory signatory, com.hierynomus.smbj.connection.Connection connection) {
         this.outstandingHandler = new SMB2IsOutstandingPacketHandler(outstandingRequests);
-        this.signatureHandler = new SMB2SignatureVerificationPacketHandler(sessionTable, signatory, outstandingRequests);
+        this.signatureHandler = new SMB2SignatureVerificationPacketHandler(sessionTable, signatory, outstandingRequests, connection);
     }
 
     @Override

@@ -41,6 +41,9 @@ public class SMBClient implements Closeable {
 
     private Map<String, Connection> connectionTable = new ConcurrentHashMap<>();
     private ServerList serverList = new ServerList();
+    private final java.util.Set<Connection> channelConnections = java.util.Collections.newSetFromMap(new ConcurrentHashMap<Connection, Boolean>());
+    private final Object connectionLock = new Object();
+    private boolean closed;
 
     private SmbConfig config;
 
@@ -83,8 +86,51 @@ public class SMBClient implements Closeable {
         return getEstablishedOrConnect(hostname, port);
     }
 
+    // CUSTOM ADDED: pooled connect() cannot create a second TCP channel to the same endpoint.
+    public Connection openChannel(com.hierynomus.smbj.session.Session session, String hostname, int port) throws IOException {
+        java.util.Objects.requireNonNull(session, "session");
+        Connection channel = new Connection(config, this, bus, serverList, session);
+        boolean registered = false;
+        try {
+            synchronized (this) {
+                if (closed) {
+                    throw new IOException("SMB client is closed");
+                }
+                registered = session.beginBinding(channel);
+                channelConnections.add(channel);
+            }
+            channel.connect(session.getConnection().getRemoteHostname(), new java.net.InetSocketAddress(hostname, port));
+            channel.bind(session);
+            return channel;
+        } catch (IOException | RuntimeException e) {
+            try {
+                channel.close(true);
+            } catch (Exception closeFailure) {
+                e.addSuppressed(closeFailure);
+            }
+            throw e;
+        } finally {
+            if (registered) {
+                session.endBinding(channel);
+            }
+            if (!channel.isConnected()) {
+                channelConnections.remove(channel);
+            }
+        }
+    }
+
     private Connection getEstablishedOrConnect(String hostname, int port) throws IOException {
         synchronized (this) {
+            if (closed) {
+                throw new IOException("SMB client is closed");
+            }
+        }
+        synchronized (connectionLock) {
+            synchronized (this) {
+                if (closed) {
+                    throw new IOException("SMB client is closed");
+                }
+            }
             String hostPort = hostname + ":" + port;
             Connection cachedConnection = connectionTable.get(hostPort);
             if (cachedConnection != null) {
@@ -94,20 +140,41 @@ public class SMBClient implements Closeable {
                         return leased;
                     }
                 }
-                // The cached connection is gone, do not hand it out again.
                 connectionTable.remove(hostPort, cachedConnection);
                 closeQuietly(cachedConnection);
+                cachedConnection = null;
+            }
+            if (cachedConnection == null || !cachedConnection.isConnected()) {
+                Connection connection = new Connection(config, this, bus, serverList);
+                try {
+                    synchronized (this) {
+                        if (closed) {
+                            throw new IOException("SMB client is closed");
+                        }
+                        channelConnections.add(connection);
+                    }
+                    connection.connect(hostname, port);
+                    synchronized (this) {
+                        if (closed || connection.isClosed()) {
+                            throw new IOException("SMB client closed before connection publication");
+                        }
+                        connectionTable.put(hostPort, connection);
+                    }
+                } catch (IOException | RuntimeException e) {
+                    closeSilently(connection); // Quietly close broken connection.
+                    throw e;
+                } finally {
+                    channelConnections.remove(connection);
+                }
+                return connection;
             }
 
-            Connection connection = new Connection(config, this, bus, serverList);
-            try {
-                connection.connect(hostname, port);
-            } catch (IOException e) {
-                closeSilently(connection); // Quietly close broken connection.
-                throw e;
+            synchronized (this) {
+                if (closed) {
+                    throw new IOException("SMB client is closed");
+                }
             }
-            connectionTable.put(hostPort, connection);
-            return connection;
+            return cachedConnection;
         }
     }
 
@@ -126,6 +193,9 @@ public class SMBClient implements Closeable {
         synchronized (this) {
             String hostPort = event.getHostname() + ":" + event.getPort();
             Connection connection = event.getConnection();
+            if (connection != null) {
+                channelConnections.remove(connection);
+            }
             Connection cached = connectionTable.get(hostPort);
             if (connection == null && cached != null && cached.isConnected()) {
                 return;
@@ -143,7 +213,18 @@ public class SMBClient implements Closeable {
 
     @Override
     public void close() {
+        synchronized (this) {
+            closed = true;
+        }
         logger.info("Going to close all remaining connections");
+        for (Connection channel : channelConnections) {
+            try {
+                channel.close(true);
+            } catch (IOException e) {
+                logger.debug("Could not close bound channel", e);
+            }
+        }
+        channelConnections.clear();
         for (Connection connection : connectionTable.values()) {
             try {
                 connection.close(true);

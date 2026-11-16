@@ -38,6 +38,7 @@ public class SMB2PacketHeader implements SMBHeader {
     private int creditCharge = 1;
     private int creditRequest;
     private int creditResponse;
+    private int channelSequence;
     private SMB2MessageCommandCode message;
     private long messageId;
     private long asyncId;
@@ -75,7 +76,7 @@ public class SMB2PacketHeader implements SMBHeader {
 
     private void writeChannelSequenceReserved(SMBBuffer buffer) {
         if (dialect.isSmb3x()) {
-            buffer.putRawBytes(new byte[]{0x0, 0x0}); // ChannelSequence (2 bytes)
+            buffer.putUInt16(channelSequence); // ChannelSequence (2 bytes)
             buffer.putReserved(2); // Reserved (2 bytes)
         } else {
             buffer.putReserved4(); // Status (4 bytes) (reserved on request)
@@ -105,6 +106,17 @@ public class SMB2PacketHeader implements SMBHeader {
 
     public void setMessageId(long messageId) {
         this.messageId = messageId;
+    }
+
+    public int getChannelSequence() {
+        return channelSequence;
+    }
+
+    public void setChannelSequence(int channelSequence) {
+        if (channelSequence < 0 || channelSequence > 0xFFFF) {
+            throw new IllegalArgumentException("ChannelSequence must fit in an unsigned 16-bit value");
+        }
+        this.channelSequence = channelSequence;
     }
 
     public void setMessageType(SMB2MessageCommandCode messageType) {

@@ -121,9 +121,9 @@ class DiskShareDfsInvalidationSpec extends Specification {
             }
         }
         def redirected = new DiskShare(original.smbPath, original.treeConnect, resolver)
-        def originalParent = cachedParent(connection.leaseManager, "source", "alias")
-        def resolvedParent = cachedParent(connection.leaseManager, "target", "actual")
-        def unrelatedParent = cachedParent(connection.leaseManager, "source", "unrelated")
+        def originalParent = cachedParent(connection.sessionTable.activeSessions().first().leaseManager, "source", "alias")
+        def resolvedParent = cachedParent(connection.sessionTable.activeSessions().first().leaseManager, "target", "actual")
+        def unrelatedParent = cachedParent(connection.sessionTable.activeSessions().first().leaseManager, "source", "unrelated")
 
         when:
         def opened = directory
@@ -138,7 +138,7 @@ class DiskShareDfsInvalidationSpec extends Specification {
         requestedLeases == (reactive ? [directory, false] : [false])
         opened.diskShare.is(resolvedShare)
         opened.path == "actual\\entry"
-        connection.leaseManager.getByPath("source", "alias\\entry") == null
+        connection.sessionTable.activeSessions().first().leaseManager.getByPath("source", "alias\\entry") == null
         originalParent.cacheGeneration == (action == SMB2CreateAction.FILE_OPENED ? 0 : 1)
         (originalParent.cache.serve("source", "alias", FileIdBothDirectoryInformation, null) == null) ==
             (action != SMB2CreateAction.FILE_OPENED)
