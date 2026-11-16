@@ -44,8 +44,15 @@ public class SMB2ProcessResponsePacketHandler extends SMB2PacketHandler {
     private static final Logger logger = LoggerFactory.getLogger(SMB2ProcessResponsePacketHandler.class);
     private final SMB2MessageConverter smb2Converter;
     private final OutstandingRequests outstandingRequests;
+    private final com.hierynomus.smbj.connection.Connection connection;
 
     public SMB2ProcessResponsePacketHandler(SMB2MessageConverter smb2Converter, OutstandingRequests outstandingRequests) {
+        this(smb2Converter, outstandingRequests, null);
+    }
+
+    public SMB2ProcessResponsePacketHandler(SMB2MessageConverter smb2Converter, OutstandingRequests outstandingRequests,
+            com.hierynomus.smbj.connection.Connection connection) {
+        this.connection = connection;
         this.smb2Converter = smb2Converter;
         this.outstandingRequests = outstandingRequests;
     }
@@ -57,12 +64,20 @@ public class SMB2ProcessResponsePacketHandler extends SMB2PacketHandler {
         SMB2Packet packet = null;
         try {
             packet = smb2Converter.readPacket(request.getPacket(), packetData);
-        } catch (Buffer.BufferException e) {
+        } catch (Buffer.BufferException | IllegalArgumentException | IndexOutOfBoundsException e) {
             logger.error("Failed to deserialize SMB2 Packet Data of {}", packetData);
 
-            throw new TransportException("Unable to deserialize SMB2 Packet Data.", e);
+            outstandingRequests.receivedResponseFor(packetData.getSequenceNumber())
+                .fail(new TransportException("Invalid network response: unable to deserialize SMB2 packet", e));
+            return;
         }
 
-        outstandingRequests.receivedResponseFor(packet.getHeader().getMessageId()).getPromise().deliver(packet);
+        request = outstandingRequests.receivedResponseFor(packet.getHeader().getMessageId());
+        if (connection != null && request.getCommand() != com.hierynomus.mssmb2.SMB2MessageCommandCode.SMB2_SESSION_SETUP
+                && packet.getHeader().getStatusCode() == com.hierynomus.mserref.NtStatus.STATUS_NETWORK_SESSION_EXPIRED.getValue()) {
+            connection.reauthenticate(request);
+        } else {
+            request.complete(packet);
+        }
     }
 }

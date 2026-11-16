@@ -31,6 +31,8 @@ public class Request {
 
     private final Promise<SMB2Packet, SMBRuntimeException> promise;
     private SMBPacket<?, ?> packet;
+    private final SMBPacket<?, ?> wirePacket;
+    private final int creditsAssigned;
     private final long messageId;
     private final UUID cancelId;
     private final SMB2MessageCommandCode command;
@@ -39,13 +41,23 @@ public class Request {
     private final boolean signingRequired;
     private final Date timestamp;
     private volatile long asyncId;
+    private final java.util.concurrent.atomic.AtomicReference<CancellableFuture.CancelCallback> cancellation;
+    private final java.util.concurrent.atomic.AtomicBoolean cancelled;
+    private volatile boolean retrying;
+    private long authenticationGeneration;
 
     public Request(SMBPacket<?, ?> packet, long messageId, UUID cancelId) {
         this(packet, messageId, cancelId, false);
     }
 
     Request(SMBPacket<?, ?> packet, long messageId, UUID cancelId, boolean signingRequired) {
+        this(packet, messageId, cancelId, signingRequired, null);
+    }
+
+    Request(SMBPacket<?, ?> packet, long messageId, UUID cancelId, boolean signingRequired, Request previous) {
         this.packet = packet instanceof SMB2Packet ? ((SMB2Packet) packet).getPacket() : packet;
+        this.wirePacket = packet;
+        this.creditsAssigned = packet instanceof SMB2Packet ? ((SMB2Packet) packet).getCreditsAssigned() : 1;
         this.encrypted = packet instanceof PacketEncryptor.EncryptedPacketWrapper;
         this.signingRequired = signingRequired;
         this.messageId = messageId;
@@ -59,8 +71,61 @@ public class Request {
             this.command = SMB2MessageCommandCode.SMB2_NEGOTIATE;
             this.sessionId = 0;
         }
-        timestamp = new Date();
-        this.promise = new Promise<>(String.valueOf(messageId), SMBRuntimeException.Wrapper);
+        timestamp = previous == null ? new Date() : previous.timestamp;
+        this.promise = previous == null ? new Promise<>(String.valueOf(messageId), SMBRuntimeException.Wrapper) : previous.promise;
+        this.cancellation = previous == null ? new java.util.concurrent.atomic.AtomicReference<>() : previous.cancellation;
+        this.cancelled = previous == null ? new java.util.concurrent.atomic.AtomicBoolean() : previous.cancelled;
+    }
+
+    int getCreditsAssigned() {
+        return creditsAssigned;
+    }
+
+    public SMB2Packet getRetryPacket() {
+        final SMB2Packet original = (SMB2Packet) packet;
+        com.hierynomus.smb.SMBBuffer sent = encrypted ? original.getBuffer() : wirePacket.getBuffer();
+        if (sent == null) {
+            return original; // A transport can fail before serializing a durable CREATE.
+        }
+        final byte[] body = java.util.Arrays.copyOfRange(sent.array(), SMB2PacketHeader.STRUCTURE_SIZE, sent.wpos());
+        return new SMB2Packet() {
+            { this.header = original.getHeader(); }
+
+            @Override
+            protected void writeTo(com.hierynomus.smb.SMBBuffer buffer) {
+                buffer.putRawBytes(body);
+            }
+
+            @Override
+            public int getMaxPayloadSize() {
+                return original.getMaxPayloadSize();
+            }
+
+            @Override
+            public SMB2Packet getPacket() {
+                return original;
+            }
+        };
+    }
+
+    public boolean isCancelled() {
+        return cancelled.get();
+    }
+
+    public void markRetrying() {
+        retrying = true;
+    }
+
+    boolean isRetrying() {
+        return retrying;
+    }
+
+    public long getAuthenticationGeneration() {
+        return authenticationGeneration;
+    }
+
+    void setAuthenticationGeneration(long generation) {
+        authenticationGeneration = generation;
     }
 
     public long getAsyncId() {
@@ -103,6 +168,28 @@ public class Request {
         this.asyncId = asyncId;
     }
 
+    public void complete(SMB2Packet response) {
+        promise.lock();
+        try {
+            if (!promise.isFulfilled()) {
+                promise.deliver(response);
+            }
+        } finally {
+            promise.unlock();
+        }
+    }
+
+    public void fail(Throwable failure) {
+        promise.lock();
+        try {
+            if (!promise.isFulfilled()) {
+                promise.deliverError(failure);
+            }
+        } finally {
+            promise.unlock();
+        }
+    }
+
     public Promise<SMB2Packet, SMBRuntimeException> getPromise() {
         return promise;
     }
@@ -113,7 +200,13 @@ public class Request {
 
     @SuppressWarnings("unchecked")
     <T extends SMB2Packet> AFuture<T> getFuture(final CancellableFuture.CancelCallback callback) {
-        return (AFuture<T>) new CancellableFuture<>(promise.future(), callback);
+        cancellation.set(callback);
+        return (AFuture<T>) new CancellableFuture<>(promise.future(), () -> {
+            synchronized (packet) {
+                cancelled.set(true);
+                cancellation.get().cancel();
+            }
+        });
 
     }
 

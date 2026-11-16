@@ -338,27 +338,27 @@ public class ResponseValidationTest {
 
         assertDiscarded(credits, first, second);
         connection.handle(new SMB2DecryptedPacketData(data));
-        assertDiscarded(credits, first, second);
-        receive(frame(response(1), response(2)));
-        assertResponse(first, 1);
+        assertInvalidResponse(first);
+        assertDiscarded(credits, second);
+        receive(frame(response(2)));
         assertResponse(second, 2);
     }
 
-    @Test
-    public void shouldDiscardCompoundWithMalformedLaterHeader() throws Exception {
+    @ParameterizedTest
+    @ValueSource(ints = {0, 12, 32})
+    public void shouldFailAuthenticatedMemberOfCompoundWithMalformedLaterHeader(int fault) throws Exception {
         Request first = request(1);
         Request second = request(2);
         int credits = connection.sequenceWindow.available();
-        byte[] original = frame(response(1), response(2));
-        // An invalid protocol ID, an unknown command, and a truncated final header.
-        for (int offset : new int[] {MEMBER_SIZE, MEMBER_SIZE + 12}) {
-            byte[] data = original.clone();
-            data[offset] = (byte) 0xFF;
-            receive(data);
-            assertDiscarded(credits, first, second);
+        byte[] data = frame(response(1), response(2));
+        if (fault == 32) {
+            data = Arrays.copyOf(data, MEMBER_SIZE + 32);
+        } else {
+            data[MEMBER_SIZE + fault] = (byte) 0xFF;
         }
-        receive(Arrays.copyOf(original, MEMBER_SIZE + 32));
-        assertDiscarded(credits, first, second);
+        receive(data);
+        assertInvalidResponse(first);
+        assertDiscarded(credits, second);
     }
 
     @Test
@@ -621,6 +621,13 @@ public class ResponseValidationTest {
             assertFalse(request.getPromise().future().isDone(), "discarded frames must complete no future");
             assertSame(request, connection.outstandingRequests.getRequestByMessageId(request.getMessageId()));
         }
+    }
+
+    private void assertInvalidResponse(Request request) {
+        java.util.concurrent.ExecutionException failure = assertThrows(java.util.concurrent.ExecutionException.class,
+            () -> request.getPromise().future().get(1, TimeUnit.SECONDS));
+        assertTrue(failure.getCause().getMessage().contains("Invalid network response"));
+        assertNull(connection.outstandingRequests.getRequestByMessageId(request.getMessageId()));
     }
 
     private void assertResponse(Request request, long messageId) throws Exception {

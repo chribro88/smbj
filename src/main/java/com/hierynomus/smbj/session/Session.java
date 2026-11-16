@@ -29,6 +29,8 @@ import com.hierynomus.smbj.common.SMBRuntimeException;
 import com.hierynomus.smbj.common.SmbPath;
 import com.hierynomus.smbj.connection.Connection;
 import com.hierynomus.smbj.connection.PacketEncryptor;
+import com.hierynomus.smbj.connection.Request;
+import com.hierynomus.smbj.connection.SMBSessionBuilder;
 import com.hierynomus.smbj.connection.Signatory;
 import com.hierynomus.smbj.event.SMBEventBus;
 import com.hierynomus.smbj.event.SessionLoggedOff;
@@ -57,7 +59,7 @@ public class Session implements AutoCloseable {
     private static final Logger logger = LoggerFactory.getLogger(Session.class);
     private long sessionId;
 
-    private final Connection connection;
+    private volatile Connection connection;
     private final com.hierynomus.smbj.connection.LeaseManager leaseManager = new com.hierynomus.smbj.connection.LeaseManager();
     private final SmbConfig config;
     private SMBEventBus bus;
@@ -79,6 +81,14 @@ public class Session implements AutoCloseable {
     private final java.util.Set<Connection> pendingChannels = new java.util.HashSet<>();
     private boolean closing;
     private volatile boolean closed;
+    private volatile long authenticationGeneration;
+    private final java.util.Set<Request> recovering = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private final java.util.concurrent.ExecutorService recoveryExecutor = new java.util.concurrent.ThreadPoolExecutor(
+        0, 1, 30, TimeUnit.SECONDS, new java.util.concurrent.ArrayBlockingQueue<>(1024), task -> {
+            Thread thread = new Thread(task, "smbj-session-recovery");
+            thread.setDaemon(true);
+            return thread;
+        });
 
     public Session(Connection connection, SmbConfig config, AuthenticationContext userCredentials, SMBEventBus bus, PathResolver pathResolver, Signatory signatory, PacketEncryptor encryptor) {
         this.connection = connection;
@@ -345,7 +355,7 @@ public class Session implements AutoCloseable {
             logoff();
         } finally {
             for (Connection channel : channels) {
-                if (channel != connection && channel.getOwningSession() == this) {
+                if (channel.getOwningSession() == this) {
                     try {
                         channel.close(true);
                     } catch (IOException e) {
@@ -355,6 +365,10 @@ public class Session implements AutoCloseable {
             }
             synchronized (channels) {
                 closed = true;
+                stopRecovery(new TransportException("SMB session closed"));
+                for (Connection channel : channels) {
+                    channel.failSessionRequests(sessionId, new TransportException("SMB session closed"));
+                }
                 channels.clear();
                 channelKeys.clear();
             }
@@ -415,8 +429,12 @@ public class Session implements AutoCloseable {
     }
 
     private <T extends SMB2Packet> Future<T> send(SMB2Packet packet, Connection selected, boolean encrypt) throws TransportException {
+        return send(packet, selected, encrypt, null);
+    }
+
+    private <T extends SMB2Packet> Future<T> send(SMB2Packet packet, Connection selected, boolean encrypt, Request previous) throws TransportException {
         if (closed || channelsFailed.get()) {
-            throw new TransportException("SMB session was invalidated after an uncertain write");
+            throw new TransportException("SMB session is closed or invalidated");
         }
         if (selected != connection && !channelKeys.containsKey(selected)) {
             throw new TransportException("Connection is not an authenticated channel of this session");
@@ -430,19 +448,20 @@ public class Session implements AutoCloseable {
             throw new TransportException("Message signing is required, but no signing key is negotiated");
         }
 
+        SMB2Packet outgoing;
         if (encrypt || shouldEncryptData()) {
             SecretKey encryptionKey = sessionContext.getEncryptionKey();
             if (encryptionKey == null) {
                 throw new TransportException("Message encryption is required, but no encryption key is negotiated");
             }
-            return selected.send(encryptor.encrypt(packet, encryptionKey));
+            outgoing = encryptor.encrypt(packet, encryptionKey);
+        } else if (!config.isOptionalWriteSigning() && !sessionContext.isSigningRequired()
+                && packet.getHeader().getMessage() == SMB2MessageCommandCode.SMB2_WRITE) {
+            outgoing = packet;
+        } else {
+            outgoing = signatory.sign(packet, signingKey);
         }
-
-        if (!config.isOptionalWriteSigning() && !sessionContext.isSigningRequired()
-                && packet.getHeader().getMessage() == com.hierynomus.mssmb2.SMB2MessageCommandCode.SMB2_WRITE) {
-            return selected.send(packet);
-        }
-        return selected.send(signatory.sign(packet, signingKey));
+        return previous == null ? selected.send(outgoing) : selected.send(outgoing, previous);
     }
 
     /**
@@ -508,13 +527,17 @@ public class Session implements AutoCloseable {
         }
     }
 
+    public boolean isBoundChannel(Connection channel) {
+        return channels.contains(channel);
+    }
+
     public boolean isBindingInProgress(Connection channel) {
         synchronized (channels) {
             return pendingChannels.contains(channel) && !channels.contains(channel);
         }
     }
 
-    // Like go-smb2 sessionChannels, retire transports without replaying their outstanding requests.
+    // Each lost channel advances the sequence once, including losses observed before the close event.
     private void retireClosedChannels() {
         for (int i = channels.size() - 1; i >= 0; i--) {
             Connection channel = channels.get(i);
@@ -527,6 +550,9 @@ public class Session implements AutoCloseable {
         if (channels.isEmpty()) {
             channelsFailed.set(true);
             leaseManager.abort();
+            stopRecovery(new TransportException("No authenticated SMB channels remain connected"));
+        } else if (connection.isClosed()) {
+            connection = channels.get(0);
         }
     }
 
@@ -540,6 +566,9 @@ public class Session implements AutoCloseable {
             if (channels.isEmpty()) {
                 channelsFailed.set(true);
                 leaseManager.abort();
+                stopRecovery(new TransportException("No authenticated SMB channels remain connected"));
+            } else if (connection == event.getConnection()) {
+                connection = channels.get(0);
             }
         }
     }
@@ -569,14 +598,6 @@ public class Session implements AutoCloseable {
 
     public SecretKey getSigningKey(SMB2PacketHeader header, boolean signing, Connection receivingConnection) {
         if (connection.getNegotiatedProtocol().getDialect().isSmb3x()) {
-            if (header.getMessage() == SMB2MessageCommandCode.SMB2_SESSION_SETUP) {
-                if (signing) {
-                    return sessionContext.getSigningKey();
-                }
-                if (header.getStatusCode() != NtStatus.STATUS_SUCCESS.getValue()) {
-                    return sessionContext.getSigningKey();
-                }
-            }
             SecretKey channelKey = receivingConnection == null ? null : channelKeys.get(receivingConnection);
             return channelKey == null ? sessionContext.getSigningKey() : channelKey;
         }
@@ -603,6 +624,121 @@ public class Session implements AutoCloseable {
 
     public SessionContext getSessionContext() {
         return sessionContext;
+    }
+
+    public long getAuthenticationGeneration() {
+        return authenticationGeneration;
+    }
+
+    /** Only durable-v2 CREATE has an outcome that can safely be replayed after losing a channel. */
+    public boolean replayDurableCreate(Request request) {
+        if (!multichannel || !connection.getNegotiatedProtocol().getDialect().isSmb3x()
+                || !(request.getPacket() instanceof SMB2CreateRequest) || getChannelCount() == 0) {
+            return false;
+        }
+        for (com.hierynomus.mssmb2.messages.create.SMB2CreateContext context : ((SMB2CreateRequest) request.getPacket()).getCreateContexts()) {
+            if (java.util.Arrays.equals(context.getName(), new byte[] {'D', 'H', '2', 'Q'})) {
+                recover(request, false);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public void retryAfterReauthentication(Request request) {
+        recover(request, true);
+    }
+
+    private void recover(Request request, boolean expired) {
+        request.markRetrying();
+        recovering.add(request);
+        try {
+            recoveryExecutor.execute(() -> {
+                try {
+                    if (closed || channelsFailed.get()) {
+                        throw new TransportException("SMB session closed during recovery");
+                    }
+                    if (expired && request.getAuthenticationGeneration() == authenticationGeneration) {
+                        new SMBSessionBuilder(selectChannel(), config, null).reauthenticate(this, signatory);
+                        authenticationGeneration++;
+                    }
+                    synchronized (request.getPacket()) {
+                        SMB2Packet packet = request.getRetryPacket();
+                        if (request.isCancelled()) {
+                            throw new java.util.concurrent.CancellationException("SMB request cancelled during recovery");
+                        }
+                        if (!request.getPromise().isFulfilled()) {
+                            if (!expired) {
+                                packet.getHeader().setFlag(SMB2MessageFlag.SMB2_FLAGS_REPLAY_OPERATION);
+                            }
+                            send(packet, selectChannel(), request.isEncrypted(), request);
+                        }
+                    }
+                } catch (IOException | RuntimeException failure) {
+                    request.fail(failure);
+                    if (expired && !(failure instanceof java.util.concurrent.CancellationException)) {
+                        terminateExpiredSession(failure);
+                    }
+                } finally {
+                    recovering.remove(request);
+                }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException failure) {
+            recovering.remove(request);
+            request.fail(failure);
+        }
+    }
+
+    private void stopRecovery(Throwable failure) {
+        recoveryExecutor.shutdownNow();
+        for (Request request : recovering) {
+            request.fail(failure);
+        }
+        recovering.clear();
+    }
+
+    private void terminateExpiredSession(Throwable failure) {
+        if (closed) {
+            return;
+        }
+        // LOGOFF must be attempted while the established keys and a surviving channel are available.
+        try {
+            send(new SMB2Logoff(connection.getNegotiatedProtocol().getDialect(), sessionId));
+        } catch (TransportException logoffFailure) {
+            logger.debug("Could not log off expired session {}", sessionId, logoffFailure);
+        } finally {
+            java.util.List<Connection> retired;
+            synchronized (channels) {
+                closing = true;
+                closed = true;
+                retired = new java.util.ArrayList<>(channels);
+                retired.addAll(pendingChannels);
+                pendingChannels.clear();
+                channels.clear();
+                channelKeys.clear();
+            }
+            stopRecovery(failure);
+            leaseManager.abort();
+            if (bus != null) {
+                try {
+                    logoff();
+                } catch (IOException | RuntimeException cleanupFailure) {
+                    logger.debug("Could not finish expired session cleanup", cleanupFailure);
+                } finally {
+                    bus.unsubscribe(this);
+                }
+            }
+            for (Connection channel : retired) {
+                channel.failSessionRequests(sessionId, failure);
+                if (channel.getOwningSession() == this) {
+                    try {
+                        channel.close(true);
+                    } catch (IOException closeFailure) {
+                        logger.debug("Could not close expired session channel", closeFailure);
+                    }
+                }
+            }
+        }
     }
 
     public AuthenticationContext getAuthenticationContext() {

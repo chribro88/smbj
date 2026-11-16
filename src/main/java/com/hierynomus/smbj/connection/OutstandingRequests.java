@@ -19,7 +19,8 @@ import com.hierynomus.smbj.common.SMBRuntimeException;
 import com.hierynomus.protocol.transport.TransportException;
 
 import java.util.HashMap;
-import java.util.HashSet;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -75,7 +76,7 @@ public class OutstandingRequests {
         lock.writeLock().lock();
         try {
             if (error != null) {
-                request.getPromise().deliverError(error);
+                request.fail(error);
                 throw error;
             }
             lookup.put(request.getMessageId(), request);
@@ -86,16 +87,38 @@ public class OutstandingRequests {
     }
 
     void handleError(Throwable t) {
+        for (Request request : drain(t)) {
+            request.fail(t);
+        }
+    }
+
+    List<Request> drain(Throwable t) {
         lock.writeLock().lock();
         try {
             if (error != null) {
-                return;
+                return java.util.Collections.emptyList();
             }
             error = TransportException.Wrapper.wrap(t);
-            for (Long id : new HashSet<>(lookup.keySet())) {
-                Request removed = lookup.remove(id);
-                cancelLookup.remove(removed.getCancelId());
-                removed.getPromise().deliverError(error);
+            List<Request> requests = new ArrayList<>(lookup.values());
+            lookup.clear();
+            cancelLookup.clear();
+            return requests;
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    void failSession(long sessionId, Throwable failure) {
+        lock.writeLock().lock();
+        try {
+            java.util.Iterator<Request> iterator = lookup.values().iterator();
+            while (iterator.hasNext()) {
+                Request request = iterator.next();
+                if (request.getSessionId() == sessionId) {
+                    iterator.remove();
+                    cancelLookup.remove(request.getCancelId());
+                    request.fail(failure);
+                }
             }
         } finally {
             lock.writeLock().unlock();

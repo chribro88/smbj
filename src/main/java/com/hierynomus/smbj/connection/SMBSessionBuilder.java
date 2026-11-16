@@ -191,7 +191,7 @@ public class SMBSessionBuilder {
                     throw new IOException("SMB channel binding changed the authenticated session to guest or anonymous");
                 }
                 if (status == NtStatus.STATUS_MORE_PROCESSING_REQUIRED.getValue()) {
-                    verifyBindingResponse(response, session.getSessionContext().getSigningKey(), signatory, exchange + 1);
+                    verifySessionSetupResponse(response, session.getSessionContext().getSigningKey(), signatory, exchange + 1);
                     if (dialect == SMB2Dialect.SMB_3_1_1) updatePreauthIntegrityValue(ctx, transcript, response);
                     processAuthenticationToken(ctx, response.getSecurityBuffer());
                 } else if (status == NtStatus.STATUS_SUCCESS.getValue()) {
@@ -204,7 +204,7 @@ public class SMBSessionBuilder {
                             dialect == SMB2Dialect.SMB_3_1_1 ? KDF_SIGN_LABEL_SMB311 : KDF_SIGN_LABEL,
                             dialect == SMB2Dialect.SMB_3_1_1 ? transcript.getPreauthIntegrityHashValue() : KDF_SIGN_CONTEXT,
                             dialect == SMB2Dialect.SMB_3_1_1 ? signingAlgorithm() : AES_128_CMAC_ALGORITHM);
-                    verifyBindingResponse(response, channelKey, signatory, exchange + 1);
+                    verifySessionSetupResponse(response, channelKey, signatory, exchange + 1);
                     session.addChannel(connection, channelKey);
                     bound = true;
                     return session;
@@ -222,17 +222,69 @@ public class SMBSessionBuilder {
         }
     }
 
-    private void verifyBindingResponse(SMB2SessionSetup response, SecretKey key, Signatory signatory, int exchange) throws IOException {
+    /** Reauthentication retains the existing session/channel keys and preauthentication transcript. */
+    public void reauthenticate(Session session, Signatory signatory) throws IOException {
+        AuthenticationContext credentials = session.getAuthenticationContext();
+        if (credentials == null || !connection.isConnected() || sessionTable.find(session.getSessionId()) != session) {
+            throw new IOException("Reauthentication requires an active authenticated SMB session");
+        }
+        try {
+            Authenticator authenticator = getAuthenticator(credentials);
+            if (authenticator instanceof NtlmAuthenticator && config.getNtlmConfig().isIntegrityEnabled()) {
+                authenticator = new NtlmSealer((NtlmAuthenticator) authenticator);
+            }
+            try (java.io.Closeable cleanup = authenticator instanceof java.io.Closeable ? (java.io.Closeable) authenticator : null) {
+                authenticator.init(config);
+                BuilderContext ctx = newContext(credentials, authenticator);
+                processAuthenticationToken(ctx, connectionContext.getGssNegotiateToken());
+                for (int exchange = 0; exchange < 16; exchange++) {
+                    SMB2SessionSetup request = new SMB2SessionSetup(connection.getNegotiatedProtocol().getDialect(),
+                        EnumSet.of(session.isSigningRequired() ? SMB2_NEGOTIATE_SIGNING_REQUIRED : SMB2_NEGOTIATE_SIGNING_ENABLED),
+                        connectionContext.getClientCapabilities());
+                    request.getHeader().setSessionId(session.getSessionId());
+                    request.setSecurityBuffer(ctx.securityContext);
+                    SecretKey key = session.getSigningKey(request.getHeader(), true, connection);
+                    SMB2SessionSetup response = connection.sendAndReceive(signatory.sign(request, key));
+                    if (response.getHeader().getSessionId() != session.getSessionId()) {
+                        throw new IOException("SMB reauthentication response changed SessionId");
+                    }
+                    if (key != null) {
+                        verifySessionSetupResponse(response, key, signatory, exchange + 1);
+                    }
+                    long status = response.getHeader().getStatusCode();
+                    if (status != NtStatus.STATUS_SUCCESS.getValue() && status != NtStatus.STATUS_MORE_PROCESSING_REQUIRED.getValue()) {
+                        throw new SMBApiException(response.getHeader(), "SMB reauthentication failed");
+                    }
+                    if (response.getSessionFlags().contains(SMB2SessionSetup.SMB2SessionFlags.SMB2_SESSION_FLAG_IS_GUEST)
+                            || response.getSessionFlags().contains(SMB2SessionSetup.SMB2SessionFlags.SMB2_SESSION_FLAG_IS_NULL)) {
+                        throw new IOException("SMB reauthentication changed the session to guest or anonymous");
+                    }
+                    processAuthenticationToken(ctx, response.getSecurityBuffer());
+                    if (status == NtStatus.STATUS_SUCCESS.getValue()) {
+                        if (ctx.sessionKey == null || ctx.sessionKey.length == 0) {
+                            throw new IOException("SMB reauthentication did not complete authentication");
+                        }
+                        return;
+                    }
+                }
+                throw new IOException("SMB reauthentication exceeded authentication exchange limit");
+            }
+        } catch (SpnegoException failure) {
+            throw new IOException("SMB reauthentication failed", failure);
+        }
+    }
+
+    private void verifySessionSetupResponse(SMB2SessionSetup response, SecretKey key, Signatory signatory, int exchange) throws IOException {
         try {
             boolean signed = response.getHeader().isFlagSet(com.hierynomus.mssmb2.SMB2MessageFlag.SMB2_FLAGS_SIGNED);
             if (!signed || !signatory.verify(new com.hierynomus.mssmb2.SMB2PacketData(Packets.getPacketBytes(response)), key)) {
-                throw new IOException(String.format("SMB channel binding response signature is %s "
+                throw new IOException(String.format("SMB SESSION_SETUP response signature is %s "
                                 + "(exchange=%d, status=0x%08x, flags=0x%08x, messageId=%d)",
                         signed ? "invalid" : "missing", exchange, response.getHeader().getStatusCode(),
                         response.getHeader().getFlags(), response.getHeader().getMessageId()));
             }
         } catch (Buffer.BufferException e) {
-            throw new IOException("Malformed SMB binding response (exchange=" + exchange + ")", e);
+            throw new IOException("Malformed SMB SESSION_SETUP response (exchange=" + exchange + ")", e);
         }
     }
     // CUSTOM ADDED END

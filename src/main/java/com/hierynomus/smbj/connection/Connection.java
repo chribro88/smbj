@@ -135,7 +135,7 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
                 new SMB2LeaseBreakPacketHandler(this::dispatchLeaseBreak).setNext(
                     new SMB2CreditGrantingPacketHandler(sequenceWindow).setNext(
                         new SMB2AsyncResponsePacketHandler(outstandingRequests).setNext(
-                            new SMB2ProcessResponsePacketHandler(messageConverter, outstandingRequests).setNext(
+                            new SMB2ProcessResponsePacketHandler(messageConverter, outstandingRequests, this).setNext(
                                 new SMB1PacketHandler().setNext(new DeadLetterPacketHandler())))))));
     }
 
@@ -195,7 +195,7 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
     /**
      * Close the Connection. If {@code force} is set to true, it forgoes the
      * {@link Session#close()} operation on the open sessions, fails outstanding
-     * requests and credit waiters, and disconnects the transport. Subsequent sends
+     * non-replayable requests and credit waiters, and disconnects the transport. Subsequent sends
      * fail with a {@link TransportException}.
      *
      * <p>
@@ -243,7 +243,12 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
         // while waiting for credits. Registration shares the request table's lock
         // with handleError, so a racing request is either drained or rejected.
         sequenceWindow.handleError(failure);
-        outstandingRequests.handleError(failure);
+        for (Request request : outstandingRequests.drain(failure)) {
+            Session session = sessionTable.find(request.getSessionId());
+            if (session == null || !session.replayDurableCreate(request)) {
+                request.fail(failure);
+            }
+        }
         try {
             transport.disconnect();
         } finally {
@@ -296,7 +301,13 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
      * @throws TransportException When a transport level error occurred
      */
     public <T extends SMB2Packet> Future<T> send(SMB2Packet packet) throws TransportException {
+        return send(packet, null);
+    }
+
+    /** Send another attempt while retaining the application's completion and cancellation. */
+    public <T extends SMB2Packet> Future<T> send(SMB2Packet packet, Request previous) throws TransportException {
         checkConnected();
+        Request request = null;
         Future<T> f = null;
         if (!(packet.getPacket() instanceof SMB2Cancel)) {
             // LOGOFF may remove the session before this request receives its final response.
@@ -307,7 +318,8 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
             try {
                 checkConnected();
                 int availableCredits = sequenceWindow.available();
-                int grantCredits = calculateGrantedCredits(packet, availableCredits);
+                int grantCredits = previous == null ? calculateGrantedCredits(packet, availableCredits) : previous.getCreditsAssigned();
+                packet.setCreditsAssigned(grantCredits);
                 if (availableCredits == 0) {
                     logger.warn(
                         "There are no credits left to send {}, will block until there are more credits available.",
@@ -322,17 +334,22 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
                 lock.unlock();
             }
 
-            Request request = new Request(packet, packet.getHeader().getMessageId(), UUID.randomUUID(),
-                signingRequired);
-            outstandingRequests.registerOutstanding(request);
+            request = new Request(packet, packet.getHeader().getMessageId(), UUID.randomUUID(),
+                signingRequired, previous);
+            request.setAuthenticationGeneration(session == null ? 0 : session.getAuthenticationGeneration());
             f = request.getFuture(new CancelRequest(request, packet.getHeader().getSessionId()));
+            outstandingRequests.registerOutstanding(request);
         }
         try {
-            checkConnected();
-            transport.write(packet);
+            synchronized (packet.getPacket()) {
+                checkConnected();
+                transport.write(packet);
+            }
         } catch (TransportException e) {
             handleError(e);
-            throw e;
+            if (request == null || !request.isRetrying()) {
+                throw e;
+            }
         }
         if (packet.getHeader().getMessage() == SMB2MessageCommandCode.SMB2_WRITE) {
             writeRequests.incrementAndGet();
@@ -398,17 +415,13 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
             handleError(e);
             throw e;
         }
-        // [MS-SMB2] 3.2.5.1.6 Handling Session Expiration
-        // if (packet.getHeader().getStatus() == NtStatus.STATUS_NETWORK_SESSION_EXPIRED) {
-        // TODO reauthenticate session!
-        // }
 
     }
 
 
     /**
      * Called when the transport failed, either while reading or while writing. Nothing can be received on a failed
-     * transport anymore, so the connection is dead: fail the outstanding requests and close the connection, so that
+     * transport anymore, so the connection is dead: replay eligible durable CREATEs, fail other requests and close it, so that
      * {@link SMBClient} stops handing it out. This does not depend on the number of leases that are still
      * outstanding, and it does not try to log off the sessions over the failed transport.
      */
@@ -420,6 +433,19 @@ public class Connection extends Pooled<Connection> implements Closeable, PacketR
             String exceptionClass = e.getClass().getSimpleName();
             logger.debug("{} while closing connection on error, ignoring: {}", exceptionClass, e.getMessage());
         }
+    }
+
+    public void reauthenticate(Request request) {
+        Session session = sessionTable.find(request.getSessionId());
+        if (session == null) {
+            request.fail(new TransportException("Expired SMB session is no longer available"));
+        } else {
+            session.retryAfterReauthentication(request);
+        }
+    }
+
+    public void failSessionRequests(long sessionId, Throwable failure) {
+        outstandingRequests.failSession(sessionId, failure);
     }
 
     public String getRemoteHostname() {

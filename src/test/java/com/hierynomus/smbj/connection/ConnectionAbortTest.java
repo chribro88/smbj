@@ -393,16 +393,14 @@ public class ConnectionAbortTest {
     public void outstandingRequestsDeliverFailureOnlyOnce() throws Exception {
         OutstandingRequests requests = new OutstandingRequests();
         Request request = spy(new Request(echo(), 0, UUID.randomUUID()));
-        Promise<SMB2Packet, SMBRuntimeException> promise = spy(request.getPromise());
-        doReturn(promise).when(request).getPromise();
+        Promise<SMB2Packet, SMBRuntimeException> promise = request.getPromise();
         requests.registerOutstanding(request);
         TransportException failure = new TransportException("first failure");
 
         requests.handleError(failure);
         requests.handleError(new TransportException("second failure"));
 
-        verify(promise, times(1)).deliverError(failure);
-        verify(promise, times(1)).deliverError(any(Throwable.class));
+        verify(request, times(1)).fail(failure);
         assertSame(failure, transportFailure(promise.future()));
         assertFalse(requests.isOutstanding(0L));
         assertNull(requests.getRequestByCancelId(request.getCancelId()));

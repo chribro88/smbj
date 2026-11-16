@@ -132,7 +132,9 @@ public class SMB2SignatureVerificationPacketHandler extends SMB2PacketHandler {
             }
             // Authentication responses are handled by the session builder. Only the request
             // can authorize this exemption, never an untrusted response header.
-            if (request.getSessionId() == 0 || request.getCommand() == SMB2_SESSION_SETUP) {
+            Session established = sessionTable.find(request.getSessionId());
+            if (request.getSessionId() == 0 || request.getCommand() == SMB2_SESSION_SETUP
+                    && (established == null || !established.isBoundChannel(connection))) {
                 return true;
             }
             sessionId = request.getSessionId();

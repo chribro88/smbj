@@ -48,6 +48,7 @@ import java.util.Set;
  */
 public class SMB2CompoundedPacketHandler extends SMB2PacketHandler {
     private static final Logger logger = LoggerFactory.getLogger(SMB2CompoundedPacketHandler.class);
+    private final OutstandingRequests outstandingRequests;
     private final SMB2IsOutstandingPacketHandler outstandingHandler;
     private final SMB2SignatureVerificationPacketHandler signatureHandler;
 
@@ -57,6 +58,7 @@ public class SMB2CompoundedPacketHandler extends SMB2PacketHandler {
      */
     @Deprecated
     public SMB2CompoundedPacketHandler() {
+        this.outstandingRequests = null;
         this.outstandingHandler = null;
         this.signatureHandler = null;
     }
@@ -73,6 +75,7 @@ public class SMB2CompoundedPacketHandler extends SMB2PacketHandler {
 
     public SMB2CompoundedPacketHandler(OutstandingRequests outstandingRequests, SessionTable sessionTable,
             Signatory signatory, com.hierynomus.smbj.connection.Connection connection) {
+        this.outstandingRequests = outstandingRequests;
         this.outstandingHandler = new SMB2IsOutstandingPacketHandler(outstandingRequests);
         this.signatureHandler = new SMB2SignatureVerificationPacketHandler(sessionTable, signatory, outstandingRequests, connection);
     }
@@ -90,11 +93,11 @@ public class SMB2CompoundedPacketHandler extends SMB2PacketHandler {
         try {
             do {
                 SMB2PacketHeader header = member.getHeader();
+                members.add(member);
                 if (compounded && !hasValidBounds(member)) {
-                    discard(packetData);
+                    rejectMalformed(packetData, members);
                     return;
                 }
-                members.add(member);
                 if (!member.isCompounded()) {
                     break;
                 }
@@ -104,7 +107,7 @@ public class SMB2CompoundedPacketHandler extends SMB2PacketHandler {
             } while (member != null);
         } catch (Buffer.BufferException | IllegalArgumentException | IndexOutOfBoundsException e) {
             logger.warn("Malformed compounded response {}, dropping frame", packetData, e);
-            discard(packetData);
+            rejectMalformed(packetData, members);
             return;
         }
 
@@ -155,8 +158,31 @@ public class SMB2CompoundedPacketHandler extends SMB2PacketHandler {
             return header.getMessageEndPosition() == length;
         }
         return offset >= SMB2PacketHeader.STRUCTURE_SIZE && (offset & 7) == 0
-            && offset <= length - start - SMB2PacketHeader.STRUCTURE_SIZE
+            && offset <= length - start
             && header.getMessageEndPosition() == start + offset;
+    }
+
+    private void rejectMalformed(SMB2PacketData frame, List<SMB2PacketData> members) throws TransportException {
+        if (outstandingRequests != null) {
+            for (SMB2PacketData member : members) {
+                if (member.isOplockBreakNotification()) {
+                    continue;
+                }
+                SMB2PacketHeader header = member.getHeader();
+                if (!hasValidBounds(member)) {
+                    // An invalid NextCommand cannot bound the MAC; use the remaining frame bytes.
+                    header.setMessageEndPosition(member.getDataBuffer().wpos());
+                }
+                if (frame.isDecrypted() && header.getSessionId() != frame.getHeader().getSessionId()) {
+                    continue;
+                }
+                if (outstandingHandler.isValid(member) && signatureHandler.isValid(member)) {
+                    outstandingRequests.receivedResponseFor(member.getSequenceNumber())
+                        .fail(new TransportException("Invalid network response: malformed compound framing"));
+                }
+            }
+        }
+        discard(frame);
     }
 
     private void discard(SMB2PacketData packetData) throws TransportException {
