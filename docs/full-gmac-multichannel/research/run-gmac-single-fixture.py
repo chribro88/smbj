@@ -211,6 +211,19 @@ try:
                                    ('gcm_audits', 'AUXWIRE_GCM ', 2)):
             metadata[key] = [line.strip() for line in text.splitlines() if line.startswith(prefix)]
             assert len(metadata[key]) == count, (key, metadata[key])
+    if arguments.public_binding:
+        metadata['concurrent_profiles'] = [line for line in metadata['profiles'] if 'concurrentBindings=' in line]
+        concurrent = [dict(word.split('=', 1) for word in line.split()[1:]) for line in metadata['concurrent_profiles']]
+        assert len(concurrent) == 7
+        assert {(int(entry['concurrentBindings']), entry['transport']) for entry in concurrent} == {
+            (count, transport) for count in (2, 4, 8) for transport in ('direct', 'async')}
+        assert sum(entry['borrowedPreserved'] == 'true' for entry in concurrent) == 1
+        metadata['wire_audits'] = [line for line in text.splitlines() if line.startswith('AUXWIRE_COMPLETE ')]
+        audits = {entry['run']: entry for entry in (
+            dict(word.split('=', 1) for word in line.split()[1:]) for line in metadata['wire_audits'])}
+        assert set(audits) == {'public-' + entry['run'] for entry in concurrent}
+        assert all(entry['distinctMessageNonceReuses'] == '0' and int(entry['independentlyVerified']) > 0
+                   for entry in audits.values())
     if arguments.lease_isolation:
         for key, prefix, count in (('wire_audits', 'AUXWIRE_COMPLETE ', 4), ('gcm_audits', 'AUXWIRE_GCM ', 2)):
             metadata[key] = [line.strip() for line in text.splitlines() if line.startswith(prefix)]
