@@ -40,7 +40,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 
-public class SpnegoAuthenticator implements Authenticator {
+public class SpnegoAuthenticator implements Authenticator, java.io.Closeable {
     private static final Logger logger = LoggerFactory.getLogger(SpnegoAuthenticator.class);
     private GSSContextConfig gssContextConfig;
 
@@ -131,6 +131,19 @@ public class SpnegoAuthenticator implements Authenticator {
             newKey = key;
         }
         return newKey;
+    }
+
+    @Override
+    public void close() throws IOException {
+        if (gssContext != null) {
+            try {
+                gssContext.dispose();
+            } catch (GSSException failure) {
+                throw new IOException("Could not dispose GSS authentication context", failure);
+            } finally {
+                gssContext = null;
+            }
+        }
     }
 
     @Override

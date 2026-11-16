@@ -134,7 +134,15 @@ public class SMBClient implements Closeable {
             String hostPort = hostname + ":" + port;
             Connection cachedConnection = connectionTable.get(hostPort);
             if (cachedConnection != null) {
-                cachedConnection = cachedConnection.lease();
+                if (cachedConnection.isConnected()) {
+                    Connection leased = cachedConnection.lease();
+                    if (leased != null) {
+                        return leased;
+                    }
+                }
+                connectionTable.remove(hostPort, cachedConnection);
+                closeQuietly(cachedConnection);
+                cachedConnection = null;
             }
             if (cachedConnection == null || !cachedConnection.isConnected()) {
                 Connection connection = new Connection(config, this, bus, serverList);
@@ -170,19 +178,34 @@ public class SMBClient implements Closeable {
         }
     }
 
+    private void closeQuietly(Connection connection) {
+        try {
+            connection.close(true);
+        } catch (Exception e) {
+            logger.debug("Error closing connection to host {}", connection.getRemoteHostname());
+            logger.debug("Exception was: ", e);
+        }
+    }
+
     @Handler
     @SuppressWarnings("unused")
     private void connectionClosed(ConnectionClosed event) {
         synchronized (this) {
             String hostPort = event.getHostname() + ":" + event.getPort();
-            if (event.getConnection() != null) {
-                channelConnections.remove(event.getConnection());
+            Connection connection = event.getConnection();
+            if (connection != null) {
+                channelConnections.remove(connection);
             }
-            if (event.getConnection() == null || connectionTable.get(hostPort) == event.getConnection()) {
-                connectionTable.remove(hostPort);
+            Connection cached = connectionTable.get(hostPort);
+            if (connection == null && cached != null && cached.isConnected()) {
+                return;
+            }
+            boolean removed = connection == null ? connectionTable.remove(hostPort) != null
+                : connectionTable.remove(hostPort, connection);
+            if (removed) {
                 serverList.unregister(event.getHostname());
+                logger.debug("Connection to << {} >> closed", hostPort);
             }
-            logger.debug("Connection to << {} >> closed", hostPort);
         }
     }
 

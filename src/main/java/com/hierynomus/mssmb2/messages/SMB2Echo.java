@@ -42,6 +42,9 @@ public class SMB2Echo extends SMB2Packet {
 
     @Override
     protected void readMessage(SMBBuffer buffer) throws Buffer.BufferException {
-        buffer.skip(4);
+        if (header.getMessageEndPosition() - buffer.rpos() < 4 || buffer.readUInt16() != 4) {
+            throw new Buffer.BufferException("Invalid ECHO response StructureSize");
+        }
+        buffer.skip(2);
     }
 }

@@ -28,6 +28,7 @@ import org.slf4j.LoggerFactory;
 
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
+import java.security.SecureRandom;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -36,10 +37,17 @@ public class PacketEncryptor {
     private SecurityProvider securityProvider;
     private SMB3EncryptionCipher cipher;
     private SMB2Dialect dialect;
-    private final AtomicLong nonceCounter = new AtomicLong();
+    private final AtomicLong nonceCounter;
+    private final long nonceCounterLimit;
+    private final byte[] nonceSuffix = new byte[SMB3EncryptionCipher.AES_128_GCM.getNonceLength() - 8];
 
     public PacketEncryptor(SecurityProvider securityProvider) {
         this.securityProvider = securityProvider;
+        SecureRandom random = new SecureRandom();
+        long initialNonce = random.nextLong();
+        this.nonceCounter = new AtomicLong(initialNonce);
+        this.nonceCounterLimit = initialNonce - 1;
+        random.nextBytes(nonceSuffix);
     }
 
     void init(ConnectionContext connectionContext) {
@@ -106,15 +114,16 @@ public class PacketEncryptor {
     }
 
     byte[] getNewNonce() {
-        // CUSTOM ADDED: this encryptor is shared by all channels using a session key.
-        long nonce = nonceCounter.getAndUpdate(value -> value < 0 ? value : value + 1);
-        if (nonce < 0) {
-            throw new IllegalStateException("SMB encryption nonce space exhausted; establish a new session");
-        }
+        long nonce = nonceCounter.getAndUpdate(value -> {
+            // Reserve the last counter value so that the counter can never cycle back to its seed.
+            if (value == nonceCounterLimit) {
+                throw new IllegalStateException("Encryption nonce counter exhausted");
+            }
+            return value + 1;
+        });
         SMBBuffer b = new SMBBuffer();
-        b.putUInt64(nonce); // Little Endians go first
-        int padding = cipher.getNonceLength() - 8; // 64 bits = 8 bytes
-        b.putReserved(padding);
+        b.putLong(nonce); // Write all 64 counter bits in little-endian order, including negative values.
+        b.putRawBytes(nonceSuffix, 0, cipher.getNonceLength() - 8);
         return b.getCompactData();
     }
 

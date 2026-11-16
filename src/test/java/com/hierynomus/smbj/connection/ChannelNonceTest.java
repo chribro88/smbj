@@ -38,7 +38,10 @@ class ChannelNonceTest {
             assertEquals(8000,nonces.size());
         } finally { workers.shutdownNow();assertTrue(workers.awaitTermination(5,TimeUnit.SECONDS)); }
         java.lang.reflect.Field field = PacketEncryptor.class.getDeclaredField("nonceCounter");
-        field.setAccessible(true);((AtomicLong)field.get(encryptor)).set(Long.MAX_VALUE);
+        field.setAccessible(true);
+        java.lang.reflect.Field limit = PacketEncryptor.class.getDeclaredField("nonceCounterLimit");
+        limit.setAccessible(true);
+        ((AtomicLong)field.get(encryptor)).set(limit.getLong(encryptor) - 1);
         encryptor.getNewNonce();
         assertThrows(IllegalStateException.class,encryptor::getNewNonce);
         assertThrows(IllegalStateException.class,encryptor::getNewNonce);

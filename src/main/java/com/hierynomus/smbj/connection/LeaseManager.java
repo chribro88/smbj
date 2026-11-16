@@ -16,14 +16,20 @@
 package com.hierynomus.smbj.connection;
 
 import java.io.Closeable;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.slf4j.Logger;
@@ -36,8 +42,7 @@ import com.hierynomus.smbj.share.Directory;
 
 /**
  * Lease table owned by a logical session, with a connection-local table for legacy callers.
- * An inbound lease break carries no session/tree id, so receiving connections resolve its
- * {@link LeaseKey} through their registered sessions. A directory's lease key is minted <b>once per node
+ * Receiving channels resolve an inbound break through their registered sessions. A directory's lease key is minted <b>once per node
  * (path)</b> and reused (Apple's per-node key); the {@code path -> key} map also lets a
  * child open thread its parent directory's own lease key.
  */
@@ -46,6 +51,8 @@ public class LeaseManager implements Closeable {
 
     private final ConcurrentMap<LeaseKey, LeaseEntry> byKey = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, LeaseKey> byPath = new ConcurrentHashMap<>();
+    // Path identity and handle reservations change together; cache I/O stays outside this lock.
+    private final Object registrationLock = new Object();
     private final AtomicBoolean closed = new AtomicBoolean();
 
     // A break must be resolved/acknowledged OFF the transport read thread: sending the ack is
@@ -59,36 +66,167 @@ public class LeaseManager implements Closeable {
         }
     });
     private final AtomicInteger breaksHandled = new AtomicInteger(0);
+    // Awaiting CLOSE on the break executor could deadlock the break that permits CLOSE to finish.
+    // Keep every submitted completion queued: running it on the caller could make closeNoWait block,
+    // while rejecting it would leave an already-sent CLOSE without a response observer.
+    private final ExecutorService closeExecutor = createCloseExecutor();
+
+    private static ExecutorService createCloseExecutor() {
+        ThreadPoolExecutor executor = new ThreadPoolExecutor(
+            8, 8, 60L, TimeUnit.SECONDS,
+            new LinkedBlockingQueue<Runnable>(),
+            new ThreadFactory() {
+                @Override
+                public Thread newThread(Runnable r) {
+                    Thread t = new Thread(r, "smbj-lease-close");
+                    t.setDaemon(true);
+                    return t;
+                }
+            }
+        );
+        executor.allowCoreThreadTimeOut(true);
+        return executor;
+    }
+
+    void dispatchClose(Runnable completion) {
+        closeExecutor.execute(completion);
+    }
+
+    /** Stable per-node key: mint once per normalized path within share, reuse thereafter. */
+    public LeaseKey leaseKeyForPath(String shareName, String path) {
+        synchronized (registrationLock) {
+            ensureOpen();
+            return byPath.computeIfAbsent(normalizePathKey(shareName, path), p -> LeaseKey.random());
+        }
+    }
 
     /** Stable per-node key: mint once per normalized path, reuse thereafter. */
     public LeaseKey leaseKeyForPath(String path) {
-        return byPath.computeIfAbsent(normalize(path), p -> LeaseKey.random());
+        return leaseKeyForPath(null, path);
+    }
+
+    /** The lease key previously minted for {@code (shareName, path)}, or {@code null} if never opened. */
+    public LeaseKey leaseKeyForExistingPath(String shareName, String path) {
+        return byPath.get(normalizePathKey(shareName, path));
     }
 
     /** The lease key previously minted for {@code path}, or {@code null} if never opened. */
     public LeaseKey leaseKeyForExistingPath(String path) {
-        return byPath.get(normalize(path));
+        return leaseKeyForExistingPath(null, path);
+    }
+
+    /** The live lease entry for {@code (shareName, path)}, or {@code null} if none is registered. */
+    public LeaseEntry getByPath(String shareName, String path) {
+        LeaseKey key = byPath.get(normalizePathKey(shareName, path));
+        return key == null ? null : byKey.get(key);
     }
 
     /** The live lease entry for {@code path}, or {@code null} if none is registered. */
     public LeaseEntry getByPath(String path) {
-        LeaseKey key = byPath.get(normalize(path));
-        return key == null ? null : byKey.get(key);
+        return getByPath(null, path);
     }
 
-    /** Register an entry BEFORE sending its CREATE (a break can race the grant response). */
+    /**
+     * Register an entry BEFORE sending its CREATE (a break can race the grant response),
+     * reserving its first handle reference until CREATE fails or the returned Directory closes.
+     */
     public void register(LeaseEntry entry) {
-        if (closed.get()) {
-            throw new IllegalStateException("Lease manager is closed");
+        synchronized (registrationLock) {
+            registerEntry(entry);
         }
+    }
+
+    private void registerEntry(LeaseEntry entry) {
+        ensureOpen();
+        entry.retainReference(this);
         byKey.put(entry.getLeaseKey(), entry);
-        byPath.putIfAbsent(normalize(entry.getPath()), entry.getLeaseKey());
-        if (closed.get()) {
-            byKey.remove(entry.getLeaseKey(), entry);
-            byPath.remove(normalize(entry.getPath()), entry.getLeaseKey());
-            entry.invalidateCache(false);
-            throw new IllegalStateException("Lease manager closed during lease registration");
+        byPath.putIfAbsent(normalizePathKey(entry.getShareName(), entry.getPath()), entry.getLeaseKey());
+    }
+
+    /** Atomically select the current path lease and reserve a CREATE on it. */
+    public LeaseEntry acquire(String shareName, String path, LeaseKey parentKey, long requestedState) {
+        LeaseEntry existing;
+        LeaseEntry acquired;
+        synchronized (registrationLock) {
+            ensureOpen();
+            String pathKey = normalizePathKey(shareName, path);
+            LeaseKey key = byPath.get(pathKey);
+            existing = key == null ? null : byKey.get(key);
+            if (existing != null && !existing.isBroken()) {
+                existing.retainReference(this);
+                return existing;
+            }
+            if (existing != null) {
+                byPath.remove(pathKey);
+            }
+            key = byPath.computeIfAbsent(pathKey, p -> LeaseKey.random());
+            acquired = new LeaseEntry(key, parentKey, requestedState, shareName, path);
+            registerEntry(acquired);
         }
+        if (existing != null) {
+            existing.invalidateCache();
+        }
+        return acquired;
+    }
+
+    /** Release a failed CREATE or a closed handle, keeping routing until the last handle closes. */
+    public void release(LeaseEntry entry) {
+        synchronized (registrationLock) {
+            if (entry.releaseReference() == 0) {
+                byKey.remove(entry.getLeaseKey(), entry);
+            }
+        }
+    }
+
+    /** Actively evicts cached enumeration and closes cached handle for a directory in the specified share. */
+    public void invalidateDirectoryCache(String shareName, String path) {
+        LeaseEntry entry = getByPath(shareName, path);
+        if (entry != null) {
+            entry.invalidateCache();
+        }
+    }
+
+    /** Actively evicts cached enumeration and closes cached handle for a directory. */
+    public void invalidateDirectoryCache(String path) {
+        invalidateDirectoryCache(null, path);
+    }
+
+    /**
+     * Invalidate caches and detach the path keys for a directory and all its descendants.
+     * Entries remain addressable by lease key: application handles can still be open after a
+     * deletion, and the server can send breaks that must be acknowledged until those handles close.
+     */
+    public void invalidateDirectoryAndDescendants(String shareName, String path) {
+        String normalizedShare = normalizeShare(shareName);
+        String normalizedPath = normalizePath(path);
+        String targetKey = formatPathKey(normalizedShare, normalizedPath);
+        String prefix = normalizedPath.isEmpty() ? targetKey : targetKey + "\\";
+
+        List<LeaseEntry> detached = new ArrayList<>();
+        synchronized (registrationLock) {
+            for (Map.Entry<String, LeaseKey> mapEntry : byPath.entrySet()) {
+                String k = mapEntry.getKey();
+                if (k.equals(targetKey) || k.startsWith(prefix)) {
+                    LeaseKey lk = mapEntry.getValue();
+                    byPath.remove(k, lk);
+                }
+            }
+
+            for (LeaseEntry entry : byKey.values()) {
+                String entryKey = normalizePathKey(entry.getShareName(), entry.getPath());
+                if (entryKey.equals(targetKey) || entryKey.startsWith(prefix)) {
+                    detached.add(entry);
+                }
+            }
+        }
+        for (LeaseEntry entry : detached) {
+            entry.invalidateCache();
+        }
+    }
+
+    /** Invalidate caches and detach path keys for a directory and all its descendants. */
+    public void invalidateDirectoryAndDescendants(String path) {
+        invalidateDirectoryAndDescendants(null, path);
     }
 
     /** Resolve an inbound break's lease key to its entry (spec 06). */
@@ -98,7 +236,9 @@ public class LeaseManager implements Closeable {
 
     /** Drop the entry (no lease granted / handle closed). The node key in {@code byPath} is kept. */
     public void unregister(LeaseKey key) {
-        byKey.remove(key);
+        synchronized (registrationLock) {
+            byKey.remove(key);
+        }
     }
 
     /** Number of lease breaks fully handled (test/diagnostic hook). */
@@ -116,16 +256,31 @@ public class LeaseManager implements Closeable {
         close(false);
     }
 
+    private void ensureOpen() {
+        if (closed.get()) {
+            throw new IllegalStateException("Lease manager is closed");
+        }
+    }
+
     private void close(boolean closeHandles) {
-        if (!closed.compareAndSet(false, true)) {
-            return;
+        List<LeaseEntry> entries;
+        synchronized (registrationLock) {
+            if (!closed.compareAndSet(false, true)) {
+                return;
+            }
+            entries = new ArrayList<>(byKey.values());
+            byKey.clear();
+            byPath.clear();
         }
         breakExecutor.shutdownNow();
-        for (LeaseEntry entry : byKey.values()) {
-            entry.invalidateCache(closeHandles);
+        closeExecutor.shutdownNow();
+        for (LeaseEntry entry : entries) {
+            if (closeHandles) {
+                entry.invalidateCache();
+            } else {
+                entry.discardCache();
+            }
         }
-        byKey.clear();
-        byPath.clear();
     }
 
     /**
@@ -142,7 +297,7 @@ public class LeaseManager implements Closeable {
                 public void run() {
                     try {
                         onBreak(notification);
-                    } catch (Throwable t) {
+                    } catch (Exception t) {
                         logger.error("Lease-break handling failed for {}", notification.getLeaseKey(), t);
                     }
                 }
@@ -169,13 +324,13 @@ public class LeaseManager implements Closeable {
             return;
         }
 
-        // Apply: invalidate cache, update stored state/epoch, mark broken.
-        entry.invalidateCache();
+        // Stop new queries from caching before invalidation can block on closing the cache handle.
+        entry.setBroken(true);
+        entry.invalidateCacheNoWait();
         entry.setGrantedState(n.getNewLeaseState());
         if (n.getNewEpoch() != 0) {
             entry.setEpoch(n.getNewEpoch());
         }
-        entry.setBroken(true);
 
         // Acknowledge if required (the RH-directory case). Ack state is a subset of NewLeaseState.
         if (n.isAckRequired() && entry.getSession() != null) {
@@ -206,7 +361,44 @@ public class LeaseManager implements Closeable {
         return -1; // stale / reordered
     }
 
-    private static String normalize(String path) {
-        return path == null ? "" : path.replace('/', '\\').toLowerCase(Locale.ROOT);
+    public static String normalizeShare(String shareName) {
+        if (shareName == null) {
+            return "";
+        }
+        String s = shareName.replace('/', '\\').trim().toLowerCase(Locale.ROOT);
+        while (s.startsWith("\\")) {
+            s = s.substring(1);
+        }
+        while (s.endsWith("\\")) {
+            s = s.substring(0, s.length() - 1);
+        }
+        return s;
+    }
+
+    public static String normalizePath(String path) {
+        if (path == null) {
+            return "";
+        }
+        String p = path.replace('/', '\\').toLowerCase(Locale.ROOT);
+        while (p.startsWith("\\")) {
+            p = p.substring(1);
+        }
+        while (p.endsWith("\\")) {
+            p = p.substring(0, p.length() - 1);
+        }
+        return p;
+    }
+
+    public static String formatPathKey(String normalizedShare, String normalizedPath) {
+        return normalizedShare.length() + ":" + normalizedShare + ":" + normalizedPath;
+    }
+
+    public static String normalizePathKey(String shareName, String path) {
+        String s = normalizeShare(shareName);
+        String p = normalizePath(path);
+        // Frame the namespace separately from the path, including the legacy null-share
+        // namespace. Concatenating with a path separator lets (null, "share\\docs") collide
+        // with ("share", "docs"). A length prefix also avoids delimiter collisions.
+        return formatPathKey(s, p);
     }
 }

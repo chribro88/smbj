@@ -82,6 +82,7 @@ public class ConnectionTest {
         String hostname = "127.0.0.1";
         try (SMBClient client = new SMBClient(config(new NoOpPacketProcessor()), bus);
              Connection first = client.connect(hostname)) {
+            first.transport.disconnect();
             ConnectionClosed event = new ConnectionClosed(hostname, SMBClient.DEFAULT_PORT);
             assertNull(event.getConnection());
             bus.publish(event);

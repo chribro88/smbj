@@ -87,6 +87,55 @@ class SessionChannelsTest {
     }
 
     @Test
+    void shareRequiredEncryptionUsesTheSurvivingChannelAndSessionCipherKey() throws Exception {
+        com.hierynomus.smbj.connection.PacketEncryptor encryptor =
+                mock(com.hierynomus.smbj.connection.PacketEncryptor.class);
+        Session session = new Session(primary, SmbConfig.createDefaultConfig(), null, null, null, signatory, encryptor);
+        session.getSessionContext().setSigningKey(primaryKey);
+        SecretKey cipherKey = new SecretKeySpec(new byte[16], "AES");
+        session.getSessionContext().setEncryptionKey(cipherKey);
+        session.addChannel(secondary, secondaryKey);
+        when(primary.isClosed()).thenReturn(true);
+        SMB2Echo request = new SMB2Echo(SMB2Dialect.SMB_3_1_1);
+        com.hierynomus.smbj.connection.PacketEncryptor.EncryptedPacketWrapper wire =
+                mock(com.hierynomus.smbj.connection.PacketEncryptor.EncryptedPacketWrapper.class);
+        when(encryptor.encrypt(request, cipherKey)).thenReturn(wire);
+
+        session.send(request, true);
+
+        verify(encryptor).encrypt(request, cipherKey);
+        verify(secondary).send(wire);
+        verify(primary, never()).send(any());
+        assertEquals(1, request.getHeader().getChannelSequence());
+    }
+
+    @Test
+    void shareRequiredEncryptionFailsBeforeSendingWhenNoCipherKeyIsAvailable() throws Exception {
+        Session session = session();
+        SMB2Echo request = new SMB2Echo(SMB2Dialect.SMB_3_1_1);
+
+        assertThrows(TransportException.class, () -> session.send(request, true));
+
+        verify(primary, never()).send(any());
+        verify(secondary, never()).send(any());
+    }
+
+    @Test
+    void cachedDfsSessionSurvivesPrimaryFailureWhileAnotherChannelRemains() throws Exception {
+        Session nested = session();
+        Session parent = new Session(primary, SmbConfig.createDefaultConfig(), null, null, null, signatory, null);
+        java.lang.reflect.Field cache = Session.class.getDeclaredField("nestedSessionsByHost");
+        cache.setAccessible(true);
+        ((java.util.Map<String, Session>) cache.get(parent)).put("target", nested);
+        when(primary.isConnected()).thenReturn(false);
+        when(primary.isClosed()).thenReturn(true);
+
+        assertSame(nested, parent.getNestedSession(new com.hierynomus.smbj.common.SmbPath("target", "share")));
+        assertEquals(1, nested.getChannelCount());
+        verify(primary, never()).close();
+    }
+
+    @Test
     void failsWhenEveryChannelHasClosed() {
         Session session = session();
         when(primary.isClosed()).thenReturn(true);

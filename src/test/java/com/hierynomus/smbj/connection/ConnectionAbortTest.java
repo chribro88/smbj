@@ -123,7 +123,8 @@ public class ConnectionAbortTest {
             Future<SMB2Packet> response = test.connection.send(first);
             SMB2Echo second = echo();
             Future<SMB2Packet> asyncResponse = test.connection.send(second);
-            SMB2Echo pending = echo();
+            SMB2Packet pending = ResponseTestPackets.response(second.getHeader().getMessageId(),
+                second.getHeader().getMessage(), 0, false, NtStatus.STATUS_PENDING, new byte[] {9, 0, 0, 0, 0, 0, 0, 0});
             pending.getHeader().setMessageId(second.getHeader().getMessageId());
             pending.getHeader().setFlag(SMB2MessageFlag.SMB2_FLAGS_ASYNC_COMMAND);
             pending.getHeader().setFlag(SMB2MessageFlag.SMB2_FLAGS_SERVER_TO_REDIR);
@@ -393,16 +394,14 @@ public class ConnectionAbortTest {
     public void outstandingRequestsDeliverFailureOnlyOnce() throws Exception {
         OutstandingRequests requests = new OutstandingRequests();
         Request request = spy(new Request(echo(), 0, UUID.randomUUID()));
-        Promise<SMB2Packet, SMBRuntimeException> promise = spy(request.getPromise());
-        doReturn(promise).when(request).getPromise();
+        Promise<SMB2Packet, SMBRuntimeException> promise = request.getPromise();
         requests.registerOutstanding(request);
         TransportException failure = new TransportException("first failure");
 
         requests.handleError(failure);
         requests.handleError(new TransportException("second failure"));
 
-        verify(promise, times(1)).deliverError(failure);
-        verify(promise, times(1)).deliverError(any(Throwable.class));
+        verify(request, times(1)).fail(failure);
         assertSame(failure, transportFailure(promise.future()));
         assertFalse(requests.isOutstanding(0L));
         assertNull(requests.getRequestByCancelId(request.getCancelId()));

@@ -103,10 +103,14 @@ class ConnectionSpec extends Specification {
     exc.statusCode == NtStatus.STATUS_NOT_SUPPORTED.value
   }
 
-  def "should report STATUS_NETWORK_SESSION_EXPIRED to client application"() {
+  def "should attempt reauthentication and invalidate the session when it fails"() {
     given:
+    def sessionSetups = new java.util.concurrent.atomic.AtomicInteger()
     config = smbConfig({ req ->
       req = req.packet
+      if (req instanceof com.hierynomus.mssmb2.messages.SMB2SessionSetup) {
+        sessionSetups.incrementAndGet()
+      }
       if (req instanceof SMB2TreeConnectRequest) {
         def resp = new SMB2TreeConnectResponse()
         resp.header.statusCode = NtStatus.STATUS_NETWORK_SESSION_EXPIRED.value
@@ -114,15 +118,19 @@ class ConnectionSpec extends Specification {
       }
     })
     client = new SMBClient(config)
-
-    when:
     def conn = client.connect("foo")
     def sess = conn.authenticate(new AuthenticationContext("smbj", "smbj".toCharArray(), null))
+
+    when:
     sess.connectShare("foo")
 
     then:
-    def exc = thrown(SMBApiException)
-    exc.statusCode == NtStatus.STATUS_NETWORK_SESSION_EXPIRED.value
+    // The stub's unsigned SESSION_SETUP reply cannot verify reauthentication with the established key.
+    thrown(com.hierynomus.smbj.common.SMBRuntimeException)
+    sessionSetups.get() == 2
+    new spock.util.concurrent.PollingConditions(timeout: 2).eventually {
+      assert sess.channelCount == 0
+    }
   }
 
   def "should initialise session flags in context once authenticated"() {

@@ -70,6 +70,7 @@ public class DirectTcpTransport<D extends PacketData<?>, P extends Packet<?>> im
             throw new TransportException(format("Cannot write %s as transport is disconnected", packet));
         }
 
+        IOException failure;
         lock.writeLock().lock();
         try {
             if (!isConnected()) {
@@ -85,11 +86,20 @@ public class DirectTcpTransport<D extends PacketData<?>, P extends Packet<?>> im
                 throw new TransportException(format("Cannot write %s as transport got disconnected", packet));
             }
             logger.trace("Packet {} sent, lock released.", packet);
+            return;
+        } catch (TransportException te) {
+            throw te;
         } catch (IOException ioe) {
-            throw new TransportException(ioe);
+            failure = ioe;
         } finally {
             lock.writeLock().unlock();
         }
+
+        // The socket is broken, which the reader may not have noticed (yet). Report it, so that the connection is
+        // closed and not handed out again. This is done without holding the lock, as the receiver closes the transport.
+        logger.debug("Writing packet {} failed, treating the transport as failed", packet, failure);
+        handlers.getReceiver().handleError(failure);
+        throw new TransportException(failure);
     }
 
     @Override
