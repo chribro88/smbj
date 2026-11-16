@@ -141,3 +141,4 @@ original_path,archive,sha256,original_allocated_bytes,archive_allocated_bytes
 /tmp/smbj-kerberos-peer-error-focused-e145831,/tmp/smbj-retained-evidence/smbj-peer-denial-negative-e145831.tar.gz,afe2de508bf1b1368ff10687109cc692e6f43a17a9f897dbf72213cb27a3ead4,,258048
 /tmp/smbj-g0-spec-pins-93306b4,/tmp/smbj-retained-evidence/smbj-peer-denial-negative-e145831.tar.gz,afe2de508bf1b1368ff10687109cc692e6f43a17a9f897dbf72213cb27a3ead4,,258048
 /tmp/smbj-peer-denial-negative-manifest.json,/tmp/smbj-retained-evidence/smbj-peer-denial-negative-e145831.tar.gz,afe2de508bf1b1368ff10687109cc692e6f43a17a9f897dbf72213cb27a3ead4,,258048
+/tmp/smbj-gmac-churn1000-e0a6dbe,/tmp/smbj-retained-evidence/smbj-gmac-churn1000-e0a6dbe.tar.gz,0d7158a04f66c75b9048c6c2f63a9af14952fb4af65459883ab09d83da70d572,2560000,245760

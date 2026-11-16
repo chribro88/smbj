@@ -81,7 +81,20 @@ distinct-message nonce reuse. All eight owned containers are removed. The new
 513-class production JAR still targets Java 8. See
 [the peer-denial validation](validation-peer-reauthentication-denial.json) for
 the reproduced failure, exact revisions, artifact hash and compact evidence.
-Longer-history cost and the remaining complete G0 matrix stay open.
+The remaining complete G0 matrix stays open.
+
+The unchanged workload at `e0a6dbe` now passes **1,000 cycles in each of eight
+Java 21 profiles** (both providers, both transports and signing/GCM): **8,000
+successful replacements and 1,000 prepared failures**, with same-open I/O during
+the held binding phase and an authenticated ECHO on every new candidate.
+All **9,008** retired connections are collectible; steady-state descriptor counts
+are unchanged. The 8,000 recorded samples match the NTLM fixture's exact cursor
+and catch-up equations. Catch-up grows from **5 to 2,128 ECHOs per successful
+candidate**, totaling **1,200,254 per profile**; this exposes linear per-candidate
+and quadratic aggregate history cost. The production JAR is byte-identical to
+the peer-denial artifact. See [the longer churn record](validation-churn-1000.json).
+This supplies the longer-history operating point; comparative throughput,
+cancellation pressure and allocation profiling remain under the release gates.
 
 Directory lease keys, parent-key lookups and cached listings now use the exact
 TreeConnect identity and normalized path. Two sessions, two shares or a reused
@@ -1287,12 +1300,12 @@ results above. Windows testing is deferred for the current Linux work.
 
 | Gate | Result | Missing authoritative evidence |
 |---|---|---|
-| G0 | NOT_RUN | Implemented construction and key/MID argument; finish current-public cancellation/notification lifetime variants, sustained churn/cost and remaining Linux failure/policy coverage |
+| G0 | NOT_RUN | Construction, revision pin, peer-denial recovery and 1,000-cycle cost evidence recorded; finish the original requirement-to-evidence audit and remaining planned concurrency/lifetime variants |
 | G1 | NOT_RUN | Existing regressions and full local check pass; remaining combined operational qualification is recorded per scenario |
 | G2 | NOT_RUN | Complete local matrix across providers/transports/runtimes; the 46-case Java 8 profile passes, but the complete Java 8 multichannel/authentication/failure matrix remains unqualified |
 | G3 | NOT_RUN | Public NTLM/Kerberos reauthentication passes; complete expiry/failure variants, notifications and replay/fencing/recovery cases |
 | G4 | NOT_RUN | Native Linux/Samba acceptance passes in recorded configurations; mandatory-global-encryption binding remains unqualified; Windows deferred and ONTAP-specific behavior untested |
-| G5 | NOT_RUN | Sustained concurrent I/O and cancellation-churn memory (including transport queues), replacement/recovery and comparative measurements |
+| G5 | NOT_RUN | The eight-profile 1,000-cycle replacement probe passes; remaining sustained cancellation/transport-queue memory, transfer scaling and comparative measurements |
 | G6 | NOT_RUN | Complete source/provenance mapping, validated peer traces and complete reproducible review package |
 
 Specific remaining implementation work includes authentication expiry/failure

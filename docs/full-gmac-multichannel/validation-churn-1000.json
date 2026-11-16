@@ -1,0 +1,111 @@
+{
+  "result": "EIGHT_PROFILE_1000_CYCLE_CHURN_PASS",
+  "recorded_at": "2026-11-16T00:11:29.122417+00:00",
+  "source_revision": "e0a6dbe1101d6e6c03973be0af2ac6313d1581e9",
+  "production_revision": "b5261035e2405f7530e033ad4a53e442a82d3c58",
+  "production_source_changed_for_probe": false,
+  "command": [
+    "python3",
+    "docs/full-gmac-multichannel/research/run-gmac-single-fixture.py",
+    "--output",
+    "/tmp/smbj-gmac-churn1000-e0a6dbe",
+    "--churn",
+    "--churn-cycles",
+    "1000"
+  ],
+  "scope": "Native Samba/NTLM/GMAC Java21, BC/JCE x Direct/Async x signing/GCM; sequential replacement while a binding request is held for same-open I/O on the surviving channels, authenticated ECHO on each new candidate, and one prepared binding failure every eight cycles.",
+  "suite": {
+    "name": "com.hierynomus.smbj.MultichannelPerformanceIT",
+    "tests": "8",
+    "skipped": "0",
+    "failures": "0",
+    "errors": "0",
+    "timestamp": "2026-11-15T23:56:44.120Z",
+    "hostname": "chribro-firefly",
+    "time": "537.386"
+  },
+  "image": "dockurr/samba@sha256:2a0452a12b7a244a22f18d0f233101bb8d4952b5500ae263905e3b9dad3bf2ae",
+  "image_id": "sha256:2a0452a12b7a244a22f18d0f233101bb8d4952b5500ae263905e3b9dad3bf2ae",
+  "server_version": "Version 4.23.10",
+  "configuration": "/workspace/smbj-worktrees/full-gmac-multichannel/docs/full-gmac-multichannel/research/smb-gmac-gcm.conf",
+  "configuration_sha256": "a92cdd46897f6bf16c0dba5e0e676dc0a58bf0082f20a6792e01d805c650595f",
+  "container": {
+    "id": "0dc380327d1d53998544fa15bac03dc0ef1c64d8a94025fd1bb70862fe5a62ff",
+    "owner": "smbj-late-response-9ab6e41f-a2c3-42cf-aac5-2de6813ed053",
+    "removed": true,
+    "independently_confirmed_absent": true
+  },
+  "profiles": [
+    "GMAC_CHURN_COMPLETE java=21.0.12.1 provider=BC transport=direct signing=AES_GMAC encrypt=false cipher=null cycles=1000 preparedFailures=125 bindP50Nanos=43540022 bindP99Nanos=118103128 firstCollisionEchoes=5 lastCollisionEchoes=2128 totalCollisionEchoes=1200254 originalKeyInputs=2127 freshChannelKeys=1002 retiredCollected=1126 descriptorsBefore=88 descriptorsAfter=88 heapBefore=20069784 heapAfter=20512632 threadsBefore=12 threadsAfter=13 elapsedNanos=64760875564 cpuNanos=53440000000 gcCollections=132 payloadBytes=262144000 processors=2 maxHeap=402653184",
+    "GMAC_CHURN_COMPLETE java=21.0.12.1 provider=default-JCE transport=direct signing=AES_GMAC encrypt=false cipher=null cycles=1000 preparedFailures=125 bindP50Nanos=37744379 bindP99Nanos=165536523 firstCollisionEchoes=5 lastCollisionEchoes=2128 totalCollisionEchoes=1200254 originalKeyInputs=2127 freshChannelKeys=1002 retiredCollected=1126 descriptorsBefore=88 descriptorsAfter=88 heapBefore=20685912 heapAfter=21035752 threadsBefore=12 threadsAfter=13 elapsedNanos=71739296274 cpuNanos=49000000000 gcCollections=155 payloadBytes=262144000 processors=2 maxHeap=402653184",
+    "GMAC_CHURN_COMPLETE java=21.0.12.1 provider=BC transport=async signing=AES_GMAC encrypt=false cipher=null cycles=1000 preparedFailures=125 bindP50Nanos=52129786 bindP99Nanos=181891495 firstCollisionEchoes=5 lastCollisionEchoes=2128 totalCollisionEchoes=1200254 originalKeyInputs=2127 freshChannelKeys=1002 retiredCollected=1126 descriptorsBefore=91 descriptorsAfter=91 heapBefore=20713752 heapAfter=21084800 threadsBefore=15 threadsAfter=18 elapsedNanos=83582858257 cpuNanos=71910000000 gcCollections=139 payloadBytes=262144000 processors=2 maxHeap=402653184",
+    "GMAC_CHURN_COMPLETE java=21.0.12.1 provider=default-JCE transport=async signing=AES_GMAC encrypt=false cipher=null cycles=1000 preparedFailures=125 bindP50Nanos=55224834 bindP99Nanos=157011425 firstCollisionEchoes=5 lastCollisionEchoes=2128 totalCollisionEchoes=1200254 originalKeyInputs=2127 freshChannelKeys=1002 retiredCollected=1126 descriptorsBefore=91 descriptorsAfter=91 heapBefore=20749976 heapAfter=21065000 threadsBefore=17 threadsAfter=17 elapsedNanos=80798869285 cpuNanos=57320000000 gcCollections=162 payloadBytes=262144000 processors=2 maxHeap=402653184",
+    "GMAC_CHURN_COMPLETE java=21.0.12.1 provider=BC transport=direct signing=AES_GMAC encrypt=true cipher=AES_128_GCM cycles=1000 preparedFailures=125 bindP50Nanos=39295593 bindP99Nanos=106997886 firstCollisionEchoes=5 lastCollisionEchoes=2128 totalCollisionEchoes=1200254 originalKeyInputs=2127 freshChannelKeys=1002 retiredCollected=1126 descriptorsBefore=91 descriptorsAfter=91 heapBefore=20763536 heapAfter=18229776 threadsBefore=18 threadsAfter=16 elapsedNanos=71901801391 cpuNanos=64320000000 gcCollections=201 payloadBytes=262144000 processors=2 maxHeap=402653184",
+    "GMAC_CHURN_COMPLETE java=21.0.12.1 provider=default-JCE transport=direct signing=AES_GMAC encrypt=true cipher=AES_128_GCM cycles=1000 preparedFailures=125 bindP50Nanos=32018899 bindP99Nanos=132714914 firstCollisionEchoes=5 lastCollisionEchoes=2128 totalCollisionEchoes=1200254 originalKeyInputs=2127 freshChannelKeys=1002 retiredCollected=1126 descriptorsBefore=91 descriptorsAfter=91 heapBefore=17895568 heapAfter=18231672 threadsBefore=15 threadsAfter=16 elapsedNanos=50687476449 cpuNanos=32840000000 gcCollections=210 payloadBytes=262144000 processors=2 maxHeap=402653184",
+    "GMAC_CHURN_COMPLETE java=21.0.12.1 provider=BC transport=async signing=AES_GMAC encrypt=true cipher=AES_128_GCM cycles=1000 preparedFailures=125 bindP50Nanos=35354638 bindP99Nanos=89980718 firstCollisionEchoes=5 lastCollisionEchoes=2128 totalCollisionEchoes=1200254 originalKeyInputs=2127 freshChannelKeys=1002 retiredCollected=1126 descriptorsBefore=91 descriptorsAfter=91 heapBefore=17876504 heapAfter=18221464 threadsBefore=14 threadsAfter=17 elapsedNanos=67000726016 cpuNanos=89010000000 gcCollections=246 payloadBytes=262144000 processors=2 maxHeap=402653184",
+    "GMAC_CHURN_COMPLETE java=21.0.12.1 provider=default-JCE transport=async signing=AES_GMAC encrypt=true cipher=AES_128_GCM cycles=1000 preparedFailures=125 bindP50Nanos=33619412 bindP99Nanos=116583740 firstCollisionEchoes=5 lastCollisionEchoes=2128 totalCollisionEchoes=1200254 originalKeyInputs=2127 freshChannelKeys=1002 retiredCollected=1126 descriptorsBefore=91 descriptorsAfter=91 heapBefore=17888088 heapAfter=18224136 threadsBefore=16 threadsAfter=17 elapsedNanos=46541164976 cpuNanos=36290000000 gcCollections=222 payloadBytes=262144000 processors=2 maxHeap=402653184"
+  ],
+  "totals": {
+    "profiles": 8,
+    "successful_replacements": 8000,
+    "prepared_binding_failures": 1000,
+    "retired_connections_collected": 9008,
+    "original_key_inputs": 17016,
+    "fresh_channel_keys": 8016,
+    "collision_echo_requests": 9602032,
+    "same_open_payload_bytes_per_direction": 2097152000
+  },
+  "cost_model": {
+    "qualification": "This exact two-round NTLM fixture, fresh replacement transports and one prepared binding failure each eight cycles; not a universal Kerberos or busy-borrowed-connection formula.",
+    "n": "successful replacement ordinal, starting at 1",
+    "f": "floor(n/8)",
+    "cursor_after_success": "2*n + floor(n/8) + 8",
+    "collision_echoes_for_success": "2*n + floor(n/8) + 3",
+    "total_collision_echoes": "4 + sum(2*i + floor(i/8) + 3, i=1..n) + sum(17*j + 2, j=1..floor(n/8))",
+    "samples_checked": 8000,
+    "all_samples_match": true,
+    "consequence": "Per-candidate catch-up grows linearly with this replacement history; aggregate catch-up is quadratic. Application file traffic does not advance this original-key cursor.",
+    "batch_limit": 32,
+    "round_trip_boundary": "The ECHO count is not an extra-RTT count; available credits and the existing bounded pipelining determine batch sizes."
+  },
+  "resource_evidence": [
+    "After every cycle the SDK retains two live channels, one logical Session, two channel keys, no pending binding, one owned channel reference and at most 16 sparse bootstrap exclusions.",
+    "All 1126 retired connections per profile are collectible; open descriptors return to 88/88 for the first two profiles and 91/91 for the other six. Live thread differences are between -2 and +3.",
+    "Heap snapshots include JVM and test probe state and are taken after explicit GC; this is not an allocation profile or a proof of arbitrary-history memory bounds. The test JVM limit is 384 MiB and its reported processor count is two."
+  ],
+  "latency_boundary": "Binding times exclude the deliberately held I/O gate. Jacoco-instrumented, shared-host, loopback fixture measurements are descriptive; no controlled comparative throughput or service-level claim.",
+  "audit_boundary": "The churn probe checks actual original-key bytes, never-repeated original-key request MIDs and distinct operational channel-key bytes. It does not independently verify every packet MAC. Separate JCE wire audits are recorded in validation-peer-reauthentication-denial.json.",
+  "production_artifact": {
+    "name": "smbj-0.15.1-feature-full-gmac-multichannel-SNAPSHOT.jar",
+    "sha256": "a39f9049f6be66006435af32e05958cd9c7f76b6d3959d14bf61e00e281fb108",
+    "identical_to_peer_denial_artifact": true,
+    "classes": 513,
+    "class_major": 52
+  },
+  "source_sha256": {
+    "src/main/java/com/hierynomus/smbj/session/Session.java": "bac40215320d5dfb3e69a9f7b572dd7b694685116e7f3a160022f8d65b590dee",
+    "src/main/java/com/hierynomus/smbj/connection/Connection.java": "d6ba40e52cd4868cf54d99060dd032492d63c72681e9371c74e37e3e594385d3",
+    "src/it/java/com/hierynomus/smbj/MultichannelPerformanceIT.java": "52f4e453ffc6dcd1b733e4a21758e7b11994e39a80668ef187458d272b68cc0b",
+    "docs/full-gmac-multichannel/research/run-gmac-single-fixture.py": "45473265231d51b9d67bb0fad2e3f37736b2b13be525ae71311158fb43127dac"
+  },
+  "provenance": "Existing committed workload and fixture used unchanged with the already supported --churn-cycles option. No new Java, dependency or donor import.",
+  "not_established": [
+    "Arbitrary replacement-history latency, a constant catch-up packet bound, transfer scaling or sustained cancellation/transport-queue allocation pressure.",
+    "This 1000-cycle profile on actual Java8 or Kerberos; previous 64-cycle evidence remains scoped to its recorded source.",
+    "The remaining G0 concurrency/lifetime matrix, full feature gates, deferred Windows and target ONTAP behavior."
+  ],
+  "unavailable_checks": {
+    "jdtls": "STOPPED; no restart under existing user authorization to continue available checks",
+    "secrets": "No findings; authentication warning prevents claiming authenticated Sonar server analysis"
+  },
+  "archive": {
+    "path": "/tmp/smbj-retained-evidence/smbj-gmac-churn1000-e0a6dbe.tar.gz",
+    "sha256": "0d7158a04f66c75b9048c6c2f63a9af14952fb4af65459883ab09d83da70d572",
+    "bytes": 242952,
+    "original_path": "/tmp/smbj-gmac-churn1000-e0a6dbe",
+    "original_allocated_bytes": 2560000,
+    "archive_allocated_bytes": 245760,
+    "verified_regular_files": 6,
+    "loose_original_removed": true
+  }
+}

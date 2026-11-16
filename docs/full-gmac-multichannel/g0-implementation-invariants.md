@@ -213,15 +213,25 @@ Reservation memory is one cursor, one abort slot and at most 16 initial-caller
 exclusions, plus existing per-active-channel state. Network catch-up depends on
 burned binding history. The current construction does not have constant catch-up
 cost for an unbounded number of replacements. File traffic no longer drives that
-cost. The current 64-cycle operational probe checks 512 replacements and 64
-prepared failures per runtime across eight profiles, stable live ownership and
-collectability of all 73 retired connections per profile. Catch-up grows from
-five to 139 ECHOs per successful candidate. Bounded pipelining improves measured
-64-cycle binding latency on Java 21 and Java 8 while preserving those counts;
-it does not bound total catch-up packets for a longer history. Longer-history
-limits, allocation/buffering profiles and comparative transfer throughput remain
-unqualified; see [validation-churn-cleanup.json](validation-churn-cleanup.json)
-and [validation-batched-probes.json](validation-batched-probes.json).
+cost. The current Java 21 operational probe checks 1,000 replacements per profile
+across both providers, both transports and signing/GCM: 8,000 replacements and
+1,000 prepared failures in total. All 1,126 retired connections per profile are
+collectible, descriptor counts are unchanged, and steady-state ownership is
+checked after every cycle. Catch-up grows from five to 2,128 ECHOs per successful
+candidate, with 1,200,254 collision ECHOs per profile.
+
+For this exact two-round NTLM workload with a prepared failure every eight
+cycles, successful replacement `n` has cursor `2*n + floor(n/8) + 8` and consumes
+`2*n + floor(n/8) + 3` collision ECHOs. All 8,000 samples match these relations.
+Per-candidate catch-up grows linearly and aggregate catch-up grows quadratically.
+Pipelining remains bounded to 32 probes and real credits; ECHO counts are not
+extra-round-trip counts. This is a measured operating point and explicit cost,
+not a constant-time or arbitrary-history latency guarantee. Allocation/buffering
+profiles, sustained cancellation pressure and comparative transfer throughput
+remain separate qualification work. See
+[the 1,000-cycle validation](validation-churn-1000.json),
+[the earlier 64-cycle cleanup probe](validation-churn-cleanup.json) and
+[bounded-pipelining measurements](validation-batched-probes.json).
 
 The current native evidence uses Samba 4.23.10, NTLM and Kerberos with real
 16/32-byte GSS keys. Existing JCE wire checks independently verify tags and
