@@ -220,6 +220,7 @@ class PublicGmacBindingIT {
         AtomicLong failedMessageId = new AtomicLong(-1);
         AtomicLong targetSessionId = new AtomicLong();
         AtomicReference<byte[]> failedKey = new AtomicReference<>();
+        AtomicReference<Connection> failedCandidate = new AtomicReference<>();
         Field keyField = PacketSignatory.SignedPacketWrapper.class.getDeclaredField("secretKey");
         keyField.setAccessible(true);
         SmbConfig config = SmbConfig.builder().withDialects(SMB2Dialect.SMB_3_1_1)
@@ -244,6 +245,16 @@ class PublicGmacBindingIT {
                                             && recordPartial.compareAndSet(true, false)) {
                                         failedMessageId.set(smb.getHeader().getMessageId());
                                         failedKey.set(key.getEncoded().clone());
+                                        int auxiliaryKeysCaptured = 0;
+                                        for (Session auxiliary : failedCandidate.get().getSessionTable().activeSessions()) {
+                                            if (auxiliary.getSessionId() != targetSessionId.get()) {
+                                                SecretKey auxiliaryKey = auxiliary.getSessionContext().getSigningKey();
+                                                assertNotNull(auxiliaryKey);
+                                                actualKeys.putIfAbsent(auxiliary.getSessionId(), auxiliaryKey.getEncoded().clone());
+                                                auxiliaryKeysCaptured++;
+                                            }
+                                        }
+                                        assertTrue(auxiliaryKeysCaptured > 0, "Capture auxiliary keys before the partial write prevents LOGOFF");
                                     }
                                 } catch (IllegalAccessException failure) { throw new AssertionError(failure); }
                             }
@@ -268,6 +279,7 @@ class PublicGmacBindingIT {
                         verifyContents(file, expected);
                         try (Connection failed = new Connection(config, client, bus, client.getServerList())) {
                             failed.connect("127.0.0.1", port); observer.register(failed);
+                            failedCandidate.set(failed);
                             CountDownLatch entered = new CountDownLatch(1);
                             observer.gateBinding(failed, entered, new CountDownLatch(0), true);
                             recordPartial.set(true);
