@@ -70,7 +70,7 @@ elif arguments.churn:
     test_class, expected_count, marker, label = ('com.hierynomus.smbj.MultichannelPerformanceIT', 8,
                                                'GMAC_CHURN_COMPLETE ', 'channel churn')
 elif arguments.public_binding:
-    test_class, expected_count, marker, label = ('com.hierynomus.smbj.connection.PublicGmacBindingIT', 11,
+    test_class, expected_count, marker, label = ('com.hierynomus.smbj.connection.PublicGmacBindingIT', 16,
                                                'PUBLIC_GMAC_COMPLETE ', 'public multichannel')
 elif arguments.per_request_research:
     test_class, expected_count, marker, label = ('com.hierynomus.smbj.connection.GmacConcurrentBootstrapIT', 7,

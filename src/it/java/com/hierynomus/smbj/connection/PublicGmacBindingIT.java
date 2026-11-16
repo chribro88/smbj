@@ -39,6 +39,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import javax.crypto.SecretKey;
 import java.io.IOException;
@@ -64,6 +65,16 @@ class PublicGmacBindingIT {
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void publicBindingReplacementAndBorrowedSessionPreserveTheOpen(boolean borrowed) throws Exception {
+        exercisePublicBinding(borrowed, false, 2);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"4,false", "8,false", "2,true", "4,true", "8,true"})
+    void concurrentBindingCountsPreserveIndependentNonceAndCreditState(int bindings, boolean async) throws Exception {
+        exercisePublicBinding(false, async, bindings);
+    }
+
+    private void exercisePublicBinding(boolean borrowed, boolean async, int bindings) throws Exception {
         String portValue = System.getenv("SMB_TEST_PORTS");
         assumeTrue(portValue != null, "Dedicated GMAC fixture required");
         int port = Integer.parseInt(portValue);
@@ -71,7 +82,7 @@ class PublicGmacBindingIT {
         Map<Long, byte[]> actualKeys = new ConcurrentHashMap<>();
         AtomicLong mainSession = new AtomicLong();
         AtomicInteger bindingStarts = new AtomicInteger();
-        CountDownLatch concurrentBindings = new CountDownLatch(2);
+        CountDownLatch concurrentBindings = new CountDownLatch(bindings);
         Field keyField = PacketSignatory.SignedPacketWrapper.class.getDeclaredField("secretKey");
         keyField.setAccessible(true);
         SmbConfig config = SmbConfig.builder().withDialects(SMB2Dialect.SMB_3_1_1)
@@ -79,8 +90,8 @@ class PublicGmacBindingIT {
                 .withAuthenticators(new NtlmAuthenticator.Factory()).withSecurityProvider(new BCSecurityProvider())
                 .withSocketFactory(observer).withTimeout(10, TimeUnit.SECONDS)
                 .withTransportLayerFactory((handlers, settings) -> {
-                    TransportLayer<SMBPacket<?, ?>> delegate = new DirectTcpTransport<>(
-                            settings.getSocketFactory(), settings.getSoTimeout(), handlers);
+                    TransportLayer<SMBPacket<?, ?>> delegate = async ? observer.asyncTransport(handlers, settings)
+                            : new DirectTcpTransport<>(settings.getSocketFactory(), settings.getSoTimeout(), handlers);
                     return new TransportLayer<SMBPacket<?, ?>>() {
                         public void connect(InetSocketAddress address) throws IOException { delegate.connect(address); }
                         public void disconnect() throws IOException { delegate.disconnect(); }
@@ -95,7 +106,7 @@ class PublicGmacBindingIT {
                             SMB2Packet smb = (SMB2Packet) packet;
                             if (smb.getHeader().getMessage() == SMB2MessageCommandCode.SMB2_SESSION_SETUP
                                     && mainSession.get() != 0 && smb.getHeader().getSessionId() == mainSession.get()
-                                    && bindingStarts.getAndIncrement() < 2) {
+                                    && bindingStarts.getAndIncrement() < bindings) {
                                 concurrentBindings.countDown();
                                 try { assertTrue(concurrentBindings.await(5, TimeUnit.SECONDS)); }
                                 catch (InterruptedException failure) { Thread.currentThread().interrupt(); throw new AssertionError(failure); }
@@ -105,7 +116,7 @@ class PublicGmacBindingIT {
                     };
                 }).build();
         SMBEventBus bus = new SMBEventBus();
-        String run = borrowed ? "borrowed" : "owned";
+        String run = (borrowed ? "borrowed" : "owned") + "-" + (async ? "async" : "direct") + "-" + bindings;
         Connection shared = null;
         try (SMBClient client = new SMBClient(config, bus)) {
             Connection primary = client.connect("127.0.0.1", port); observer.register(primary);
@@ -126,7 +137,7 @@ class PublicGmacBindingIT {
                 assertEquals(SMB3SigningAlgorithm.AES_GMAC, primary.getConnectionContext().getSigningAlgorithm());
                 Session older = null;
                 Connection replacement;
-                Connection companion;
+                List<Connection> companions = new ArrayList<>();
                 try (DiskShare share = (DiskShare) main.connectShare("share")) {
                     String name = "public-gmac-" + UUID.randomUUID() + ".bin";
                     try (File file = share.openFile(name, EnumSet.of(AccessMask.GENERIC_READ, AccessMask.GENERIC_WRITE),
@@ -135,19 +146,21 @@ class PublicGmacBindingIT {
                         byte[] expected = new byte[131077]; new Random(51).nextBytes(expected);
                         verifyContents(file, expected);
                         Connection first;
-                        ExecutorService workers = Executors.newFixedThreadPool(2);
+                        ExecutorService workers = Executors.newFixedThreadPool(bindings);
                         try {
                             java.util.concurrent.Callable<Connection> bind = () -> {
                                 Connection channel = client.openChannel(main, "127.0.0.1", port);
                                 observer.register(channel); observer.bound(main, channel);
                                 return channel;
                             };
-                            Future<Connection> one = workers.submit(bind), two = workers.submit(bind);
-                            first = one.get(15, TimeUnit.SECONDS); companion = two.get(15, TimeUnit.SECONDS);
+                            List<Future<Connection>> pending = new ArrayList<>();
+                            for (int index = 0; index < bindings; index++) pending.add(workers.submit(bind));
+                            first = pending.get(0).get(15, TimeUnit.SECONDS);
+                            for (int index = 1; index < bindings; index++) companions.add(pending.get(index).get(15, TimeUnit.SECONDS));
                         } finally {
                             workers.shutdownNow(); assertTrue(workers.awaitTermination(5, TimeUnit.SECONDS));
                         }
-                        assertEquals(3, main.getChannelCount());
+                        assertEquals(bindings + 1, main.getChannelCount());
                         assertEquals(1, first.getSessionTable().activeSessions().size(), "Auxiliary session is logged off");
                         expected[0] ^= 1; verifyContents(file, expected);
                         if (borrowed) {
@@ -164,7 +177,7 @@ class PublicGmacBindingIT {
                         first.close(true);
                         replacement = client.openChannel(main, "127.0.0.1", port);
                         observer.register(replacement); observer.bound(main, replacement);
-                        assertEquals(borrowed ? 4 : 3, main.getChannelCount());
+                        assertEquals(bindings + (borrowed ? 2 : 1), main.getChannelCount());
                         byte[] retainedKey = main.getSessionContext().getSigningKey().getEncoded().clone();
                         for (int channel = 0; channel < main.getChannelCount(); channel++) main.reauthenticate();
                         assertArrayEquals(retainedKey, main.getSessionContext().getSigningKey().getEncoded());
@@ -173,7 +186,7 @@ class PublicGmacBindingIT {
                 }
                 main.close();
                 assertTrue(replacement.isClosed());
-                assertTrue(companion.isClosed());
+                for (Connection companion : companions) assertTrue(companion.isClosed());
                 assertTrue(primary.isConnected());
                 if (older != null) {
                     assertTrue(shared.isConnected(), "Main-session close preserves the borrowed transport");
@@ -183,9 +196,10 @@ class PublicGmacBindingIT {
                     older.close();
                 }
                 int catchUp = observer.unsignedEchoRequests() - initialCatchUp;
-                assertTrue(catchUp <= 32, "Application traffic and the busy initial caller cannot drive later catch-up: " + catchUp);
-                System.out.printf("PUBLIC_GMAC_COMPLETE run=%s signing=AES_GMAC replacement=true concurrentBindings=2 borrowedPreserved=%s priorTraffic=%d applicationTraffic=%d collisionEchoes=%d java=%s%n",
-                        run, borrowed, borrowed ? 1024 : 0, borrowed ? 1024 : 0, catchUp, System.getProperty("java.version"));
+                assertTrue(catchUp <= (bindings == 2 ? 32 : 2 * bindings * bindings + 16),
+                        "Application traffic cannot drive later catch-up: " + catchUp);
+                System.out.printf("PUBLIC_GMAC_COMPLETE run=%s signing=AES_GMAC replacement=true concurrentBindings=%d transport=%s borrowedPreserved=%s priorTraffic=%d applicationTraffic=%d collisionEchoes=%d java=%s%n",
+                        run, bindings, async ? "async" : "direct", borrowed, borrowed ? 1024 : 0, borrowed ? 1024 : 0, catchUp, System.getProperty("java.version"));
             }
             }
         } finally {

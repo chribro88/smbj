@@ -20,10 +20,17 @@ import com.hierynomus.mssmb2.SMB2Packet;
 import com.hierynomus.mssmb2.messages.SMB2Echo;
 import com.hierynomus.protocol.transport.TransportException;
 import com.hierynomus.protocol.transport.TransportLayer;
+import com.hierynomus.protocol.transport.PacketHandlers;
+import com.hierynomus.protocol.transport.PacketReceiver;
+import com.hierynomus.protocol.transport.PacketSerializer;
+import com.hierynomus.protocol.commons.buffer.Buffer;
+import com.hierynomus.smb.SMBBuffer;
 import com.hierynomus.smb.SMBPacket;
+import com.hierynomus.smb.SMBPacketData;
 import com.hierynomus.smbj.SmbConfig;
 import com.hierynomus.smbj.session.Session;
 import com.hierynomus.smbj.transport.tcp.direct.DirectTcpTransport;
+import com.hierynomus.smbj.transport.tcp.async.AsyncDirectTcpTransportFactory;
 
 import javax.crypto.Cipher;
 import javax.crypto.AEADBadTagException;
@@ -110,6 +117,53 @@ final class GmacBindingWireObserver extends SocketFactory {
         ObservedSocket socket = openedByThread.get(Thread.currentThread());
         assertFalse(owners.containsValue(socket));
         owners.put(connection, socket);
+    }
+
+    TransportLayer<SMBPacket<?, ?>> asyncTransport(PacketHandlers<SMBPacketData<?>, SMBPacket<?, ?>> handlers,
+                                                  SmbConfig settings) {
+        ObservedSocket socket;
+        synchronized (this) {
+            socket = new ObservedSocket(sockets.size());
+            sockets.add(socket);
+            openedByThread.put(Thread.currentThread(), socket);
+        }
+        PacketSerializer<SMBPacket<?, ?>, SMBBuffer> serializer = packet -> {
+            SMBBuffer bytes = (SMBBuffer) handlers.getSerializer().write(packet);
+            try { observeFrame(socket, 0, bytes); }
+            catch (TransportException failure) { throw new AssertionError(failure); }
+            return bytes;
+        };
+        PacketHandlers<SMBPacketData<?>, SMBPacket<?, ?>> observed = new PacketHandlers<>(serializer,
+                new PacketReceiver<SMBPacketData<?>>() {
+                    public void handle(SMBPacketData<?> packet) throws TransportException {
+                        observeFrame(socket, 1, packet.getDataBuffer());
+                        handlers.getReceiver().handle(packet);
+                    }
+                    public void handleError(Throwable failure) { handlers.getReceiver().handleError(failure); }
+                }, handlers.getPacketFactory());
+        TransportLayer<SMBPacket<?, ?>> delegate = new AsyncDirectTcpTransportFactory().createTransportLayer(observed, settings);
+        return new TransportLayer<SMBPacket<?, ?>>() {
+            public void connect(InetSocketAddress address) throws IOException {
+                if (address.getPort() != port || !address.getAddress().isLoopbackAddress()) {
+                    throw new IOException("Only the owned loopback fixture is permitted");
+                }
+                delegate.connect(address);
+            }
+            public void disconnect() throws IOException {
+                try { delegate.disconnect(); }
+                finally { socket.close(); }
+            }
+            public boolean isConnected() { return delegate.isConnected(); }
+            public void write(SMBPacket<?, ?> packet) throws TransportException { delegate.write(packet); }
+        };
+    }
+
+    private void observeFrame(ObservedSocket socket, int direction, Buffer<?> bytes) throws TransportException {
+        int size = bytes.wpos();
+        if (size < 64 || size > 1024 * 1024) throw new TransportException("Invalid or oversized diagnostic frame");
+        byte[] framed = ByteBuffer.allocate(4 + size).putInt(size).put(bytes.array(), 0, size).array();
+        try { socket.observe(direction, framed, 0, framed.length); }
+        catch (IOException failure) { throw new TransportException(failure); }
     }
 
     synchronized void original(Session main, Connection connection) {
