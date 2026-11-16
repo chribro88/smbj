@@ -6,6 +6,8 @@ domain and how that domain is separated from application and reauthentication
 traffic. It does not assert that an arbitrary server generates safe nonces for
 its own unsolicited or asynchronous messages.
 
+The scoped G0 decision and final checks are in [Linux/Samba acceptance](g0-linux-samba-acceptance.md).
+
 ## State and ownership
 
 | State | Owner | Rule |
@@ -39,6 +41,10 @@ its own unsolicited or asynchronous messages.
 7. A failed or uncertain exchange never releases its reservation. A fresh retry
    starts from its own native sequence and consumes collisions rather than
    reusing a burned original-key input.
+8. H at the reserved terminal unsigned value is fatal before credit allocation,
+   collision probes or signing. The CAS loop repeats this check after a lost race.
+   No lower native MID can turn exhaustion into an effectively endless catch-up.
+   The already reserved private abort R remains claimable exactly once.
 
 Collision probes are pipelined in batches of at most 32 per send call, bounded
 also by real available credits. When probes are pending and only one credit

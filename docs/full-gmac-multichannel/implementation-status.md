@@ -3,10 +3,10 @@
 GMAC signing and the public multichannel APIs are implemented and work in the
 tested Samba configurations: concurrent binding, replacement channels and
 existing-open file I/O pass with independent wire/tag checks on the audited
-profiles. The requested full feature is **incomplete**. G0 remains open against
-the complete lifetime and interoperability requirements in [plan.md](plan.md);
-this does not mean that GMAC or multichannel is disabled. Windows testing is
-explicitly deferred by the user; implementation and acceptance continue on Linux.
+profiles. The agreed **Linux/Samba G0 scope is complete**; see
+[the scoped decision](g0-linux-samba-acceptance.md) and
+[final qualification](validation-development-7109ef0.json). The broader feature's
+later release matrices remain incomplete. Windows and ONTAP are deferred.
 
 Earlier diagnostic and prototype records are historical evidence. The live
 Go/Samba collision trace and the auxiliary/concurrent experiments explain the
@@ -20,6 +20,33 @@ See [artifact retention and restoration](test-artifact-retention.md) before usin
 an older validation record's temporary artifact directory.
 
 ## Current production integration
+
+The feature is rebased onto development `7109ef0`, preserving its cache/handle
+lifecycle and authentication fixes alongside G0 ownership and teardown guarantees.
+Checkpoint `42245327` passes **1,405 local tests in 128 suites** with no failures,
+errors or skips. Native fixture follow-up `f99b7664` passes **17 public cases plus
+34 selected local checks on actual Java 8**, **eight native Kerberos cases** and
+**four native lease-isolation cases** on Java 21. Independent audits verify
+**6,081 GMAC inputs and 654 GCM transforms**, with no observed distinct-message
+nonce reuse. The same 515-class production JAR targets Java 8 throughout.
+
+The original-key terminal cursor now fails immediately before probes or credits;
+its reserved bootstrap abort stays usable once. Controlled-peer tests exercise
+three-round GMAC success, continuation/final corruption and authenticated denial.
+A native 76-byte partial binding write burns its reservation, preserves existing
+open I/O and permits a fresh retry. The full signed attempt is explicitly audited
+as prepared input, distinct from its partial wire prefix.
+
+All eleven owned containers are removed. The protected pre-rebase branch and
+verified full-history bundle remain available; the new compact evidence archive
+is byte-verified. [The final record](validation-development-7109ef0.json) includes
+scope limits, retained unsuccessful attempts and precise source/artifact identities.
+
+## Earlier integration checkpoints
+
+The sections below retain historical source states. Earlier statements that G0
+was open describe those checkpoints; the current scoped decision above supersedes
+them. Their results are not silently attributed to the latest artifact.
 
 The feature is rebased onto development `814feab`, including its whole-frame
 response validation, share-required encryption, stronger teardown and leasing
@@ -107,8 +134,9 @@ uses serializer inputs and received frames; Direct capture uses socket streams.
 The acceptance harness checks the exact scenario and audit set. All three owned
 fixtures, including the earlier compile-only diagnostic, are removed. See
 [the concurrency qualification](validation-concurrent-binding-matrix.json).
-The G0-03 matrix row is complete for its named variants. The original-key terminal
-cursor's immediate-failure behavior and the remaining G0 evidence audit stay open.
+The G0-03 matrix row is complete for its named variants. Terminal original-key
+exhaustion and the remaining G0 evidence audit are now resolved by the scoped
+decision above.
 
 Directory lease keys, parent-key lookups and cached listings now use the exact
 TreeConnect identity and normalized path. Two sessions, two shares or a reused
@@ -116,8 +144,9 @@ numeric TreeId cannot borrow another tree's cache. Scoped entries keep an
 immutable owning session/tree/dialect. Tree closure invalidates only its own
 entries and drops its path keys before TREE_DISCONNECT, including failed sends.
 Key minting and registration reject closed trees, closed managers and sessions
-without surviving channels, with a second check after insertion for racing
-closure. A disconnected session cannot recreate state while another session
+without surviving channels. Registration and tree/session removal share the
+manager lock; cache I/O remains outside it. A disconnected session cannot recreate
+state while another session
 keeps their shared canonical manager alive.
 
 The focused and native isolation evidence, runtime/provider coverage and remaining
@@ -1314,11 +1343,11 @@ results above. Windows testing is deferred for the current Linux work.
 
 | Gate | Result | Missing authoritative evidence |
 |---|---|---|
-| G0 | NOT_RUN | Construction, revision pin, peer-denial recovery and 1,000-cycle cost evidence recorded; finish the original requirement-to-evidence audit and remaining planned concurrency/lifetime variants |
+| G0 | PASS (Linux/Samba scope) | [Scoped decision](g0-linux-samba-acceptance.md); all nine G0 rows mapped, boundaries tested and current native qualification retained. Windows/ONTAP and broader release gates remain separate. |
 | G1 | NOT_RUN | Existing regressions and full local check pass; remaining combined operational qualification is recorded per scenario |
 | G2 | NOT_RUN | Complete local matrix across providers/transports/runtimes; the 46-case Java 8 profile passes, but the complete Java 8 multichannel/authentication/failure matrix remains unqualified |
 | G3 | NOT_RUN | Public NTLM/Kerberos reauthentication passes; complete expiry/failure variants, notifications and replay/fencing/recovery cases |
-| G4 | NOT_RUN | Native Linux/Samba acceptance passes in recorded configurations; mandatory-global-encryption binding remains unqualified; Windows deferred and ONTAP-specific behavior untested |
+| G4 | NOT_RUN | Native Linux/Samba acceptance passes in recorded configurations; mandatory-global-encryption binding remains unqualified; Windows and ONTAP deferred |
 | G5 | NOT_RUN | The eight-profile 1,000-cycle replacement probe passes; remaining sustained cancellation/transport-queue memory, transfer scaling and comparative measurements |
 | G6 | NOT_RUN | Complete source/provenance mapping, validated peer traces and complete reproducible review package |
 
