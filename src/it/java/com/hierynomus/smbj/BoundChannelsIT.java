@@ -32,9 +32,13 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class BoundChannelsIT {
-    @ParameterizedTest
+    @ParameterizedTest(name = "{displayName}: port={0}, encryption={1}, writeThrough={2}")
     @MethodSource("com.hierynomus.smbj.testing.MultichannelTestSupport#configurations")
     void oneOpenUsesTwoBoundChannelsWithVerifiedContent(String port, boolean encryption, boolean writeThrough) throws Exception {
+        verifyChannels(port, encryption, writeThrough, hostname(), port);
+    }
+
+    void verifyChannels(String port, boolean encryption, boolean writeThrough, String secondaryHost, String secondaryPort) throws Exception {
         assumeTrue(port != null, "SMB_TEST_PORT enables the dedicated Samba integration test");
         String hostname = hostname();
         SmbConfig config = config(encryption);
@@ -42,14 +46,25 @@ class BoundChannelsIT {
         try (SMBClient client = new SMBClient(config);
              Connection primary = client.connect(hostname, Integer.parseInt(port));
              Session session = primary.authenticate(authentication())) {
+            assertEquals(dialect(), primary.getNegotiatedProtocol().getDialect());
+            SMB3SigningAlgorithm algorithm = primary.getConnectionContext().getSigningAlgorithm();
+            if (algorithm == null) algorithm = SMB3SigningAlgorithm.AES_CMAC; // implicit SMB 3.x default
+            assertEquals(SMB3SigningAlgorithm.AES_CMAC, algorithm);
+            assertEquals(encryption, session.shouldEncryptData());
             byte[] signingKey = session.getSessionContext().getSigningKey().getEncoded().clone();
             javax.crypto.SecretKey encryptionKey = session.getSessionContext().getEncryptionKey();
             try (DiskShare share = (DiskShare) session.connectShare(shareName())) {
                 try (File file = share.openFile(path, EnumSet.of(AccessMask.GENERIC_READ, AccessMask.GENERIC_WRITE),
                         EnumSet.of(FileAttributes.FILE_ATTRIBUTE_NORMAL), SMB2ShareAccess.ALL,
                         SMB2CreateDisposition.FILE_CREATE, writeThrough ? EnumSet.of(SMB2CreateOptions.FILE_WRITE_THROUGH) : EnumSet.noneOf(SMB2CreateOptions.class))) {
-                    Connection secondary = client.openChannel(session, hostname, Integer.parseInt(port));
+                    Connection secondary = client.openChannel(session, secondaryHost, Integer.parseInt(secondaryPort));
                     assertNotSame(primary, secondary);
+                    assertEquals(hostname, secondary.getRemoteHostname());
+                    assertEquals(primary.getConnectionContext().getServerGuid(), secondary.getConnectionContext().getServerGuid());
+                    assertEquals(primary.getConnectionContext().getClientGuid(), secondary.getConnectionContext().getClientGuid());
+                    assertEquals(primary.getConnectionContext().getSigningAlgorithm(), secondary.getConnectionContext().getSigningAlgorithm());
+                    assertEquals(primary.getConnectionContext().getCipherId(), secondary.getConnectionContext().getCipherId());
+                    assertEquals(dialect(), secondary.getNegotiatedProtocol().getDialect());
                     assertArrayEquals(signingKey, session.getSessionContext().getSigningKey().getEncoded());
                     assertSame(encryptionKey, session.getSessionContext().getEncryptionKey());
                     assertEquals(2, session.getChannelCount());
@@ -84,8 +99,10 @@ class BoundChannelsIT {
                     assertEquals(actual.length, file.read(actual, 0));
                     assertArrayEquals(left, actual);
                     assertEquals(1, session.getChannelCount());
-                    System.out.printf("BOUND session=%d channels=2 primaryWrites=%d secondaryWrites=%d encryption=%s writeThrough=%s verifiedBytes=%d hostname=%s%n",
-                            session.getSessionId(), primary.getWriteRequestCount(), secondary.getWriteRequestCount(), encryption, writeThrough, 32 * actual.length, hostname);
+                    System.out.printf("BOUND session=%d channels=2 primaryWrites=%d secondaryWrites=%d encryption=%s writeThrough=%s verifiedBytes=%d hostname=%s port=%s secondaryHost=%s secondaryPort=%s requestedDialect=%s negotiatedDialect=%s serverGuid=%s clientGuid=%s signing=%s cipher=%s primaryBytes=%d secondaryBytes=%d%n",
+                            session.getSessionId(), primary.getWriteRequestCount(), secondary.getWriteRequestCount(), encryption, writeThrough, 32 * actual.length, hostname, port, secondaryHost, secondaryPort, dialect(), primary.getNegotiatedProtocol().getDialect(),
+                            primary.getConnectionContext().getServerGuid(), config.getClientGuid(), algorithm,
+                            primary.getConnectionContext().getCipherId(), primary.getWriteRequestCount() * actual.length, secondary.getWriteRequestCount() * actual.length);
                 } finally {
                     share.rm(path);
                 }

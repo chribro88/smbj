@@ -36,6 +36,9 @@ class TreeConnectTable {
     void register(Share share) {
         lock.writeLock().lock();
         try {
+            if (share.getTreeConnect().getSession().isDisconnected()) {
+                throw new com.hierynomus.smbj.common.SMBRuntimeException("SMB session disconnected before tree publication");
+            }
             lookupById.put(share.getTreeConnect().getTreeId(), share);
             lookupByShareName.put(share.getTreeConnect().getShareName(), share);
         } finally {
@@ -67,6 +70,16 @@ class TreeConnectTable {
             return lookupByShareName.get(shareName);
         } finally {
             lock.readLock().unlock();
+        }
+    }
+
+    void clear() {
+        lock.writeLock().lock();
+        try {
+            lookupById.clear();
+            lookupByShareName.clear();
+        } finally {
+            lock.writeLock().unlock();
         }
     }
 

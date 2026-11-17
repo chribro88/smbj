@@ -7,15 +7,18 @@ set -euo pipefail
 action=${1:-up}
 dialect=${2:-SMB3_11}
 encryption=${3:-required}
+peer=${4:-all}
 case "$dialect" in SMB3_11|SMB3_02|SMB3_00) ;; *) exit 2 ;; esac
 case "$encryption" in required|desired) ;; *) exit 2 ;; esac
 case "$action" in up|down) ;; *) exit 2 ;; esac
+case "$peer" in all|current|legacy) ;; *) exit 2 ;; esac
 prefix=smbj-corrective
 owner=smbj-multichannel-corrective
 current=dockurr/samba@sha256:2a0452a12b7a244a22f18d0f233101bb8d4952b5500ae263905e3b9dad3bf2ae
 legacy=dperson/samba@sha256:66088b78a19810dd1457a8f39340e95e663c728083efa5fe7dc0d40b2478e869
 mkdir -p .work/samba
 for version in current legacy; do
+    if [ "$peer" != all ] && [ "$peer" != "$version" ]; then continue; fi
     name="$prefix-$version"
     exists=false
     if docker container inspect "$name" >/dev/null 2>&1; then
@@ -62,6 +65,8 @@ CONFIG
                 -w WORKGROUP -u 'smbtest;TestOnly123!' -s 'share;/share;yes;no;no;smbtest' -g 'vfs objects = ' -p
         fi
     fi
+    # A Docker restart can leave an existing owned fixture stopped.
+    docker start "$name" >/dev/null
     started=false
     for attempt in {1..30}; do
         if docker exec "$name" pidof smbd >/dev/null 2>&1; then started=true; break; fi

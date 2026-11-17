@@ -74,6 +74,14 @@ class SMB2WriterStreamingTest {
     }
 
     @Test
+    void oversizedAcknowledgementFailsRatherThanClaimingUnsentBytes() {
+        Share share = mock(Share.class);
+        when(share.getWriteBufferSize()).thenReturn(65536);
+        when(share.write(any(), any())).thenReturn(acknowledgement(2));
+        assertThrows(SMBRuntimeException.class, () -> new SMB2Writer(share, id, "test").write(new byte[]{1}, 0));
+    }
+
+    @Test
     void moreThanTwoGiBUsesLongTotalsWithOnlyRequestSizedBuffers() {
         // stubOnly prevents Mockito retaining one payload per request during this streaming size check.
         Share share = mock(Share.class, withSettings().stubOnly());

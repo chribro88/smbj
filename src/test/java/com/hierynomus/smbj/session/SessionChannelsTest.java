@@ -230,4 +230,34 @@ class SessionChannelsTest {
         assertThrows(TransportException.class, () -> session.send(new SMB2Echo(SMB2Dialect.SMB_3_1_1), unknown));
         verify(unknown, never()).send(any());
     }
+    @Test
+    void lastChannelLossInvalidatesAndRemovesTreesWithoutRemoteClose() throws Exception {
+        Session session = session();
+        com.hierynomus.smbj.share.TreeConnect tree = mock(com.hierynomus.smbj.share.TreeConnect.class);
+        when(tree.getSession()).thenReturn(session);
+        when(tree.getConfig()).thenReturn(SmbConfig.createDefaultConfig());
+        when(tree.getNegotiatedProtocol()).thenReturn(new NegotiatedProtocol(SMB2Dialect.SMB_3_1_1, 65536, 65536, 65536, true));
+        when(tree.getShareName()).thenReturn("share");
+        com.hierynomus.smbj.share.DiskShare share = new com.hierynomus.smbj.share.DiskShare(
+                new com.hierynomus.smbj.common.SmbPath("localhost", "share"), tree, com.hierynomus.smbj.paths.PathResolver.LOCAL);
+        java.lang.reflect.Field tableField = Session.class.getDeclaredField("treeConnectTable");
+        tableField.setAccessible(true);
+        TreeConnectTable table = (TreeConnectTable) tableField.get(session);
+        table.register(share);
+        assertTrue(share.isConnected());
+        when(primary.isClosed()).thenReturn(true);
+        assertEquals(1, session.getChannelCount());
+        assertTrue(share.isConnected());
+        assertSame(share, session.connectShare("share"));
+        when(secondary.isClosed()).thenReturn(true);
+        assertEquals(0, session.getChannelCount());
+        assertTrue(session.isDisconnected());
+        assertFalse(share.isConnected());
+        assertTrue(table.getOpenTreeConnects().isEmpty());
+        assertThrows(com.hierynomus.smbj.common.SMBRuntimeException.class, () -> session.connectShare("share"));
+        assertThrows(com.hierynomus.smbj.common.SMBRuntimeException.class, () -> table.register(share));
+        verify(primary, never()).send(any());
+        verify(secondary, never()).send(any());
+    }
+
 }

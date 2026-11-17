@@ -118,7 +118,7 @@ public class Share implements AutoCloseable {
     }
 
     public boolean isConnected() {
-        return !disconnected.get();
+        return !disconnected.get() && !treeConnect.getSession().isDisconnected();
     }
 
     public SmbPath getSmbPath() {

@@ -126,6 +126,7 @@ public class Session implements AutoCloseable {
      * @return the handle to the connected share.
      */
     public Share connectShare(String shareName) {
+        if (isDisconnected()) throw new SMBRuntimeException("SMB session is disconnected");
         if (shareName.contains("\\")) {
             throw new IllegalArgumentException(format("Share name (%s) cannot contain '\\' characters.", shareName));
         }
@@ -389,8 +390,16 @@ public class Session implements AutoCloseable {
         }
     }
 
+    /** Whether session close or loss of every channel has invalidated local handles. */
+    public boolean isDisconnected() {
+        return closed || channelsFailed.get();
+    }
+
     public Connection getConnection() {
-        return connection;
+        synchronized (channels) {
+            if (multichannel) retireClosedChannels();
+            return channels.isEmpty() ? connection : channels.get(0);
+        }
     }
 
     public com.hierynomus.smbj.connection.LeaseManager getLeaseManager() {
@@ -549,6 +558,7 @@ public class Session implements AutoCloseable {
         }
         if (channels.isEmpty()) {
             channelsFailed.set(true);
+            treeConnectTable.clear();
             leaseManager.abort();
             stopRecovery(new TransportException("No authenticated SMB channels remain connected"));
         } else if (connection.isClosed()) {
@@ -565,6 +575,7 @@ public class Session implements AutoCloseable {
             }
             if (channels.isEmpty()) {
                 channelsFailed.set(true);
+                treeConnectTable.clear();
                 leaseManager.abort();
                 stopRecovery(new TransportException("No authenticated SMB channels remain connected"));
             } else if (connection == event.getConnection()) {

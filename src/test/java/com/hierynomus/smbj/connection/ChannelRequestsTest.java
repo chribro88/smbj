@@ -163,6 +163,140 @@ class ChannelRequestsTest {
         }
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void outstandingDurableV2CreateReplaysOnSurvivorWithOriginalPromise(boolean losePrimary) throws Exception {
+        try (Fixture fixture = new Fixture()) {
+            Connection lost = losePrimary ? fixture.primary : fixture.secondary;
+            Connection survivor = losePrimary ? fixture.secondary : fixture.primary;
+            TransportLayer<SMBPacket<?, ?>> survivorTransport = losePrimary ? fixture.secondaryTransport : fixture.primaryTransport;
+            com.hierynomus.mssmb2.messages.SMB2CreateRequest create = durableCreate();
+            SMBBuffer before = new SMBBuffer();
+            create.write(before);
+            byte[] body = Arrays.copyOfRange(before.getCompactData(), 64, before.wpos());
+            Future<SMB2Packet> future = fixture.session.send(create, lost);
+            long oldMid = create.getHeader().getMessageId();
+            // Give the survivor a distinct MID space so the transfer cannot accidentally reuse ownership.
+            survivor.sequenceWindow.get(1);
+            survivor.sequenceWindow.creditsGranted(2);
+            lost.handleError(new TransportException("Lost durable CREATE response"));
+            AbortTestConnection.await(() -> survivor.outstandingRequests.isOutstanding(1L));
+            verify(survivorTransport, timeout(2000)).write(argThat(packet -> ((SMB2Packet) packet).getPacket() == create));
+            assertFalse(lost.outstandingRequests.isOutstanding(oldMid));
+            assertTrue(create.getHeader().isFlagSet(SMB2MessageFlag.SMB2_FLAGS_REPLAY_OPERATION));
+            assertEquals(47, create.getHeader().getSessionId());
+            assertEquals(1, create.getHeader().getTreeId());
+            assertEquals(1, create.getHeader().getChannelSequence());
+            assertEquals(1, fixture.session.getChannelCount());
+            assertSame(survivor, fixture.session.getConnection());
+            SMBBuffer after = new SMBBuffer();
+            create.write(after);
+            assertArrayEquals(body, Arrays.copyOfRange(after.getCompactData(), 64, after.wpos()));
+            Request replay = survivor.outstandingRequests.getRequestByMessageId(1L);
+            fixture.createReply(survivor, 1);
+            SMB2Packet response = future.get(2, TimeUnit.SECONDS);
+            assertInstanceOf(com.hierynomus.mssmb2.messages.SMB2CreateResponse.class, response);
+            fixture.createReply(survivor, 1); // duplicate replay response is discarded
+            fixture.createReply(lost, oldMid); // late original response cannot complete twice
+            assertSame(response, future.get(1, TimeUnit.SECONDS));
+            // Duplicate closure must neither replay the completed CREATE nor advance the sequence twice.
+            lost.handleError(new TransportException("Duplicate closure"));
+            assertEquals(1, fixture.session.getChannelCount());
+            assertTrue(replay.getPromise().isFulfilled());
+            verify(survivorTransport, times(1)).write(argThat(packet -> ((SMB2Packet) packet).getPacket() == create));
+            SMB2Echo next = fixture.echo();
+            fixture.session.send(next, survivor);
+            assertEquals(1, next.getHeader().getChannelSequence());
+        }
+    }
+
+    @Test
+    void completedDurableCreateIsNotReplayed() throws Exception {
+        try (Fixture fixture = new Fixture()) {
+            com.hierynomus.mssmb2.messages.SMB2CreateRequest create = durableCreate();
+            Future<SMB2Packet> future = fixture.session.send(create, fixture.primary);
+            SMB2Packet response = new com.hierynomus.mssmb2.messages.SMB2CreateResponse();
+            fixture.primary.outstandingRequests.receivedResponseFor(create.getHeader().getMessageId()).getPromise().deliver(response);
+            fixture.primary.close(true);
+            assertSame(response, future.get(1, TimeUnit.SECONDS));
+            verify(fixture.secondaryTransport, never()).write(any());
+        }
+    }
+
+    @Test
+    void durableCreateFailsWhenNoChannelSurvives() throws Exception {
+        try (Fixture fixture = new Fixture()) {
+            fixture.secondary.close(true);
+            Future<SMB2Packet> future = fixture.session.send(durableCreate(), fixture.primary);
+            fixture.primary.close(true);
+            assertThrows(ExecutionException.class, () -> future.get(2, TimeUnit.SECONDS));
+            assertEquals(0, fixture.session.getChannelCount());
+            assertThrows(TransportException.class, () -> fixture.session.send(fixture.echo()));
+        }
+    }
+
+    @Test
+    void replayedCreateCancellationUsesSurvivingOwner() throws Exception {
+        try (Fixture fixture = new Fixture()) {
+            com.hierynomus.mssmb2.messages.SMB2CreateRequest create = durableCreate();
+            Future<SMB2Packet> future = fixture.session.send(create, fixture.primary);
+            fixture.primary.close(true);
+            verify(fixture.secondaryTransport, timeout(2000)).write(argThat(packet -> ((SMB2Packet) packet).getPacket() == create));
+            assertTrue(future.cancel(true));
+            ArgumentCaptor<SMBPacket> packets = ArgumentCaptor.forClass(SMBPacket.class);
+            verify(fixture.secondaryTransport, times(2)).write(packets.capture());
+            SMB2Packet cancel = (SMB2Packet) packets.getAllValues().get(1);
+            assertEquals(SMB2MessageCommandCode.SMB2_CANCEL, cancel.getHeader().getMessage());
+            assertEquals(create.getHeader().getMessageId(), cancel.getHeader().getMessageId());
+        }
+    }
+
+    @Test
+    void cancelledDurableCreateIsNotReplayed() throws Exception {
+        try (Fixture fixture = new Fixture()) {
+            Future<SMB2Packet> future = fixture.session.send(durableCreate(), fixture.primary);
+            assertTrue(future.cancel(true));
+            fixture.primary.close(true);
+            assertThrows(ExecutionException.class, () -> future.get(1, TimeUnit.SECONDS));
+            verify(fixture.secondaryTransport, never()).write(any());
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"false,true", "true,true", "true,false"})
+    void plaintextReceiveUsesTheReceivingChannelKeyAndRejectsTampering(boolean secondary, boolean valid) throws Exception {
+        try (Fixture fixture = new Fixture()) {
+            javax.crypto.SecretKey channelKey = new SecretKeySpec(new byte[]{1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, "AesCmac");
+            fixture.session.addChannel(fixture.secondary, channelKey);
+            Connection receiver = secondary ? fixture.secondary : fixture.primary;
+            Signatory signatory = mock(Signatory.class);
+            javax.crypto.SecretKey expected = secondary ? channelKey : fixture.session.getSessionContext().getSigningKey();
+            when(signatory.verify(any(), eq(expected))).thenReturn(valid);
+            com.hierynomus.smbj.connection.packet.IncomingPacketHandler next = mock(com.hierynomus.smbj.connection.packet.IncomingPacketHandler.class);
+            com.hierynomus.smbj.connection.packet.SMB2SignatureVerificationPacketHandler handler =
+                    new com.hierynomus.smbj.connection.packet.SMB2SignatureVerificationPacketHandler(receiver.getSessionTable(), signatory, receiver);
+            handler.setNext(next);
+            SMB2Echo reply = fixture.echo();
+            reply.getHeader().setFlag(SMB2MessageFlag.SMB2_FLAGS_SIGNED);
+            SMBBuffer wire = new SMBBuffer();
+            reply.write(wire);
+            SMB2PacketData data = new SMB2PacketData(wire.getCompactData());
+            handler.handle(data);
+            verify(signatory).verify(data, expected);
+            if (valid) verify(next).handle(data);
+            else verify(next).handle(isA(DeadLetterPacketData.class));
+        }
+    }
+
+    private static com.hierynomus.mssmb2.messages.SMB2CreateRequest durableCreate() {
+        return new com.hierynomus.mssmb2.messages.SMB2CreateRequest(SMB2Dialect.SMB_3_1_1, 47, 1,
+                com.hierynomus.mssmb2.SMB2ImpersonationLevel.Impersonation,
+                java.util.EnumSet.of(com.hierynomus.msdtyp.AccessMask.GENERIC_READ), null, SMB2ShareAccess.ALL,
+                SMB2CreateDisposition.FILE_CREATE, null, new com.hierynomus.smbj.common.SmbPath("localhost", "share", "durable"),
+                SMB2OplockLevel.SMB2_OPLOCK_LEVEL_BATCH, java.util.Collections.singletonList(
+                new com.hierynomus.mssmb2.messages.create.SMB2CreateContext(new byte[]{'D', 'H', '2', 'Q'}, new byte[32])));
+    }
+
     private static class Fixture implements AutoCloseable {
         @SuppressWarnings("unchecked")
         final TransportLayer<SMBPacket<?, ?>> primaryTransport = mock(TransportLayer.class);
@@ -201,6 +335,28 @@ class ChannelRequestsTest {
             SMB2Echo result = new SMB2Echo(SMB2Dialect.SMB_3_1_1);
             result.getHeader().setSessionId(47);
             return result;
+        }
+
+        void createReply(Connection connection, long messageId) throws Exception {
+            SMB2PacketHeader header = new SMB2PacketHeader();
+            header.setDialect(SMB2Dialect.SMB_3_1_1);
+            header.setMessageType(SMB2MessageCommandCode.SMB2_CREATE);
+            header.setMessageId(messageId);
+            header.setSessionId(47);
+            header.setTreeId(1);
+            header.setCreditRequest(1);
+            header.setFlag(SMB2MessageFlag.SMB2_FLAGS_SERVER_TO_REDIR);
+            SMBBuffer wire = new SMBBuffer();
+            header.writeTo(wire);
+            wire.putUInt16(89);
+            wire.putByte((byte) 0);
+            wire.putByte((byte) 0);
+            wire.putUInt32(1);
+            wire.putReserved(56);
+            wire.putRawBytes(new byte[16]);
+            wire.putUInt32(0);
+            wire.putUInt32(0);
+            connection.handle(new SMB2PacketData(wire.getCompactData()));
         }
 
         void reply(Connection connection, SMB2Echo request) throws Exception {

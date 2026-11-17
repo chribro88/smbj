@@ -86,6 +86,20 @@ public class SMBClient implements Closeable {
         return getEstablishedOrConnect(hostname, port);
     }
 
+    /**
+     * Opens an explicit SMB 3.x TCP multichannel connection owned by the session.
+     * The caller supplies a physical endpoint; authentication retains the session's
+     * logical hostname. Server identity, dialect and signing/cipher policy must match.
+     * No automatic interface discovery, NIC/RSS selection or SMB Direct is performed.
+     * AES-GMAC-only binding fails before signing or sending SESSION_SETUP, without fallback.
+     * Unknown-outcome WRITEs are not transparently replayed after channel loss.
+     *
+     * @param session established authenticated session
+     * @param hostname caller-selected physical host or IP address
+     * @param port TCP port at that endpoint
+     * @return bound connection, closed with its owning session
+     * @throws IOException if connection or binding fails; the owned candidate is closed
+     */
     // CUSTOM ADDED: pooled connect() cannot create a second TCP channel to the same endpoint.
     public Connection openChannel(com.hierynomus.smbj.session.Session session, String hostname, int port) throws IOException {
         java.util.Objects.requireNonNull(session, "session");

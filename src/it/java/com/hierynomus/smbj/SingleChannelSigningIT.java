@@ -36,7 +36,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class SingleChannelSigningIT {
-    @ParameterizedTest
+    @ParameterizedTest(name = "{displayName}: port={0}, encryption={1}, writeThrough={2}")
     @MethodSource("com.hierynomus.smbj.testing.MultichannelTestSupport#configurations")
     void existingFileWorksWithNegotiatedSigningAndAfterGmacBindingRejection(String port, boolean encryption, boolean writeThrough) throws Exception {
         assumeTrue(port != null, "SMB_TEST_PORT enables dedicated server tests");
@@ -54,6 +54,7 @@ class SingleChannelSigningIT {
             try (File file = share.openFile(name, EnumSet.of(AccessMask.GENERIC_READ, AccessMask.GENERIC_WRITE),
                     EnumSet.of(FileAttributes.FILE_ATTRIBUTE_NORMAL), SMB2ShareAccess.ALL, SMB2CreateDisposition.FILE_CREATE,
                     writeThrough ? EnumSet.of(SMB2CreateOptions.FILE_WRITE_THROUGH) : EnumSet.noneOf(SMB2CreateOptions.class))) {
+                assertEquals(dialect(), primary.getNegotiatedProtocol().getDialect());
                 byte[] bytes = new byte[131072];
                 new Random(47).nextBytes(bytes);
                 assertEquals(bytes.length, file.write(bytes, 0));

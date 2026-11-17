@@ -45,7 +45,7 @@ class MultichannelProtocolIT {
     private static final SMB2Dialect DIALECT = dialect();
 
     // Behavioral regression: Pike bcbb343c5, MultiChannelTest.test_open_bind_close.
-    @ParameterizedTest
+    @ParameterizedTest(name = "{displayName}: port={0}, encryption={1}, writeThrough={2}")
     @MethodSource("com.hierynomus.smbj.testing.MultichannelTestSupport#configurations")
     void openOnPrimaryBindAndCloseSameHandleOnSecondary(String port, boolean encryption, boolean writeThrough) throws Exception {
         try (Fixture fixture = new Fixture(port, encryption, writeThrough)) {
@@ -58,7 +58,7 @@ class MultichannelProtocolIT {
     }
 
     // Behavioral regression: WindowsProtocolTestSuites 29ddb4238, MultipleChannel_LockUnlockOnDiffChannel.
-    @ParameterizedTest
+    @ParameterizedTest(name = "{displayName}: port={0}, encryption={1}, writeThrough={2}")
     @MethodSource("com.hierynomus.smbj.testing.MultichannelTestSupport#configurations")
     void lockOnPrimaryAndUnlockSameHandleOnSecondary(String port, boolean encryption, boolean writeThrough) throws Exception {
         try (Fixture fixture = new Fixture(port, encryption, writeThrough)) {
@@ -75,7 +75,7 @@ class MultichannelProtocolIT {
     }
 
     // Behavioral regression: Pike bcbb343c5, MultiChannelTest.test_write_fence_reject_stale.
-    @ParameterizedTest
+    @ParameterizedTest(name = "{displayName}: port={0}, encryption={1}, writeThrough={2}")
     @MethodSource("com.hierynomus.smbj.testing.MultichannelTestSupport#configurations")
     void staleWriteCannotReplaceNewerData(String port, boolean encryption, boolean writeThrough) throws Exception {
         try (Fixture fixture = new Fixture(port, encryption, writeThrough)) {
@@ -91,11 +91,11 @@ class MultichannelProtocolIT {
     }
 
     // Behavioral regression: go-smb2 7f69f658, TestBindChannelRejectsAnotherServer.
-    @ParameterizedTest
+    @ParameterizedTest(name = "{displayName}: port={0}, encryption={1}, writeThrough={2}")
     @MethodSource("com.hierynomus.smbj.testing.MultichannelTestSupport#configurations")
     void rejectsAnotherServerAndPreservesExistingSession(String port, boolean encryption, boolean writeThrough) throws Exception {
         assumeTrue(port != null);
-        String other = Arrays.stream(System.getenv().getOrDefault("SMB_TEST_PORTS", port).split(","))
+        String other = Arrays.stream(System.getenv().getOrDefault("SMB_TEST_OTHER_PORT", System.getenv().getOrDefault("SMB_TEST_PORTS", port)).split(","))
                 .map(String::trim).filter(candidate -> !candidate.equals(port)).findFirst().orElse(null);
         assumeTrue(other != null, "Two independent server ports enable server identity rejection");
         try (Fixture fixture = new Fixture(port, encryption, writeThrough)) {
@@ -112,7 +112,7 @@ class MultichannelProtocolIT {
     }
 
     // Behavioral regression: go-smb2 7f69f658, TestBindChannelFailurePreservesExistingSession.
-    @ParameterizedTest
+    @ParameterizedTest(name = "{displayName}: port={0}, encryption={1}, writeThrough={2}")
     @MethodSource("com.hierynomus.smbj.testing.MultichannelTestSupport#rejectedBindingConfigurations")
     void serverBindingRejectionPreservesPrimarySession(String port, boolean encryption, boolean writeThrough) throws Exception {
         try (Fixture fixture = new Fixture(port, encryption, writeThrough)) {
@@ -127,7 +127,7 @@ class MultichannelProtocolIT {
     }
 
     // Behavioral regression: go-smb2 7f69f658, TestConcurrentBindChannels and TestSessionChannelsAbortClosesEveryConnection.
-    @ParameterizedTest
+    @ParameterizedTest(name = "{displayName}: port={0}, encryption={1}, writeThrough={2}")
     @MethodSource("com.hierynomus.smbj.testing.MultichannelTestSupport#configurations")
     void concurrentBindingsPublishIndependentChannelsAndClientClosesAll(String port, boolean encryption, boolean writeThrough) throws Exception {
         try (Fixture fixture = new Fixture(port, encryption, writeThrough)) {
@@ -156,7 +156,7 @@ class MultichannelProtocolIT {
         }
     }
 
-    @ParameterizedTest
+    @ParameterizedTest(name = "{displayName}: port={0}, encryption={1}, writeThrough={2}")
     @MethodSource("com.hierynomus.smbj.testing.MultichannelTestSupport#configurations")
     void negotiatedMultiCreditWritesRemainAvailableOnBothChannels(String port, boolean encryption, boolean writeThrough) throws Exception {
         try (Fixture fixture = new Fixture(port, encryption, writeThrough)) {
@@ -196,6 +196,7 @@ class MultichannelProtocolIT {
             client = new SMBClient(config(encryption));
             try {
                 primary = client.connect(hostname(), this.port);
+                assertEquals(DIALECT, primary.getNegotiatedProtocol().getDialect());
                 session = primary.authenticate(authentication());
                 share = (DiskShare) session.connectShare(shareName());
                 EnumSet<SMB2CreateOptions> options = EnumSet.of(SMB2CreateOptions.FILE_DELETE_ON_CLOSE);
